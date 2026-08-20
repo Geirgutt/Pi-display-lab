@@ -1,0 +1,117 @@
+<!doctype html>
+<html lang="no">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="theme-color" content="#080d12">
+    <title>Pi Display Lab</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+    <script src="{{ url_for('static', filename='app.js') }}" defer></script>
+  </head>
+  <body>
+    <main class="page-shell">
+      <header class="page-header">
+        <div>
+          <p class="eyebrow">RASPBERRY PI · DISPLAY SANDBOX</p>
+          <h1>Pi Display Lab</h1>
+          <p class="intro">En levende, emulert TFT-skjerm – klar for en ekte ESP32-S3 senere.</p>
+        </div>
+        <div class="live-badge" id="connection-badge" aria-live="polite">
+          <span class="status-dot"></span>
+          <span id="connection-text">Kobler til …</span>
+        </div>
+      </header>
+
+      <section class="workbench" aria-label="Display emulator og kontroller">
+        <div class="emulator-panel">
+          <div class="panel-heading">
+            <div>
+              <span class="panel-kicker">DEVICE PREVIEW</span>
+              <h2>3.5″ TFT · 480 × 320</h2>
+            </div>
+            <span class="mode-tag">{{ "MOCK DATA" if mock_mode else "LIVE PI DATA" }}</span>
+          </div>
+
+          <div class="device-fit" id="device-fit">
+            <div class="device-scale" id="device-scale">
+              <div class="device-shell">
+                <span class="bezel-hole bezel-hole-left"></span>
+                <span class="bezel-hole bezel-hole-right"></span>
+                <div class="device-screen" role="region" aria-label="Emulert enhetsskjerm">
+                  <div class="screen-content" id="screen-content" aria-live="polite"></div>
+                  <div class="scanlines" aria-hidden="true"></div>
+                </div>
+                <span class="hardware-label">PI LAB TFT-35 · REV A</span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <aside class="controls-panel" aria-label="Developer controls">
+          <div class="controls-heading">
+            <div>
+              <span class="panel-kicker">DEVELOPER CONTROLS</span>
+              <h2>Styr emulatoren</h2>
+            </div>
+            <span class="control-led" title="Kontrollpanel aktivt"></span>
+          </div>
+
+          <section class="control-group">
+            <h3>Velg skjerm</h3>
+            <div class="screen-buttons" id="screen-buttons">
+              <button class="screen-button active" data-screen="home" type="button">
+                <span class="button-number">01</span>
+                <span>Home</span>
+              </button>
+              <button class="screen-button" data-screen="cluster" type="button">
+                <span class="button-number">02</span>
+                <span>Cluster</span>
+              </button>
+              <button class="screen-button" data-screen="nerd" type="button">
+                <span class="button-number">03</span>
+                <span>Nerd</span>
+              </button>
+            </div>
+          </section>
+
+          <section class="control-group demo-controls">
+            <div class="control-title-row">
+              <h3>Monte Carlo π</h3>
+              <span id="demo-state-label">KLAR</span>
+            </div>
+            <label for="iterations">Antall tilfeldige punkter</label>
+            <select id="iterations">
+              <option value="250000">250 000 · rask</option>
+              <option value="1000000" selected>1 000 000 · anbefalt</option>
+              <option value="3000000">3 000 000 · tyngre</option>
+            </select>
+            <button class="primary-button" id="start-demo" type="button">
+              <span id="start-demo-label">Start beregning</span>
+              <span aria-hidden="true">→</span>
+            </button>
+            <p class="helper-text">Beregningen kjører i Python på Pi-en. Skjermen viser nye tall via API-polling.</p>
+          </section>
+
+          <section class="api-card">
+            <div>
+              <span class="api-label">SISTE API-SVAR</span>
+              <strong id="last-update">Venter …</strong>
+            </div>
+            <a href="/api/state" target="_blank" rel="noreferrer">Åpne JSON <span aria-hidden="true">↗</span></a>
+          </section>
+
+          <details class="payload-details">
+            <summary>Vis rå data</summary>
+            <pre id="raw-payload">{}</pre>
+          </details>
+        </aside>
+      </section>
+
+      <footer class="page-footer">
+        <span>Polling: 1 sekund</span>
+        <span>Transport: BrowserTransport</span>
+        <span>Protokoll: JSON v1</span>
+      </footer>
+    </main>
+  </body>
+</html>

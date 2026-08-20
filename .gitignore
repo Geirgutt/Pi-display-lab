@@ -1,0 +1,28 @@
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+
+# Lokale innstillinger og hemmeligheter. Del bare ufarlige *.example-filer.
+.env
+.env.*
+!.env.example
+*.local
+config.local.*
+secrets.*
+credentials.*
+.secrets/
+
+# Private nøkler og sertifikatpakker skal aldri inn i Git.
+*.key
+*.pem
+*.p12
+*.pfx
+id_rsa
+id_rsa.*
+id_ed25519
+id_ed25519.*
+
+# Raspberry Pi- og Wi-Fi-oppsett kan inneholde passord.
+wpa_supplicant.conf
+NetworkManager/system-connections/
