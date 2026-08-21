@@ -69,12 +69,21 @@ def create_app(
     def start_demo() -> Any:
         body = request.get_json(silent=True) or {}
         iterations = body.get("iterations", 10_000_000)
+        requested_cores = body.get("cores", 1)
+        reserve_one = body.get("reserve_one", True)
+        if isinstance(iterations, bool) or isinstance(requested_cores, bool):
+            return jsonify({"ok": False, "error": "iterations og cores må være heltall"}), 400
         try:
             iterations = int(iterations)
+            requested_cores = int(requested_cores)
         except (TypeError, ValueError):
-            return jsonify({"ok": False, "error": "iterations må være et heltall"}), 400
+            return jsonify({"ok": False, "error": "iterations og cores må være heltall"}), 400
+        if requested_cores < 1:
+            return jsonify({"ok": False, "error": "cores må være minst 1"}), 400
+        if not isinstance(reserve_one, bool):
+            return jsonify({"ok": False, "error": "reserve_one må være true eller false"}), 400
 
-        if not dashboard.start_demo(iterations):
+        if not dashboard.start_demo(iterations, requested_cores, reserve_one):
             return jsonify({"ok": False, "error": "Beregningen kjører allerede"}), 409
 
         dashboard.set_screen("nerd")

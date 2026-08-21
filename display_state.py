@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import math
+import multiprocessing
 import os
 import random
 import re
@@ -11,9 +12,31 @@ import sys
 import threading
 import time
 from collections.abc import Callable
+from concurrent.futures import ProcessPoolExecutor, as_completed
 from datetime import datetime
 from pathlib import Path
 from typing import Any
+
+
+def _monte_carlo_batch(
+    sample_count: int,
+    seed: int,
+    visual_count: int,
+) -> tuple[int, list[list[float | int]]]:
+    """Beregn én isolert arbeidsbit; funksjonen kan kjøres i en egen prosess."""
+
+    rng = random.Random(seed)
+    hits = 0
+    points: list[list[float | int]] = []
+    for index in range(sample_count):
+        x = rng.random() * 2 - 1
+        y = rng.random() * 2 - 1
+        inside = x * x + y * y <= 1
+        if inside:
+            hits += 1
+        if index < visual_count:
+            points.append([round(x, 4), round(y, 4), 1 if inside else 0])
+    return hits, points
 
 
 class SystemMonitor:
@@ -163,6 +186,11 @@ class NodeRegistry:
         ram = self._number(payload.get("ram"), "ram", 0, 100)
         raw_temp = payload.get("temp")
         temp = None if raw_temp is None else self._number(raw_temp, "temp", -40, 150)
+        raw_cores = payload.get("cores", 1)
+        cores_number = self._number(raw_cores, "cores", 1, 256)
+        if not cores_number.is_integer():
+            raise ValueError("cores må være et heltall")
+        cores = int(cores_number)
         now = self._clock()
 
         node = {
@@ -172,6 +200,7 @@ class NodeRegistry:
             "cpu": cpu,
             "temp": temp,
             "ram": ram,
+            "cores": cores,
             "ip": source_ip,
             "kind": "remote",
             "mock": False,
@@ -199,6 +228,7 @@ class NodeRegistry:
             "cpu": node["cpu"],
             "temp": node["temp"],
             "ram": node["ram"],
+            "cores": node["cores"],
             "ip": node["ip"],
             "online": age <= self.offline_after_seconds,
             "kind": node["kind"],
@@ -212,9 +242,12 @@ class MonteCarloDemo:
 
     MIN_ITERATIONS = 10_000
     MAX_ITERATIONS = 100_000_000
+    MAX_VISUAL_POINTS = 720
+    MAX_WORKERS = 4
 
-    def __init__(self) -> None:
+    def __init__(self, cpu_count: int | None = None) -> None:
         self._lock = threading.Lock()
+        self._available_cores = max(1, min(cpu_count or os.cpu_count() or 1, self.MAX_WORKERS))
         self._status = "idle"
         self._samples_done = 0
         self._iterations = 0
@@ -223,9 +256,14 @@ class MonteCarloDemo:
         self._started_at = 0.0
         self._runtime_seconds = 0.0
         self._error: str | None = None
+        self._requested_cores = 1
+        self._worker_count = 1
+        self._reserve_one = True
+        self._points: list[list[float | int]] = []
 
-    def start(self, iterations: int) -> bool:
+    def start(self, iterations: int, requested_cores: int = 1, reserve_one: bool = True) -> bool:
         iterations = min(max(iterations, self.MIN_ITERATIONS), self.MAX_ITERATIONS)
+        worker_count = self.resolve_worker_count(requested_cores, reserve_one)
         with self._lock:
             if self._status == "running":
                 return False
@@ -237,6 +275,10 @@ class MonteCarloDemo:
             self._runtime_seconds = 0.0
             self._started_at = time.perf_counter()
             self._error = None
+            self._requested_cores = requested_cores
+            self._worker_count = worker_count
+            self._reserve_one = reserve_one
+            self._points = []
 
         worker = threading.Thread(target=self._calculate, daemon=True, name="pi-demo")
         worker.start()
@@ -256,33 +298,59 @@ class MonteCarloDemo:
                 "estimate": self._estimate,
                 "runtime_seconds": round(runtime, 2),
                 "error": self._error,
+                "inside": self._inside,
+                "outside": self._samples_done - self._inside,
+                "points": [list(point) for point in self._points],
+                "available_cores": self._available_cores,
+                "requested_cores": self._requested_cores,
+                "worker_count": self._worker_count,
+                "reserve_one": self._reserve_one,
             }
 
+    def resolve_worker_count(self, requested_cores: int, reserve_one: bool) -> int:
+        requested = max(1, min(int(requested_cores), self._available_cores))
+        limit = self._available_cores
+        if reserve_one and self._available_cores > 1:
+            limit -= 1
+        return max(1, min(requested, limit))
+
     def _calculate(self) -> None:
-        rng = random.Random()
-        batch_size = 10_000
         try:
-            while True:
-                with self._lock:
-                    remaining = self._iterations - self._samples_done
-                if remaining <= 0:
-                    break
+            with self._lock:
+                iterations = self._iterations
+                workers = self._worker_count
 
-                current_batch = min(batch_size, remaining)
-                hits = 0
-                for _ in range(current_batch):
-                    x = rng.random()
-                    y = rng.random()
-                    if x * x + y * y <= 1:
-                        hits += 1
+            task_count = min(iterations // self.MIN_ITERATIONS, max(24, workers * 48))
+            task_count = max(1, task_count)
+            base_size, extra = divmod(iterations, task_count)
+            work_sizes = [base_size + (1 if index < extra else 0) for index in range(task_count)]
+            visual_per_task = math.ceil(self.MAX_VISUAL_POINTS / task_count)
+            seed_base = time.time_ns() ^ os.getpid()
 
-                with self._lock:
-                    self._inside += hits
-                    self._samples_done += current_batch
-                    self._estimate = round(4 * self._inside / self._samples_done, 6)
-
-                # Gir nettleseren tid til å vise noen mellomresultater også på en rask PC.
-                time.sleep(0.005)
+            if workers == 1:
+                for index, work_size in enumerate(work_sizes):
+                    result = _monte_carlo_batch(
+                        work_size,
+                        seed_base + index * 1_000_003,
+                        visual_per_task,
+                    )
+                    self._record_batch(work_size, *result)
+                    time.sleep(0)
+            else:
+                context = multiprocessing.get_context("spawn")
+                with ProcessPoolExecutor(max_workers=workers, mp_context=context) as executor:
+                    futures = {
+                        executor.submit(
+                            _monte_carlo_batch,
+                            work_size,
+                            seed_base + index * 1_000_003,
+                            visual_per_task,
+                        ): work_size
+                        for index, work_size in enumerate(work_sizes)
+                    }
+                    for future in as_completed(futures):
+                        hits, points = future.result()
+                        self._record_batch(futures[future], hits, points)
 
             with self._lock:
                 self._runtime_seconds = time.perf_counter() - self._started_at
@@ -292,6 +360,20 @@ class MonteCarloDemo:
                 self._runtime_seconds = time.perf_counter() - self._started_at
                 self._status = "error"
                 self._error = str(error)
+
+    def _record_batch(
+        self,
+        sample_count: int,
+        hits: int,
+        points: list[list[float | int]],
+    ) -> None:
+        with self._lock:
+            self._inside += hits
+            self._samples_done += sample_count
+            self._estimate = round(4 * self._inside / self._samples_done, 6)
+            remaining = self.MAX_VISUAL_POINTS - len(self._points)
+            if remaining > 0:
+                self._points.extend(points[:remaining])
 
 
 class DashboardState:
@@ -314,8 +396,8 @@ class DashboardState:
         with self._lock:
             self._screen = screen
 
-    def start_demo(self, iterations: int) -> bool:
-        return self.demo.start(iterations)
+    def start_demo(self, iterations: int, requested_cores: int = 1, reserve_one: bool = True) -> bool:
+        return self.demo.start(iterations, requested_cores, reserve_one)
 
     def register_node(self, payload: dict[str, Any], source_ip: str | None = None) -> dict[str, Any]:
         return self.nodes.heartbeat(payload, source_ip)
@@ -323,6 +405,7 @@ class DashboardState:
     def snapshot(self) -> dict[str, Any]:
         now = datetime.now().astimezone()
         system = self.monitor.read()
+        demo = self.demo.snapshot()
         with self._lock:
             screen = self._screen
 
@@ -334,6 +417,7 @@ class DashboardState:
                 "cpu": system["cpu"],
                 "temp": system["temp"],
                 "ram": system["ram"],
+                "cores": demo["available_cores"],
                 "ip": system["ip"],
                 "online": system["online"],
                 "kind": "local",
@@ -343,7 +427,6 @@ class DashboardState:
         ]
         nodes.extend(self.nodes.snapshot(limit=3))
 
-        demo = self.demo.snapshot()
         if demo["status"] == "running":
             message = "Beregner pi ..."
         elif demo["status"] == "finished":
@@ -383,11 +466,19 @@ class DashboardState:
                     "cpu": 42.0,
                     "temp": 51.2,
                     "ram": 48.0,
+                    "cores": 4,
                     "online": True,
                     "kind": "local",
                 }
             ],
             "network": {"online": True, "ip": "192.0.2.42"},
-            "demo": {"status": "idle", "progress": 0, "estimate": None, "runtime_seconds": 0},
+            "demo": {
+                "status": "idle",
+                "progress": 0,
+                "estimate": None,
+                "runtime_seconds": 0,
+                "worker_count": 1,
+                "points": [],
+            },
             "message": "Ready",
         }

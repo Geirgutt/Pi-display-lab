@@ -16,6 +16,7 @@ class NodeRegistryTests(unittest.TestCase):
                 "cpu": 20,
                 "temp": 45,
                 "ram": 30,
+                "cores": 4,
             },
             "192.0.2.43",
         )
@@ -25,6 +26,7 @@ class NodeRegistryTests(unittest.TestCase):
         node = registry.snapshot()[0]
         self.assertFalse(node["online"])
         self.assertEqual(node["last_seen_seconds"], 21.0)
+        self.assertEqual(node["cores"], 4)
 
     def test_node_id_rejects_unsafe_characters(self) -> None:
         registry = NodeRegistry()

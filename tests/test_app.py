@@ -52,6 +52,7 @@ class AppSmokeTests(unittest.TestCase):
             "cpu": 27.4,
             "temp": 48.2,
             "ram": 39.1,
+            "cores": 4,
         }
         accepted = self.client.post("/api/nodes/heartbeat", json=heartbeat)
         self.assertEqual(accepted.status_code, 202)
@@ -61,6 +62,7 @@ class AppSmokeTests(unittest.TestCase):
         self.assertEqual(nodes[1]["id"], "pi3-office")
         self.assertEqual(nodes[1]["kind"], "remote")
         self.assertEqual(nodes[1]["ip"], "127.0.0.1")
+        self.assertEqual(nodes[1]["cores"], 4)
 
     def test_heartbeat_validates_metrics_and_optional_token(self) -> None:
         invalid = self.client.post(
@@ -100,7 +102,10 @@ class AppSmokeTests(unittest.TestCase):
         self.assertEqual(invalid.status_code, 400)
 
     def test_demo_finishes_and_reports_an_estimate(self) -> None:
-        started = self.client.post("/api/demo/start", json={"iterations": 10_000})
+        started = self.client.post(
+            "/api/demo/start",
+            json={"iterations": 10_000, "cores": 1, "reserve_one": False},
+        )
         self.assertEqual(started.status_code, 202)
 
         deadline = time.monotonic() + 3
@@ -112,6 +117,22 @@ class AppSmokeTests(unittest.TestCase):
         self.assertEqual(payload["demo"]["status"], "finished")
         self.assertGreater(payload["demo"]["estimate"], 3.0)
         self.assertLess(payload["demo"]["estimate"], 3.3)
+        self.assertEqual(payload["demo"]["inside"] + payload["demo"]["outside"], 10_000)
+        self.assertGreater(len(payload["demo"]["points"]), 0)
+        self.assertEqual(payload["demo"]["worker_count"], 1)
+
+    def test_demo_rejects_invalid_core_controls(self) -> None:
+        self.assertEqual(
+            self.client.post("/api/demo/start", json={"iterations": 10_000, "cores": 0}).status_code,
+            400,
+        )
+        self.assertEqual(
+            self.client.post(
+                "/api/demo/start",
+                json={"iterations": 10_000, "cores": 1, "reserve_one": "yes"},
+            ).status_code,
+            400,
+        )
 
 
 if __name__ == "__main__":

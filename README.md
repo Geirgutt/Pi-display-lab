@@ -14,8 +14,9 @@ målinger eller beregningslogikk.
 - **Home:** klokke, CPU-bruk, CPU-temperatur, RAM og nettverksstatus.
 - **Cluster:** hoved-Pi-en og opptil tre ekte maskiner med CPU, temperatur, RAM
   og automatisk online/offline-status. Ingen dummy-enheter.
-- **Nerd:** Monte Carlo-estimat av pi med fremdrift, runtime og resultat.
-- **Developer controls:** bytt skjerm, velg jobbens størrelse og start demoen.
+- **Nerd:** Monte Carlo-estimat av pi med levende sirkelgrafikk for treff og bom.
+- **Developer controls:** bytt skjerm, velg jobbens størrelse, 1–4 kjerner og om
+  én kjerne skal holdes ledig på oppdragsgiveren.
 - **Mock-modus:** test hele prosjektet på Windows uten Raspberry Pi.
 - **Transportlag:** `BrowserTransport` virker nå, mens `Esp32Transport` er en
   trygg stub for neste etappe.
@@ -147,8 +148,8 @@ journalctl -u pi-display-lab -f
 ## Koble til flere Raspberry Pi-er
 
 Hoved-Pi-en kjører webappen. På hver ekstra Pi kjører en liten agent som sender
-CPU, temperatur og RAM hvert femte sekund. Agenten bruker bare Python sitt
-standardbibliotek.
+CPU, temperatur, RAM og antall kjerner hvert femte sekund. Agenten bruker bare
+Python sitt standardbibliotek.
 
 På en ekstra Raspberry Pi med vanlig Raspberry Pi OS:
 
@@ -175,6 +176,22 @@ journalctl -u pi-display-node-agent -f
 
 Hvis en agent ikke har sendt heartbeat på 20 sekunder, markeres noden som
 offline. Etter omstart av hovedappen dukker noden opp igjen ved neste heartbeat.
+
+## Monte Carlo og flere kjerner
+
+Kontrollpanelet lar deg velge 1–4 kjerner på Pi-en som kjører webappen. Valget
+**Hold én kjerne ledig på oppdragsgiveren** begrenser fire valgte kjerner til tre
+arbeidsprosesser på en firekjerners Pi. Slår du valget av, brukes alle fire.
+
+Ved mer enn én kjerne bruker Python separate prosesser, slik at beregningen ikke
+stoppes av éntrådsbegrensningen i Python. Nerd-skjermen viser et lite utvalg av
+de faktiske tilfeldige punktene: turkis betyr treff inne i sirkelen, lilla betyr
+bom i kvadratets hjørner. Alle punktene teller i resultatet, men bare opptil 720
+sendes til nettleseren for å holde grafikken lett.
+
+Eksterne Pi-agenter rapporterer nå hvor mange kjerner de har, men kjører ikke
+beregningsjobber ennå. Dette er bevisst: neste trinn blir en tokenbeskyttet
+jobbprotokoll der agentene selv henter arbeid, uten nye åpne porter.
 
 ### Valgfritt delt token
 
@@ -253,7 +270,7 @@ Nyttige adresser:
 | `GET` | `/api/health` | Sjekker at backend lever |
 | `GET` | `/api/state` | Returnerer hele gjeldende display-state |
 | `POST` | `/api/screen` | Bytter skjerm med f.eks. `{"screen":"cluster"}` |
-| `POST` | `/api/demo/start` | Starter beregning med f.eks. `{"iterations":50000000}` |
+| `POST` | `/api/demo/start` | Starter beregning med f.eks. `{"iterations":50000000,"cores":4,"reserve_one":false}` |
 | `POST` | `/api/nodes/heartbeat` | Registrerer status fra en ekstern Pi-agent |
 | `GET` | `/api/update/status` | Viser lokal og eventuell tilgjengelig versjon |
 | `POST` | `/api/update/check` | Henter oppdatert status fra `origin/main` |
@@ -274,6 +291,7 @@ Kjernen i protokollen er liten og versjonert:
       "cpu": 42.0,
       "temp": 51.2,
       "ram": 48.0,
+      "cores": 4,
       "online": true,
       "kind": "remote"
     }
@@ -378,8 +396,9 @@ python -m unittest discover -s tests -v
 ```
 
 Testene sjekker startsiden, protokollfeltene, heartbeat-validering,
-tokenbeskyttelse, skjermbytte, transportlaget og at Monte Carlo-jobben faktisk
-fullføres med et fornuftig estimat.
+tokenbeskyttelse, kjernegrenser, visualiseringspunkter, skjermbytte,
+transportlaget og at Monte Carlo-jobben faktisk fullføres med et fornuftig
+estimat.
 
 ## Vanlige problemer
 

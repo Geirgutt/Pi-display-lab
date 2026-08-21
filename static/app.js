@@ -18,6 +18,10 @@ const ui = {
   screenButtons: [...document.querySelectorAll(".screen-button")],
   startDemo: document.querySelector("#start-demo"),
   iterations: document.querySelector("#iterations"),
+  cores: document.querySelector("#cores"),
+  reserveOne: document.querySelector("#reserve-one"),
+  coreCountLabel: document.querySelector("#core-count-label"),
+  coreHint: document.querySelector("#core-hint"),
   startDemoLabel: document.querySelector("#start-demo-label"),
   demoStateLabel: document.querySelector("#demo-state-label"),
   lastUpdate: document.querySelector("#last-update"),
@@ -119,7 +123,7 @@ function nodeCard(node, index) {
   const meta = element(
     "div",
     "cluster-node-meta",
-    [node.model, node.ip].filter(Boolean).join(" · ") || "RASPBERRY PI",
+    [node.model, node.ip, node.cores ? `${node.cores} CORES` : null].filter(Boolean).join(" · ") || "RASPBERRY PI",
   );
 
   const cpuLine = element("div", "cluster-metric-line");
@@ -135,6 +139,55 @@ function nodeCard(node, index) {
   );
   card.append(head, meta, cpuLine, ramLine, foot);
   return card;
+}
+
+function drawMonteCarlo(canvas, points) {
+  const size = 360;
+  const center = size / 2;
+  const radius = 160;
+  canvas.width = size;
+  canvas.height = size;
+  const context = canvas.getContext("2d");
+
+  context.fillStyle = "#071219";
+  context.fillRect(0, 0, size, size);
+  context.strokeStyle = "rgba(63, 96, 108, 0.18)";
+  context.lineWidth = 1;
+  for (let position = 20; position <= 340; position += 40) {
+    context.beginPath();
+    context.moveTo(position, 20);
+    context.lineTo(position, 340);
+    context.moveTo(20, position);
+    context.lineTo(340, position);
+    context.stroke();
+  }
+
+  context.beginPath();
+  context.arc(center, center, radius, 0, Math.PI * 2);
+  context.fillStyle = "rgba(40, 225, 209, 0.025)";
+  context.fill();
+  context.strokeStyle = "rgba(40, 225, 209, 0.75)";
+  context.lineWidth = 2.5;
+  context.stroke();
+
+  (points || []).forEach((point, index) => {
+    const x = center + Number(point[0]) * radius;
+    const y = center - Number(point[1]) * radius;
+    const inside = Number(point[2]) === 1;
+    context.beginPath();
+    context.arc(x, y, index === points.length - 1 ? 3.8 : 2.7, 0, Math.PI * 2);
+    context.fillStyle = inside ? "rgba(40, 225, 209, 0.88)" : "rgba(167, 139, 250, 0.9)";
+    context.fill();
+  });
+
+  if (points?.length) {
+    const last = points[points.length - 1];
+    context.beginPath();
+    context.arc(center + Number(last[0]) * radius, center - Number(last[1]) * radius, 8, 0, Math.PI * 2);
+    context.strokeStyle = "rgba(255, 255, 255, 0.72)";
+    context.lineWidth = 1.5;
+    context.stroke();
+  }
 }
 
 function emptyClusterCard(count) {
@@ -165,13 +218,16 @@ function renderNerd(payload) {
   fragment.append(screenHeader("NERD LAB · MONTE CARLO", payload.time, demo.status !== "error"));
 
   const body = element("section", "nerd-layout");
-  const result = element("div", "pi-result");
-  result.append(
-    element("span", "screen-overline", "ESTIMATED VALUE"),
-    element("span", "pi-symbol", "π"),
-    element("strong", "pi-value", demo.estimate === null ? "3.———" : Number(demo.estimate).toFixed(6)),
-    element("span", "pi-target", "target 3.141593"),
-  );
+  const visual = element("div", "monte-visual");
+  visual.append(element("span", "screen-overline", "TREFF / BOM"));
+  const canvas = element("canvas", "monte-canvas");
+  canvas.setAttribute("role", "img");
+  canvas.setAttribute("aria-label", "Tilfeldige punkter i en sirkel inni et kvadrat");
+  const legend = element("div", "monte-legend");
+  const hits = element("span", "legend-hit", `${Number(demo.inside || 0).toLocaleString("nb-NO")} TREFF`);
+  const misses = element("span", "legend-miss", `${Number(demo.outside || 0).toLocaleString("nb-NO")} BOM`);
+  legend.append(hits, misses);
+  visual.append(canvas, legend);
 
   const stats = element("div", "demo-stats");
   const stateText = {
@@ -182,6 +238,13 @@ function renderNerd(payload) {
   }[demo.status] || demo.status.toUpperCase();
   const stateLine = element("div", "demo-state-line");
   stateLine.append(element("span", demo.status === "running" ? "pulse-dot active" : "pulse-dot"), element("strong", "", stateText));
+
+  const result = element("div", "pi-reading");
+  result.append(
+    element("span", "pi-symbol", "π"),
+    element("strong", "pi-value", demo.estimate === null ? "3.———" : Number(demo.estimate).toFixed(6)),
+    element("span", "pi-target", "MÅL 3.141593"),
+  );
 
   const progressHeading = element("div", "progress-heading");
   progressHeading.append(
@@ -194,11 +257,34 @@ function renderNerd(payload) {
   progressBar.append(progressFill);
 
   const runtime = element("div", "runtime-box");
-  runtime.append(element("span", "", "RUNTIME"), element("strong", "", `${Number(demo.runtime_seconds).toFixed(2)} s`));
-  stats.append(stateLine, progressHeading, progressBar, runtime, element("p", "demo-hint", demo.status === "idle" ? "Start jobben i kontrollpanelet →" : payload.message));
-  body.append(result, stats);
+  const runtimeValue = element("div", "");
+  runtimeValue.append(element("span", "", "RUNTIME"), element("strong", "", `${Number(demo.runtime_seconds).toFixed(2)} s`));
+  const workersValue = element("div", "");
+  workersValue.append(element("span", "", "WORKERS"), element("strong", "", String(demo.worker_count || 1)));
+  runtime.append(runtimeValue, workersValue);
+  stats.append(stateLine, result, progressHeading, progressBar, runtime, element("p", "demo-hint", demo.status === "idle" ? "Velg kjerner og start jobben →" : payload.message));
+  body.append(visual, stats);
   fragment.append(body);
   ui.screenContent.replaceChildren(fragment);
+  drawMonteCarlo(canvas, demo.points || []);
+}
+
+function updateCoreControls(payload) {
+  const available = Math.max(1, Number(payload.nodes?.[0]?.cores || payload.demo.available_cores || 1));
+  ui.coreCountLabel.textContent = `${available} tilgjengelig`;
+  [...ui.cores.options].forEach((option) => {
+    option.disabled = Number(option.value) > available;
+  });
+  if (Number(ui.cores.value) > available) ui.cores.value = String(available);
+
+  const requested = Number(ui.cores.value);
+  const reserve = ui.reserveOne.checked && available > 1;
+  const workers = Math.max(1, Math.min(requested, reserve ? available - 1 : available));
+  ui.reserveOne.disabled = payload.demo.status === "running" || available === 1;
+  ui.cores.disabled = payload.demo.status === "running";
+  ui.coreHint.textContent = reserve && requested > workers
+    ? `Bruker ${workers} prosesser · 1 kjerne holdes ledig.`
+    : `Bruker ${workers} ${workers === 1 ? "beregningsprosess" : "beregningsprosesser"}.`;
 }
 
 function render(payload) {
@@ -215,6 +301,7 @@ function render(payload) {
   ui.demoStateLabel.textContent = running ? `${payload.demo.progress.toFixed(0)}%` : payload.demo.status.toUpperCase();
   ui.rawPayload.textContent = JSON.stringify(payload, null, 2);
   ui.lastUpdate.textContent = `${payload.time} · ${payload.mock_mode ? "mock" : "live"}`;
+  updateCoreControls(payload);
 }
 
 async function fetchState() {
@@ -297,7 +384,11 @@ ui.screenButtons.forEach((button) => {
 ui.startDemo.addEventListener("click", async () => {
   ui.startDemo.disabled = true;
   try {
-    await postJson("/api/demo/start", { iterations: Number(ui.iterations.value) });
+    await postJson("/api/demo/start", {
+      iterations: Number(ui.iterations.value),
+      cores: Number(ui.cores.value),
+      reserve_one: ui.reserveOne.checked,
+    });
     await fetchState();
   } catch (error) {
     ui.connectionText.textContent = error.message;
@@ -306,6 +397,8 @@ ui.startDemo.addEventListener("click", async () => {
 });
 
 ui.checkUpdate.addEventListener("click", checkForUpdate);
+ui.cores.addEventListener("change", () => fetchState());
+ui.reserveOne.addEventListener("change", () => fetchState());
 
 function fitDevice() {
   const availableWidth = ui.deviceFit.clientWidth;

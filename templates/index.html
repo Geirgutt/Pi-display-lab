@@ -85,6 +85,18 @@
               <option value="50000000" selected>50 000 000 punkter</option>
               <option value="100000000">100 000 000 punkter</option>
             </select>
+            <label for="cores">Kjerner på oppdragsgiveren <span id="core-count-label">oppdager …</span></label>
+            <select id="cores">
+              <option value="1" selected>1 kjerne</option>
+              <option value="2">2 kjerner</option>
+              <option value="3">3 kjerner</option>
+              <option value="4">4 kjerner</option>
+            </select>
+            <label class="reserve-toggle" for="reserve-one">
+              <input id="reserve-one" type="checkbox" checked>
+              <span>Hold én kjerne ledig på oppdragsgiveren</span>
+            </label>
+            <p class="core-hint" id="core-hint">Bruker 1 beregningsprosess.</p>
             <button class="primary-button" id="start-demo" type="button">
               <span id="start-demo-label">Start beregning</span>
               <span aria-hidden="true">→</span>
