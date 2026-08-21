@@ -5,10 +5,12 @@ from __future__ import annotations
 import math
 import os
 import random
+import re
 import socket
 import sys
 import threading
 import time
+from collections.abc import Callable
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -102,9 +104,114 @@ class SystemMonitor:
         finally:
             probe.close()
 
+    @staticmethod
+    def model_name() -> str:
+        """Les maskinmodell på Raspberry Pi, med en nøytral fallback."""
+
+        try:
+            model = Path("/proc/device-tree/model").read_text(encoding="utf-8")
+            return model.rstrip("\x00").strip()[:48] or "Raspberry Pi"
+        except OSError:
+            return "Raspberry Pi"
+
+
+class NodeRegistry:
+    """Holder siste heartbeat fra ekte, eksterne noder i minnet."""
+
+    MAX_REGISTERED_NODES = 32
+
+    def __init__(
+        self,
+        offline_after_seconds: float = 20.0,
+        clock: Callable[[], float] = time.monotonic,
+    ) -> None:
+        self.offline_after_seconds = offline_after_seconds
+        self._clock = clock
+        self._nodes: dict[str, dict[str, Any]] = {}
+        self._lock = threading.Lock()
+
+    @staticmethod
+    def _text(value: Any, field: str, max_length: int) -> str:
+        if not isinstance(value, str) or not value.strip():
+            raise ValueError(f"{field} må være tekst")
+        cleaned = value.strip()
+        if len(cleaned) > max_length:
+            raise ValueError(f"{field} kan være maksimalt {max_length} tegn")
+        if not cleaned.isprintable():
+            raise ValueError(f"{field} inneholder ugyldige tegn")
+        return cleaned
+
+    @staticmethod
+    def _number(value: Any, field: str, minimum: float, maximum: float) -> float:
+        if isinstance(value, bool):
+            raise ValueError(f"{field} må være et tall")
+        try:
+            number = float(value)
+        except (TypeError, ValueError) as error:
+            raise ValueError(f"{field} må være et tall") from error
+        if not math.isfinite(number) or not minimum <= number <= maximum:
+            raise ValueError(f"{field} må være mellom {minimum:g} og {maximum:g}")
+        return round(number, 1)
+
+    def heartbeat(self, payload: dict[str, Any], source_ip: str | None = None) -> dict[str, Any]:
+        node_id = self._text(payload.get("node_id"), "node_id", 64)
+        if re.fullmatch(r"[A-Za-z0-9._-]+", node_id) is None:
+            raise ValueError("node_id kan bare inneholde bokstaver, tall, punktum, bindestrek og understrek")
+        name = self._text(payload.get("name", node_id), "name", 24)
+        model = self._text(payload.get("model", "Raspberry Pi"), "model", 48)
+        cpu = self._number(payload.get("cpu"), "cpu", 0, 100)
+        ram = self._number(payload.get("ram"), "ram", 0, 100)
+        raw_temp = payload.get("temp")
+        temp = None if raw_temp is None else self._number(raw_temp, "temp", -40, 150)
+        now = self._clock()
+
+        node = {
+            "id": node_id,
+            "name": name,
+            "model": model,
+            "cpu": cpu,
+            "temp": temp,
+            "ram": ram,
+            "ip": source_ip,
+            "kind": "remote",
+            "mock": False,
+            "last_seen": now,
+        }
+        with self._lock:
+            if node_id not in self._nodes and len(self._nodes) >= self.MAX_REGISTERED_NODES:
+                raise ValueError("Noderegisteret er fullt")
+            self._nodes[node_id] = node
+        return self._public_node(node, now)
+
+    def snapshot(self, limit: int = 3) -> list[dict[str, Any]]:
+        now = self._clock()
+        with self._lock:
+            nodes = [dict(node) for node in self._nodes.values()]
+        nodes.sort(key=lambda node: (str(node["name"]).casefold(), str(node["id"])))
+        return [self._public_node(node, now) for node in nodes[:limit]]
+
+    def _public_node(self, node: dict[str, Any], now: float) -> dict[str, Any]:
+        age = max(0.0, now - float(node["last_seen"]))
+        return {
+            "id": node["id"],
+            "name": node["name"],
+            "model": node["model"],
+            "cpu": node["cpu"],
+            "temp": node["temp"],
+            "ram": node["ram"],
+            "ip": node["ip"],
+            "online": age <= self.offline_after_seconds,
+            "kind": node["kind"],
+            "mock": node["mock"],
+            "last_seen_seconds": round(age, 1),
+        }
+
 
 class MonteCarloDemo:
     """Bakgrunnsjobb som estimerer pi og rapporterer fremdrift underveis."""
+
+    MIN_ITERATIONS = 10_000
+    MAX_ITERATIONS = 100_000_000
 
     def __init__(self) -> None:
         self._lock = threading.Lock()
@@ -118,7 +225,7 @@ class MonteCarloDemo:
         self._error: str | None = None
 
     def start(self, iterations: int) -> bool:
-        iterations = min(max(iterations, 10_000), 5_000_000)
+        iterations = min(max(iterations, self.MIN_ITERATIONS), self.MAX_ITERATIONS)
         with self._lock:
             if self._status == "running":
                 return False
@@ -194,6 +301,7 @@ class DashboardState:
 
     def __init__(self, mock_mode: bool = False) -> None:
         self.monitor = SystemMonitor(mock_mode=mock_mode)
+        self.nodes = NodeRegistry()
         self.demo = MonteCarloDemo()
         self.mock_mode = mock_mode
         self._screen = "home"
@@ -209,6 +317,9 @@ class DashboardState:
     def start_demo(self, iterations: int) -> bool:
         return self.demo.start(iterations)
 
+    def register_node(self, payload: dict[str, Any], source_ip: str | None = None) -> dict[str, Any]:
+        return self.nodes.heartbeat(payload, source_ip)
+
     def snapshot(self) -> dict[str, Any]:
         now = datetime.now().astimezone()
         system = self.monitor.read()
@@ -217,17 +328,20 @@ class DashboardState:
 
         nodes = [
             {
+                "id": socket.gethostname(),
                 "name": "Pi2" if self.mock_mode else socket.gethostname()[:12],
+                "model": self.monitor.model_name(),
                 "cpu": system["cpu"],
                 "temp": system["temp"],
                 "ram": system["ram"],
+                "ip": system["ip"],
                 "online": system["online"],
+                "kind": "local",
                 "mock": self.mock_mode,
-            },
-            {"name": "ESP-LAB", "cpu": 18.0, "temp": 43.8, "ram": 28.0, "online": True, "mock": True},
-            {"name": "NAS-01", "cpu": 61.0, "temp": 48.3, "ram": 72.0, "online": True, "mock": True},
-            {"name": "NODE-04", "cpu": 0.0, "temp": None, "ram": 0.0, "online": False, "mock": True},
+                "last_seen_seconds": 0.0,
+            }
         ]
+        nodes.extend(self.nodes.snapshot(limit=3))
 
         demo = self.demo.snapshot()
         if demo["status"] == "running":
@@ -261,7 +375,18 @@ class DashboardState:
             "protocol_version": 1,
             "screen": "home",
             "time": "12:34:56",
-            "nodes": [{"name": "Pi2", "cpu": 42.0, "temp": 51.2, "ram": 48.0, "online": True}],
+            "nodes": [
+                {
+                    "id": "pi2-main",
+                    "name": "Pi2",
+                    "model": "Raspberry Pi 2 Model B",
+                    "cpu": 42.0,
+                    "temp": 51.2,
+                    "ram": 48.0,
+                    "online": True,
+                    "kind": "local",
+                }
+            ],
             "network": {"online": True, "ip": "192.0.2.42"},
             "demo": {"status": "idle", "progress": 0, "estimate": None, "runtime_seconds": 0},
             "message": "Ready",

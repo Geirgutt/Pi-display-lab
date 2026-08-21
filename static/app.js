@@ -6,6 +6,8 @@ const DEVICE_WIDTH = 540;
 const DEVICE_HEIGHT = 380;
 const MAX_DEVICE_SCALE = 2;
 const DEVICE_BOTTOM_RESERVE = 112;
+const UPDATE_STATUS_POLL_MS = 5000;
+const UPDATE_CHECK_INTERVAL_MS = 30 * 60 * 1000;
 
 const ui = {
   screenContent: document.querySelector("#screen-content"),
@@ -20,6 +22,10 @@ const ui = {
   demoStateLabel: document.querySelector("#demo-state-label"),
   lastUpdate: document.querySelector("#last-update"),
   rawPayload: document.querySelector("#raw-payload"),
+  updateStatus: document.querySelector("#update-status"),
+  updateVersion: document.querySelector("#update-version"),
+  checkUpdate: document.querySelector("#check-update"),
+  updateLink: document.querySelector("#update-link"),
 };
 
 function element(tag, className, text) {
@@ -101,6 +107,7 @@ function renderHome(payload) {
 
 function nodeCard(node, index) {
   const card = element("article", node.online ? "cluster-node online" : "cluster-node offline");
+  card.title = [node.model, node.ip].filter(Boolean).join(" · ");
   const head = element("div", "cluster-node-head");
   const title = element("div", "cluster-node-title");
   title.append(
@@ -109,17 +116,34 @@ function nodeCard(node, index) {
   );
   head.append(title, element("span", "node-index", `N${String(index + 1).padStart(2, "0")}`));
 
+  const meta = element(
+    "div",
+    "cluster-node-meta",
+    [node.model, node.ip].filter(Boolean).join(" · ") || "RASPBERRY PI",
+  );
+
   const cpuLine = element("div", "cluster-metric-line");
   cpuLine.append(element("span", "", "CPU"), bar(node.cpu, true), element("b", "", number(node.cpu, "%")));
   const ramLine = element("div", "cluster-metric-line");
   ramLine.append(element("span", "", "RAM"), bar(node.ram, true), element("b", "", number(node.ram, "%")));
 
   const foot = element("div", "cluster-node-foot");
+  const role = node.mock ? "DEMO" : node.kind === "local" ? "LOCAL" : "REMOTE";
   foot.append(
     element("span", "", node.online ? number(node.temp, "°C") : "NO SIGNAL"),
-    element("span", node.mock ? "mock-chip" : "live-chip", node.mock ? "MOCK" : "LIVE"),
+    element("span", `node-role-chip ${node.kind || "remote"}`, role),
   );
-  card.append(head, cpuLine, ramLine, foot);
+  card.append(head, meta, cpuLine, ramLine, foot);
+  return card;
+}
+
+function emptyClusterCard(count) {
+  const card = element("article", "cluster-empty");
+  card.append(
+    element("span", "empty-node-icon", "+"),
+    element("strong", "", `${count} ${count === 1 ? "LEDIG NODEPLASS" : "LEDIGE NODEPLASSER"}`),
+    element("span", "", "VENTER PÅ HEARTBEAT FRA NODE_AGENT.PY"),
+  );
   return card;
 }
 
@@ -128,7 +152,9 @@ function renderCluster(payload) {
   const onlineCount = payload.nodes.filter((node) => node.online).length;
   fragment.append(screenHeader(`CLUSTER · ${onlineCount}/${payload.nodes.length} ONLINE`, payload.time, onlineCount > 0));
   const grid = element("section", "cluster-grid");
-  payload.nodes.slice(0, 4).forEach((node, index) => grid.append(nodeCard(node, index)));
+  const visibleNodes = payload.nodes.slice(0, 4);
+  visibleNodes.forEach((node, index) => grid.append(nodeCard(node, index)));
+  if (visibleNodes.length < 4) grid.append(emptyClusterCard(4 - visibleNodes.length));
   fragment.append(grid);
   ui.screenContent.replaceChildren(fragment);
 }
@@ -217,6 +243,46 @@ async function postJson(path, body) {
   return result;
 }
 
+function renderUpdateStatus(status) {
+  const labels = {
+    idle: "IKKE SJEKKET",
+    checking: "SJEKKER …",
+    current: "OPPDATERT",
+    available: "NY VERSJON · SSH",
+    error: "SJEKK FEILET",
+  };
+  const busy = status.status === "checking";
+  const versions = [status.current_commit, status.available_commit].filter(Boolean);
+  ui.updateStatus.textContent = labels[status.status] || status.status.toUpperCase();
+  ui.updateStatus.title = status.message || "";
+  ui.updateVersion.textContent = versions.length > 1 ? `${versions[0]} → ${versions[1]}` : versions[0] || "Ukjent versjon";
+  ui.checkUpdate.disabled = busy;
+  ui.updateLink.hidden = !status.commit_url;
+  ui.updateLink.href = status.commit_url || "";
+}
+
+async function fetchUpdateStatus() {
+  try {
+    const response = await fetch("/api/update/status", { cache: "no-store" });
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    renderUpdateStatus(await response.json());
+  } catch (error) {
+    ui.updateStatus.textContent = "STATUS UTILGJENGELIG";
+    ui.updateStatus.title = error.message;
+  }
+}
+
+async function checkForUpdate() {
+  try {
+    const response = await fetch("/api/update/check", { method: "POST" });
+    if (!response.ok && response.status !== 409) throw new Error(`HTTP ${response.status}`);
+    await fetchUpdateStatus();
+  } catch (error) {
+    ui.updateStatus.textContent = "SJEKK FEILET";
+    ui.updateStatus.title = error.message;
+  }
+}
+
 ui.screenButtons.forEach((button) => {
   button.addEventListener("click", async () => {
     try {
@@ -238,6 +304,8 @@ ui.startDemo.addEventListener("click", async () => {
     ui.startDemo.disabled = false;
   }
 });
+
+ui.checkUpdate.addEventListener("click", checkForUpdate);
 
 function fitDevice() {
   const availableWidth = ui.deviceFit.clientWidth;
@@ -262,4 +330,8 @@ window.addEventListener("resize", fitDevice);
 
 fitDevice();
 fetchState();
+fetchUpdateStatus();
+window.setTimeout(checkForUpdate, 1500);
 window.setInterval(fetchState, POLL_INTERVAL_MS);
+window.setInterval(fetchUpdateStatus, UPDATE_STATUS_POLL_MS);
+window.setInterval(checkForUpdate, UPDATE_CHECK_INTERVAL_MS);

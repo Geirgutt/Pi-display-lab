@@ -12,8 +12,8 @@ målinger eller beregningslogikk.
 ## Dette får du
 
 - **Home:** klokke, CPU-bruk, CPU-temperatur, RAM og nettverksstatus.
-- **Cluster:** fire nodeplasser med load-bars. Første node er Pi-en; resten er
-  eksempeldata så lenge du bare har én maskin.
+- **Cluster:** hoved-Pi-en og opptil tre ekte maskiner med CPU, temperatur, RAM
+  og automatisk online/offline-status. Ingen dummy-enheter.
 - **Nerd:** Monte Carlo-estimat av pi med fremdrift, runtime og resultat.
 - **Developer controls:** bytt skjerm, velg jobbens størrelse og start demoen.
 - **Mock-modus:** test hele prosjektet på Windows uten Raspberry Pi.
@@ -23,10 +23,12 @@ målinger eller beregningslogikk.
 ## Slik henger delene sammen
 
 ```text
-SystemMonitor + MonteCarloDemo
-             │
-             ▼
-       DashboardState       (én felles state)
+Andre Pi-er → node_agent.py → heartbeat-API → NodeRegistry
+                                             │
+SystemMonitor + MonteCarloDemo ──────────────┤
+                                             ▼
+                                       DashboardState
+                                        (én felles state)
              │
              ▼
          TransportHub
@@ -112,6 +114,12 @@ bash scripts/install-service.sh
 Skriptet bruker brukeren og prosjektstien du faktisk kjører det fra. Det starter
 appen nå og ved hver senere oppstart av Raspberry Pi-en.
 
+Kontrollpanelet sjekker automatisk GitHub ved åpning og deretter hver halvtime
+mens siden står åpen. Hvis en nyere commit finnes på `origin/main`, vises lokal
+og ny versjon samt en lenke der du kan kontrollere endringen på GitHub. Sjekken
+er bare lesende: nettleseren kan ikke installere kode eller starte tjenesten på
+nytt.
+
 Etter at vi har pushet en ny versjon til GitHub, oppdaterer du Pi-en med:
 
 ```bash
@@ -126,12 +134,69 @@ Oppdateringsskriptet:
 3. oppretter `.venv` hvis den mangler og oppdaterer Python-pakkene
 4. starter `pi-display-lab` på nytt og kontrollerer at tjenesten kjører
 
+Dette er den eneste oppdateringsveien. Du bestemmer dermed selv når en kontrollert
+GitHub-versjon skal installeres på Pi-en, og kommandoen må kjøres over SSH.
+
 Status og logger kan alltid sjekkes med:
 
 ```bash
 systemctl status pi-display-lab
 journalctl -u pi-display-lab -f
 ```
+
+## Koble til flere Raspberry Pi-er
+
+Hoved-Pi-en kjører webappen. På hver ekstra Pi kjører en liten agent som sender
+CPU, temperatur og RAM hvert femte sekund. Agenten bruker bare Python sitt
+standardbibliotek.
+
+På en ekstra Raspberry Pi med vanlig Raspberry Pi OS:
+
+```bash
+sudo apt update
+sudo apt install -y git python3 python3-venv
+cd ~
+git clone https://github.com/Geirgutt/Pi-display-lab.git
+cd Pi-display-lab
+python3 -m venv .venv
+bash scripts/install-agent-service.sh http://HOVED-PI-IP:5000 pi3b-plus
+```
+
+Bytt `HOVED-PI-IP` med IP-adressen til Pi-en som viser dashboardet. Det siste
+argumentet er nodenavnet på skjermen. Bruk 1–24 bokstaver, tall, punktum,
+bindestrek eller understrek.
+
+Agentstatus og logger:
+
+```bash
+systemctl status pi-display-node-agent
+journalctl -u pi-display-node-agent -f
+```
+
+Hvis en agent ikke har sendt heartbeat på 20 sekunder, markeres noden som
+offline. Etter omstart av hovedappen dukker noden opp igjen ved neste heartbeat.
+
+### Valgfritt delt token
+
+På et betrodd labnett kan heartbeat-API-et brukes uten token. For ekstra vern
+kan samme tilfeldige token lagres lokalt på hoved-Pi-en i
+`/etc/default/pi-display-lab` og på hver agent i
+`/etc/default/pi-display-lab-agent`:
+
+```text
+PI_DISPLAY_NODE_TOKEN=sett-inn-en-lang-tilfeldig-verdi-her
+```
+
+Restart deretter de aktuelle tjenestene. Disse filene ligger utenfor repoet og
+skal aldri committes.
+
+### Raspberry Pi med Home Assistant
+
+Hvis Home Assistant kjører i Docker eller Supervised på vanlig Raspberry Pi OS,
+kan agenten normalt kjøres på vertssystemet ved siden av Home Assistant. På
+Home Assistant OS bør vi ikke installere dette skriptet direkte. Der lager vi
+senere en liten Home Assistant-integrasjon, add-on eller MQTT/REST-automatisering
+som sender de samme heartbeat-feltene. API-formatet er allerede klart for det.
 
 ## Finn Pi-ens IP og åpne fra Windows
 
@@ -188,7 +253,10 @@ Nyttige adresser:
 | `GET` | `/api/health` | Sjekker at backend lever |
 | `GET` | `/api/state` | Returnerer hele gjeldende display-state |
 | `POST` | `/api/screen` | Bytter skjerm med f.eks. `{"screen":"cluster"}` |
-| `POST` | `/api/demo/start` | Starter beregning med f.eks. `{"iterations":1000000}` |
+| `POST` | `/api/demo/start` | Starter beregning med f.eks. `{"iterations":50000000}` |
+| `POST` | `/api/nodes/heartbeat` | Registrerer status fra en ekstern Pi-agent |
+| `GET` | `/api/update/status` | Viser lokal og eventuell tilgjengelig versjon |
+| `POST` | `/api/update/check` | Henter oppdatert status fra `origin/main` |
 | `GET` | `/api/protocol/example` | Gir en kort eksempelmelding for ESP32-testing |
 
 Kjernen i protokollen er liten og versjonert:
@@ -200,11 +268,14 @@ Kjernen i protokollen er liten og versjonert:
   "time": "12:34:56",
   "nodes": [
     {
+      "id": "pi3-office",
       "name": "Pi2",
+      "model": "Raspberry Pi 3 Model B Plus",
       "cpu": 42.0,
       "temp": 51.2,
       "ram": 48.0,
-      "online": true
+      "online": true,
+      "kind": "remote"
     }
   ],
   "network": {
@@ -224,7 +295,10 @@ alltid tegne siste melding uten å måtte huske en lang historikk.
 | Fil | Rolle |
 |---|---|
 | `app.py` | Starter Flask og definerer API-adressene |
-| `display_state.py` | Leser sensorer, holder valgt skjerm og kjører pi-demoen |
+| `display_state.py` | Leser sensorer, holder noderegister/state og kjører pi-demoen |
+| `node_agent.py` | Sender systemmålinger fra en ekstra Raspberry Pi |
+| `scripts/` | Installerer tjenester og oppdaterer appen trygt |
+| `updates.py` | Sjekker `origin/main` og lager lenke til en tilgjengelig commit |
 | `transports.py` | Felles `DeviceTransport`, nettlesertransport og ESP32-stub |
 | `templates/index.html` | Selve nettsidens struktur |
 | `static/app.js` | Henter state og tegner de tre skjermbildene |
@@ -254,8 +328,7 @@ Ta én liten endring av gangen, lagre filen og oppdater nettleseren:
 - **Legg til sensor:** les verdien i `SystemMonitor`, legg den i
   `DashboardState.snapshot()`, og vis den til slutt i ønsket renderer i
   `static/app.js`.
-- **Endre mock-noder:** listen `nodes` i `DashboardState.snapshot()` i
-  `display_state.py`.
+- **Legg til en Pi:** kjør `scripts/install-agent-service.sh` på den nye noden.
 - **Gjør demoen tyngre/lettere:** alternativene i `templates/index.html`.
 
 Den rekkefølgen ved en ny sensor er viktig: **mål → legg i JSON → tegn**. Det er
@@ -304,9 +377,9 @@ Med det virtuelle miljøet aktivt:
 python -m unittest discover -s tests -v
 ```
 
-Testene sjekker startsiden, protokollfeltene, skjermbytte, feil skjermnavn,
-transportlaget og at Monte Carlo-jobben faktisk fullføres med et fornuftig
-estimat.
+Testene sjekker startsiden, protokollfeltene, heartbeat-validering,
+tokenbeskyttelse, skjermbytte, transportlaget og at Monte Carlo-jobben faktisk
+fullføres med et fornuftig estimat.
 
 ## Vanlige problemer
 

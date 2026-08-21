@@ -467,6 +467,15 @@ h1 {
   border-style: dashed;
 }
 
+.cluster-node-meta {
+  margin-top: 3px;
+  overflow: hidden;
+  color: #536e7b;
+  font-size: 7px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .cluster-node-head,
 .cluster-node-title,
 .cluster-metric-line,
@@ -527,18 +536,54 @@ h1 {
   font-size: 8px;
 }
 
-.mock-chip,
-.live-chip {
+.node-role-chip {
   padding: 2px 4px;
   border-radius: 2px;
-  color: #9e8dda;
-  background: rgba(167, 139, 250, 0.12);
+  color: var(--cyan);
+  background: rgba(40, 225, 209, 0.12);
   font-size: 7px;
 }
 
-.live-chip {
-  color: var(--cyan);
-  background: rgba(40, 225, 209, 0.12);
+.node-role-chip.remote {
+  color: #9e8dda;
+  background: rgba(167, 139, 250, 0.12);
+}
+
+.cluster-empty {
+  display: grid;
+  place-content: center;
+  justify-items: center;
+  min-width: 0;
+  padding: 14px;
+  border: 1px dashed #1b3440;
+  border-radius: 5px;
+  color: #45606d;
+  background: rgba(8, 19, 26, 0.45);
+  text-align: center;
+}
+
+.cluster-empty strong {
+  margin-top: 6px;
+  color: #66808c;
+  font-size: 9px;
+  letter-spacing: 0.08em;
+}
+
+.cluster-empty > span:last-child {
+  margin-top: 4px;
+  font-size: 6px;
+  letter-spacing: 0.06em;
+}
+
+.empty-node-icon {
+  display: grid;
+  width: 22px;
+  height: 22px;
+  place-items: center;
+  border: 1px solid #24424d;
+  border-radius: 50%;
+  color: #4b7380;
+  font-size: 14px;
 }
 
 .nerd-layout {
@@ -751,6 +796,66 @@ h1 {
   line-height: 1.5;
 }
 
+.update-card {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 19px;
+  padding: 12px;
+  border: 1px solid #294044;
+  border-radius: 7px;
+  background: rgba(12, 29, 32, 0.85);
+}
+
+.update-copy {
+  display: grid;
+  min-width: 0;
+  gap: 3px;
+}
+
+.update-copy strong {
+  overflow: hidden;
+  color: #c4d7d7;
+  font: 700 10px/1.2 ui-monospace, SFMono-Regular, Consolas, monospace;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.update-copy > span:last-child {
+  color: #5d747f;
+  font: 8px/1.2 ui-monospace, SFMono-Regular, Consolas, monospace;
+}
+
+.update-actions {
+  display: flex;
+  flex: 0 0 auto;
+  gap: 6px;
+}
+
+.secondary-button,
+.update-link {
+  padding: 7px 9px;
+  border: 1px solid #35505d;
+  border-radius: 5px;
+  color: #9db1bb;
+  background: #101b23;
+  cursor: pointer;
+  font-size: 9px;
+  font-weight: 700;
+}
+
+.update-link {
+  color: var(--cyan);
+  border-color: #239e94;
+  text-decoration: none;
+}
+
+.secondary-button:disabled {
+  cursor: wait;
+  opacity: 0.55;
+}
+
 .api-card {
   margin-top: 19px;
   padding: 12px;
@@ -830,6 +935,7 @@ h1 {
   }
 
   .controls-heading,
+  .update-card,
   .api-card,
   .payload-details {
     grid-column: 1 / -1;
