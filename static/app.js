@@ -75,6 +75,31 @@ function metricCard(label, value, suffix, accent = "") {
   return card;
 }
 
+function frequencyText(value) {
+  return value === null || value === undefined ? "— MHz" : `${Math.round(Number(value))} MHz`;
+}
+
+function throttleTone(throttle) {
+  if (!throttle?.available) return "unavailable";
+  if (throttle.active) return "active";
+  if (throttle.occurred) return "history";
+  return "ok";
+}
+
+function throttleText(throttle) {
+  if (!throttle) return "STATUS UTILGJENGELIG";
+  return `${throttle.summary}${throttle.available ? ` · ${throttle.raw}` : ""}`;
+}
+
+function systemHealthStrip(system, compact = false) {
+  const throttle = system.throttle;
+  const strip = element("div", `system-health ${throttleTone(throttle)}${compact ? " compact" : ""}`);
+  const clock = element("span", "system-clock");
+  clock.append(element("small", "", "CPU CLOCK"), element("strong", "", frequencyText(system.frequency_mhz)));
+  strip.append(clock, element("span", "throttle-message", throttleText(throttle)));
+  return strip;
+}
+
 function renderHome(payload) {
   const fragment = document.createDocumentFragment();
   fragment.append(screenHeader("PI STATUS", payload.time, payload.network.online));
@@ -105,13 +130,14 @@ function renderHome(payload) {
     element("span", "", payload.backend),
     element("span", "footer-message", payload.message.toUpperCase()),
   );
-  fragment.append(hero, metrics, footer);
+  fragment.append(hero, metrics, systemHealthStrip(payload.system), footer);
   ui.screenContent.replaceChildren(fragment);
 }
 
 function nodeCard(node, index) {
   const card = element("article", node.online ? "cluster-node online" : "cluster-node offline");
-  card.title = [node.model, node.ip].filter(Boolean).join(" · ");
+  if (node.throttle?.active) card.classList.add("throttled");
+  card.title = [node.model, node.ip, throttleText(node.throttle)].filter(Boolean).join(" · ");
   const head = element("div", "cluster-node-head");
   const title = element("div", "cluster-node-title");
   title.append(
@@ -123,7 +149,7 @@ function nodeCard(node, index) {
   const meta = element(
     "div",
     "cluster-node-meta",
-    [node.model, node.ip, node.cores ? `${node.cores} CORES` : null].filter(Boolean).join(" · ") || "RASPBERRY PI",
+    [node.model, node.ip, node.cores ? `${node.cores} CORES` : null, node.frequency_mhz ? frequencyText(node.frequency_mhz) : null].filter(Boolean).join(" · ") || "RASPBERRY PI",
   );
 
   const cpuLine = element("div", "cluster-metric-line");
@@ -133,9 +159,11 @@ function nodeCard(node, index) {
 
   const foot = element("div", "cluster-node-foot");
   const role = node.mock ? "DEMO" : node.kind === "local" ? "LOCAL" : "REMOTE";
+  const statusText = node.throttle?.active ? "THROTTLE" : node.throttle?.occurred ? "HISTORY" : role;
+  const statusClass = node.throttle?.active ? "warning" : node.throttle?.occurred ? "history" : node.kind || "remote";
   foot.append(
     element("span", "", node.online ? number(node.temp, "°C") : "NO SIGNAL"),
-    element("span", `node-role-chip ${node.kind || "remote"}`, role),
+    element("span", `node-role-chip ${statusClass}`, statusText),
   );
   card.append(head, meta, cpuLine, ramLine, foot);
   return card;
@@ -261,8 +289,18 @@ function renderNerd(payload) {
   runtimeValue.append(element("span", "", "RUNTIME"), element("strong", "", `${Number(demo.runtime_seconds).toFixed(2)} s`));
   const workersValue = element("div", "");
   workersValue.append(element("span", "", "WORKERS"), element("strong", "", String(demo.worker_count || 1)));
-  runtime.append(runtimeValue, workersValue);
-  stats.append(stateLine, result, progressHeading, progressBar, runtime, element("p", "demo-hint", demo.status === "idle" ? "Velg kjerner og start jobben →" : payload.message));
+  const clockValue = element("div", "");
+  clockValue.append(element("span", "", "CLOCK"), element("strong", "", frequencyText(payload.system.frequency_mhz).replace(" MHz", "")));
+  runtime.append(runtimeValue, workersValue, clockValue);
+  stats.append(
+    stateLine,
+    result,
+    progressHeading,
+    progressBar,
+    runtime,
+    systemHealthStrip(payload.system, true),
+    element("p", "demo-hint", demo.status === "idle" ? "Velg kjerner og start jobben →" : payload.message),
+  );
   body.append(visual, stats);
   fragment.append(body);
   ui.screenContent.replaceChildren(fragment);

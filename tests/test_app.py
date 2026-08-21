@@ -43,6 +43,8 @@ class AppSmokeTests(unittest.TestCase):
             self.assertIn(key, payload)
         self.assertEqual(len(payload["nodes"]), 1)
         self.assertEqual(payload["nodes"][0]["kind"], "local")
+        self.assertIn("frequency_mhz", payload["system"])
+        self.assertIn("throttle", payload["system"])
 
     def test_remote_node_appears_after_heartbeat(self) -> None:
         heartbeat = {
@@ -53,6 +55,8 @@ class AppSmokeTests(unittest.TestCase):
             "temp": 48.2,
             "ram": 39.1,
             "cores": 4,
+            "frequency_mhz": 900,
+            "throttle_flags": 0x50005,
         }
         accepted = self.client.post("/api/nodes/heartbeat", json=heartbeat)
         self.assertEqual(accepted.status_code, 202)
@@ -63,6 +67,8 @@ class AppSmokeTests(unittest.TestCase):
         self.assertEqual(nodes[1]["kind"], "remote")
         self.assertEqual(nodes[1]["ip"], "127.0.0.1")
         self.assertEqual(nodes[1]["cores"], 4)
+        self.assertEqual(nodes[1]["frequency_mhz"], 900.0)
+        self.assertTrue(nodes[1]["throttle"]["active"])
 
     def test_heartbeat_validates_metrics_and_optional_token(self) -> None:
         invalid = self.client.post(

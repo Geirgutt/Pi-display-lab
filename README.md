@@ -11,7 +11,8 @@ målinger eller beregningslogikk.
 
 ## Dette får du
 
-- **Home:** klokke, CPU-bruk, CPU-temperatur, RAM og nettverksstatus.
+- **Home:** klokke, CPU-bruk, CPU-temperatur, RAM, CPU-frekvens, strupestatus
+  og nettverksstatus.
 - **Cluster:** hoved-Pi-en og opptil tre ekte maskiner med CPU, temperatur, RAM
   og automatisk online/offline-status. Ingen dummy-enheter.
 - **Nerd:** Monte Carlo-estimat av pi med levende sirkelgrafikk for treff og bom.
@@ -192,6 +193,24 @@ sendes til nettleseren for å holde grafikken lett.
 Eksterne Pi-agenter rapporterer nå hvor mange kjerner de har, men kjører ikke
 beregningsjobber ennå. Dette er bevisst: neste trinn blir en tokenbeskyttet
 jobbprotokoll der agentene selv henter arbeid, uten nye åpne porter.
+
+## CPU-frekvens og struping
+
+Appen leser gjeldende CPU-frekvens fra Linux sitt `cpufreq`-grensesnitt og
+bruker `vcgencmd` som reserve. Raspberry Pi sitt `get_throttled`-bitfelt dekodes
+til en tydelig status på Home- og Nerd-skjermen:
+
+- turkis: ingen registrert struping (`0x0`)
+- gul: underspenning, struping eller temperaturgrense har forekommet tidligere
+- rød: problemet er aktivt akkurat nå, for eksempel `0x50005`
+
+Cluster-visningen viser også frekvens og et `THROTTLE`- eller `HISTORY`-merke
+for oppdaterte nodeagenter. Gamle agenter fortsetter å virke, men viser status
+som utilgjengelig frem til `node_agent.py` er oppdatert og tjenesten restartet:
+
+```bash
+sudo systemctl restart pi-display-node-agent
+```
 
 ### Valgfritt delt token
 

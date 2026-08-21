@@ -8,6 +8,7 @@ import os
 import random
 import re
 import socket
+import subprocess
 import sys
 import threading
 import time
@@ -16,6 +17,51 @@ from concurrent.futures import ProcessPoolExecutor, as_completed
 from datetime import datetime
 from pathlib import Path
 from typing import Any
+
+
+def decode_throttle_flags(flags: int, available: bool = True) -> dict[str, Any]:
+    """Gjør Raspberry Pi-bitfeltet lesbart for API og grensesnitt."""
+
+    active_labels = []
+    history_labels = []
+    if flags & (1 << 0):
+        active_labels.append("UNDERVOLTAGE")
+    if flags & (1 << 1):
+        active_labels.append("FREKVENS BEGRENSET")
+    if flags & (1 << 2):
+        active_labels.append("STRUPING")
+    if flags & (1 << 3):
+        active_labels.append("TEMPERATURGRENSE")
+    if flags & (1 << 16):
+        history_labels.append("UNDERVOLTAGE")
+    if flags & (1 << 17):
+        history_labels.append("FREKVENS BEGRENSET")
+    if flags & (1 << 18):
+        history_labels.append("STRUPING")
+    if flags & (1 << 19):
+        history_labels.append("TEMPERATURGRENSE")
+
+    if not available:
+        summary = "STATUS UTILGJENGELIG"
+    elif active_labels:
+        summary = " · ".join(active_labels)
+    elif history_labels:
+        summary = f"TIDLIGERE: {' · '.join(history_labels)}"
+    else:
+        summary = "INGEN STRUPING"
+
+    return {
+        "flags": flags,
+        "raw": f"0x{flags:x}",
+        "available": available,
+        "active": bool(active_labels),
+        "occurred": bool(history_labels),
+        "under_voltage": bool(flags & (1 << 0)),
+        "frequency_capped": bool(flags & (1 << 1)),
+        "throttled": bool(flags & (1 << 2)),
+        "soft_temp_limit": bool(flags & (1 << 3)),
+        "summary": summary,
+    }
 
 
 def _monte_carlo_batch(
@@ -56,6 +102,8 @@ class SystemMonitor:
             "cpu": self._cpu_percent(),
             "temp": self._temperature_celsius(),
             "ram": self._memory_percent(),
+            "frequency_mhz": self._cpu_frequency_mhz(),
+            "throttle": self._throttle_status(),
             "ip": local_ip,
             "online": local_ip != "127.0.0.1",
         }
@@ -67,6 +115,8 @@ class SystemMonitor:
             "cpu": round(34 + wave * 14, 1),
             "temp": round(50.5 + wave * 2.4, 1),
             "ram": round(47 + math.cos(self._mock_tick / 4) * 5, 1),
+            "frequency_mhz": 1000.0 if wave > -0.2 else 600.0,
+            "throttle": decode_throttle_flags(0),
             "ip": "192.0.2.42",
             "online": True,
         }
@@ -113,6 +163,45 @@ class SystemMonitor:
             return round((total - available) / total * 100, 1)
         except (OSError, ValueError, KeyError):
             return None
+
+    @staticmethod
+    def _run_vcgencmd(*args: str) -> str | None:
+        try:
+            result = subprocess.run(
+                ["vcgencmd", *args],
+                check=True,
+                capture_output=True,
+                text=True,
+                timeout=1,
+            )
+            return result.stdout.strip()
+        except (OSError, subprocess.SubprocessError):
+            return None
+
+    @classmethod
+    def _cpu_frequency_mhz(cls) -> float | None:
+        paths = (
+            Path("/sys/devices/system/cpu/cpufreq/policy0/scaling_cur_freq"),
+            Path("/sys/devices/system/cpu/cpu0/cpufreq/scaling_cur_freq"),
+        )
+        for path in paths:
+            try:
+                return round(float(path.read_text(encoding="utf-8").strip()) / 1000, 1)
+            except (OSError, ValueError):
+                continue
+
+        output = cls._run_vcgencmd("measure_clock", "arm")
+        match = re.fullmatch(r"frequency\(\d+\)=(\d+)", output or "")
+        return round(int(match.group(1)) / 1_000_000, 1) if match else None
+
+    @classmethod
+    def _throttle_status(cls) -> dict[str, Any]:
+        output = cls._run_vcgencmd("get_throttled")
+        match = re.fullmatch(r"throttled=(0x[0-9a-fA-F]+)", output or "")
+        return decode_throttle_flags(
+            int(match.group(1), 16) if match else 0,
+            available=match is not None,
+        )
 
     @staticmethod
     def _local_ip() -> str:
@@ -191,6 +280,22 @@ class NodeRegistry:
         if not cores_number.is_integer():
             raise ValueError("cores må være et heltall")
         cores = int(cores_number)
+        raw_frequency = payload.get("frequency_mhz")
+        frequency_mhz = (
+            None
+            if raw_frequency is None
+            else self._number(raw_frequency, "frequency_mhz", 1, 10_000)
+        )
+        throttle_available = "throttle_flags" in payload
+        raw_throttle_flags = payload.get("throttle_flags", 0)
+        if isinstance(raw_throttle_flags, bool):
+            raise ValueError("throttle_flags må være et heltall")
+        try:
+            throttle_flags = int(raw_throttle_flags)
+        except (TypeError, ValueError) as error:
+            raise ValueError("throttle_flags må være et heltall") from error
+        if throttle_flags != raw_throttle_flags or not 0 <= throttle_flags <= 0xFFFFF:
+            raise ValueError("throttle_flags er utenfor gyldig område")
         now = self._clock()
 
         node = {
@@ -201,6 +306,8 @@ class NodeRegistry:
             "temp": temp,
             "ram": ram,
             "cores": cores,
+            "frequency_mhz": frequency_mhz,
+            "throttle": decode_throttle_flags(throttle_flags, throttle_available),
             "ip": source_ip,
             "kind": "remote",
             "mock": False,
@@ -229,6 +336,8 @@ class NodeRegistry:
             "temp": node["temp"],
             "ram": node["ram"],
             "cores": node["cores"],
+            "frequency_mhz": node["frequency_mhz"],
+            "throttle": dict(node["throttle"]),
             "ip": node["ip"],
             "online": age <= self.offline_after_seconds,
             "kind": node["kind"],
@@ -418,6 +527,8 @@ class DashboardState:
                 "temp": system["temp"],
                 "ram": system["ram"],
                 "cores": demo["available_cores"],
+                "frequency_mhz": system["frequency_mhz"],
+                "throttle": system["throttle"],
                 "ip": system["ip"],
                 "online": system["online"],
                 "kind": "local",
@@ -444,6 +555,8 @@ class DashboardState:
                 "cpu": system["cpu"],
                 "temp": system["temp"],
                 "ram": system["ram"],
+                "frequency_mhz": system["frequency_mhz"],
+                "throttle": system["throttle"],
             },
             "network": {"online": system["online"], "ip": system["ip"]},
             "demo": demo,
@@ -467,6 +580,8 @@ class DashboardState:
                     "temp": 51.2,
                     "ram": 48.0,
                     "cores": 4,
+                    "frequency_mhz": 1000.0,
+                    "throttle": decode_throttle_flags(0),
                     "online": True,
                     "kind": "local",
                 }

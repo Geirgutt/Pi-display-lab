@@ -25,6 +25,8 @@ def build_payload(monitor: SystemMonitor, name: str) -> dict[str, Any]:
         "temp": values["temp"],
         "ram": values["ram"],
         "cores": max(os.cpu_count() or 1, 1),
+        "frequency_mhz": values["frequency_mhz"],
+        "throttle_flags": values["throttle"]["flags"],
     }
 
 

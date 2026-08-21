@@ -429,6 +429,65 @@ h1 {
 .metric-card.violet .meter-fill { background: var(--violet); box-shadow: 0 0 6px rgba(167, 139, 250, 0.5); }
 .meter-fill.hot { background: var(--red) !important; }
 
+.system-health {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-top: 9px;
+  padding: 6px 9px;
+  border: 1px solid #1b4644;
+  border-radius: 4px;
+  color: var(--cyan);
+  background: rgba(13, 49, 47, 0.28);
+  font-size: 7px;
+  letter-spacing: 0.06em;
+}
+
+.system-health.history {
+  color: var(--amber);
+  border-color: #5f4827;
+  background: rgba(83, 58, 23, 0.28);
+}
+
+.system-health.active {
+  color: #ff8998;
+  border-color: #74343e;
+  background: rgba(103, 35, 47, 0.32);
+  box-shadow: inset 3px 0 0 var(--red);
+}
+
+.system-health.unavailable {
+  color: #637985;
+  border-color: #263c47;
+  background: rgba(20, 34, 42, 0.32);
+}
+
+.system-clock {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: baseline;
+  gap: 6px;
+}
+
+.system-clock small {
+  color: #667f8b;
+  font-size: 6px;
+}
+
+.system-clock strong {
+  color: currentColor;
+  font-size: 9px;
+}
+
+.throttle-message {
+  overflow: hidden;
+  font-weight: 700;
+  text-align: right;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .display-footer {
   display: flex;
   align-items: center;
@@ -465,6 +524,11 @@ h1 {
 .cluster-node.offline {
   opacity: 0.48;
   border-style: dashed;
+}
+
+.cluster-node.throttled {
+  border-color: #74343e;
+  box-shadow: inset 3px 0 0 var(--red);
 }
 
 .cluster-node-meta {
@@ -547,6 +611,16 @@ h1 {
 .node-role-chip.remote {
   color: #9e8dda;
   background: rgba(167, 139, 250, 0.12);
+}
+
+.node-role-chip.warning {
+  color: #ff8998;
+  background: rgba(226, 75, 94, 0.15);
+}
+
+.node-role-chip.history {
+  color: var(--amber);
+  background: rgba(244, 180, 84, 0.14);
 }
 
 .cluster-empty {
@@ -703,7 +777,7 @@ h1 {
 
 .runtime-box {
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: 1.2fr 0.8fr 0.8fr;
   gap: 8px;
   margin-top: 18px;
   padding: 8px 10px;
@@ -806,6 +880,15 @@ h1 {
   border-radius: 6px;
   color: #c8d5dc;
   background: #0b131a;
+}
+
+.demo-stats .system-health.compact {
+  margin-top: 8px;
+  padding: 5px 7px;
+}
+
+.demo-stats .system-health.compact .system-clock {
+  display: none;
 }
 
 #core-count-label {
