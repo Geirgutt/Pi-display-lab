@@ -46,7 +46,8 @@ EOF
 echo "Installerer $UNIT_FILE for bruker $RUN_USER ..."
 sudo install -m 0644 "$TEMP_UNIT" "$UNIT_FILE"
 sudo systemctl daemon-reload
-sudo systemctl enable --now "$SERVICE_NAME.service"
+sudo systemctl enable "$SERVICE_NAME.service"
+sudo systemctl restart "$SERVICE_NAME.service"
 
 echo
 sudo systemctl --no-pager --full status "$SERVICE_NAME.service"
