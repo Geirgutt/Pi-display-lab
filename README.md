@@ -51,8 +51,8 @@ renderer som mottar state og tegner riktig skjerm.
 
 ## Start på Raspberry Pi OS Lite
 
-Disse stegene gjøres én gang etter at mappen `pi-display-lab` er kopiert til
-Pi-en, for eksempel til `/home/pi/pi-display-lab`.
+Disse stegene gjøres én gang etter at mappen `Pi-display-lab` er kopiert til
+Pi-en, for eksempel til `/home/pi/Pi-display-lab`.
 
 1. Logg inn på Pi-en via tastatur/skjerm eller SSH.
 
@@ -66,7 +66,7 @@ Pi-en, for eksempel til `/home/pi/pi-display-lab`.
 3. Gå til prosjektmappen:
 
    ```bash
-   cd ~/pi-display-lab
+   cd ~/Pi-display-lab
    ```
 
 4. Lag et isolert Python-miljø. Dette holder prosjektets pakker adskilt fra
@@ -95,9 +95,42 @@ appen kjører. Stopp den senere med `Ctrl+C`.
 Neste gang holder dette:
 
 ```bash
-cd ~/pi-display-lab
+cd ~/Pi-display-lab
 source .venv/bin/activate
 python app.py
+```
+
+## Kjør automatisk og oppdater senere
+
+Når `.venv` og pakkene er installert, kan systemd-tjenesten opprettes automatisk:
+
+```bash
+cd ~/Pi-display-lab
+bash scripts/install-service.sh
+```
+
+Skriptet bruker brukeren og prosjektstien du faktisk kjører det fra. Det starter
+appen nå og ved hver senere oppstart av Raspberry Pi-en.
+
+Etter at vi har pushet en ny versjon til GitHub, oppdaterer du Pi-en med:
+
+```bash
+cd ~/Pi-display-lab
+bash scripts/update.sh
+```
+
+Oppdateringsskriptet:
+
+1. stopper hvis prosjektmappen har lokale endringer
+2. henter siste versjon uten å omskrive lokal Git-historikk
+3. oppretter `.venv` hvis den mangler og oppdaterer Python-pakkene
+4. starter `pi-display-lab` på nytt og kontrollerer at tjenesten kjører
+
+Status og logger kan alltid sjekkes med:
+
+```bash
+systemctl status pi-display-lab
+journalctl -u pi-display-lab -f
 ```
 
 ## Finn Pi-ens IP og åpne fra Windows
@@ -198,6 +231,12 @@ alltid tegne siste melding uten å måtte huske en lang historikk.
 | `static/style.css` | Farger, TFT-ramme, layout og responsiv skalering |
 | `tests/` | Små kontroller av API, beregningsjobb og transportlag |
 | `requirements.txt` | Den eneste Python-avhengigheten: Flask |
+
+## Lisens
+
+Prosjektet er tilgjengelig under [MIT-lisensen](LICENSE). Det betyr kort sagt
+at andre kan bruke, endre og dele koden, også i kommersielle prosjekter, så
+lenge lisens- og opphavsmerknaden følger med. Programvaren leveres uten garanti.
 
 ## Enkle steder å eksperimentere
 

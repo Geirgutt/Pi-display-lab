@@ -4,6 +4,8 @@
 const POLL_INTERVAL_MS = 1000;
 const DEVICE_WIDTH = 540;
 const DEVICE_HEIGHT = 380;
+const MAX_DEVICE_SCALE = 2;
+const DEVICE_BOTTOM_RESERVE = 112;
 
 const ui = {
   screenContent: document.querySelector("#screen-content"),
@@ -239,16 +241,24 @@ ui.startDemo.addEventListener("click", async () => {
 
 function fitDevice() {
   const availableWidth = ui.deviceFit.clientWidth;
-  const scale = Math.min(1, availableWidth / DEVICE_WIDTH);
+  const deviceTop = ui.deviceFit.getBoundingClientRect().top;
+  const availableHeight = Math.max(
+    DEVICE_HEIGHT,
+    window.innerHeight - deviceTop - DEVICE_BOTTOM_RESERVE,
+  );
+  const scale = Math.min(
+    MAX_DEVICE_SCALE,
+    availableWidth / DEVICE_WIDTH,
+    availableHeight / DEVICE_HEIGHT,
+  );
   ui.deviceScale.style.transform = `scale(${scale})`;
   ui.deviceFit.style.height = `${DEVICE_HEIGHT * scale}px`;
 }
 
 if ("ResizeObserver" in window) {
   new ResizeObserver(fitDevice).observe(ui.deviceFit);
-} else {
-  window.addEventListener("resize", fitDevice);
 }
+window.addEventListener("resize", fitDevice);
 
 fitDevice();
 fetchState();
