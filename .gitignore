@@ -9,6 +9,7 @@ __pycache__/
 !.env.example
 *.local
 config.local.*
+config.local.json
 secrets.*
 credentials.*
 .secrets/

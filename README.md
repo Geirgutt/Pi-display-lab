@@ -139,6 +139,23 @@ Oppdateringsskriptet:
 Dette er den eneste oppdateringsveien. Du bestemmer dermed selv når en kontrollert
 GitHub-versjon skal installeres på Pi-en, og kommandoen må kjøres over SSH.
 
+## Koble til cluster coordinator
+
+Kopier eksempelkonfigurasjonen til en lokal fil som Git ignorerer:
+
+```bash
+cp config.example.json config.local.json
+```
+
+Endre deretter `enabled` til `true` og sett `coordinator_url` til adressen til
+coordinator-tjenesten. `config.local.json` skal bli liggende lokalt på Pi-en og
+skal ikke committes. Hvis filen mangler eller er ugyldig, starter appen normalt
+med cluster-integrasjonen deaktivert.
+
+`GET /api/cluster-jobs` henter coordinatorens `/status` med to sekunders timeout.
+Hvis coordinatoren er nede, returnerer bare dette endepunktet en kontrollert
+feilstatus; resten av Pi Display Lab fortsetter å fungere.
+
 Status og logger kan alltid sjekkes med:
 
 ```bash
@@ -291,6 +308,7 @@ Nyttige adresser:
 | `POST` | `/api/screen` | Bytter skjerm med f.eks. `{"screen":"cluster"}` |
 | `POST` | `/api/demo/start` | Starter beregning med f.eks. `{"iterations":50000000,"cores":4,"reserve_one":false}` |
 | `POST` | `/api/nodes/heartbeat` | Registrerer status fra en ekstern Pi-agent |
+| `GET` | `/api/cluster-jobs` | Henter jobbstatus fra konfigurert cluster coordinator |
 | `GET` | `/api/update/status` | Viser lokal og eventuell tilgjengelig versjon |
 | `POST` | `/api/update/check` | Henter oppdatert status fra `origin/main` |
 | `GET` | `/api/protocol/example` | Gir en kort eksempelmelding for ESP32-testing |

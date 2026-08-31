@@ -9,6 +9,8 @@ from typing import Any
 
 from flask import Flask, jsonify, render_template, request
 
+from cluster_client import ClusterCoordinatorClient, CoordinatorUnavailable
+from config import AppConfig, load_config
 from display_state import DashboardState
 from transports import BrowserTransport, Esp32Transport, TransportHub
 from updates import UpdateManager
@@ -17,6 +19,8 @@ from updates import UpdateManager
 def create_app(
     mock_mode: bool | None = None,
     update_manager: UpdateManager | None = None,
+    settings: AppConfig | None = None,
+    coordinator_client: ClusterCoordinatorClient | None = None,
 ) -> Flask:
     """Lag Flask-appen. Funksjonsformen gjør appen enkel å teste."""
 
@@ -27,8 +31,10 @@ def create_app(
     app.config["MOCK_MODE"] = mock_mode
     app.config["NODE_TOKEN"] = os.getenv("PI_DISPLAY_NODE_TOKEN", "")
 
+    settings = settings or load_config()
     dashboard = DashboardState(mock_mode=mock_mode)
     updater = update_manager or UpdateManager()
+    cluster = coordinator_client or ClusterCoordinatorClient(settings.cluster)
     browser = BrowserTransport()
     esp32 = Esp32Transport(enabled=False)
     transports = TransportHub([browser, esp32])
@@ -37,6 +43,7 @@ def create_app(
     app.extensions["dashboard"] = dashboard
     app.extensions["transports"] = transports
     app.extensions["updater"] = updater
+    app.extensions["cluster_coordinator"] = cluster
 
     @app.get("/")
     def index() -> str:
@@ -110,6 +117,36 @@ def create_app(
     @app.get("/api/update/status")
     def update_status() -> Any:
         return jsonify(updater.status())
+
+    @app.get("/api/cluster-jobs")
+    def cluster_jobs() -> Any:
+        if not cluster.config.enabled:
+            return jsonify(
+                {
+                    "ok": True,
+                    "enabled": False,
+                    "status": "disabled",
+                    "message": "Cluster-integrasjonen er deaktivert",
+                    "completed": 0,
+                    "queued": 0,
+                    "results": [],
+                }
+            )
+
+        try:
+            return jsonify(cluster.fetch_status())
+        except CoordinatorUnavailable:
+            return (
+                jsonify(
+                    {
+                        "ok": False,
+                        "enabled": True,
+                        "status": "unavailable",
+                        "message": "Cluster coordinator svarer ikke",
+                    }
+                ),
+                502,
+            )
 
     @app.post("/api/update/check")
     def update_check() -> Any:
