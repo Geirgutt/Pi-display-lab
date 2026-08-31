@@ -39,7 +39,7 @@ class AppSmokeTests(unittest.TestCase):
         response = self.client.get("/api/state")
         self.assertEqual(response.status_code, 200)
         payload = response.get_json()
-        for key in ("protocol_version", "screen", "time", "nodes", "message"):
+        for key in ("protocol_version", "screen", "time", "nodes", "cluster", "message"):
             self.assertIn(key, payload)
         self.assertEqual(len(payload["nodes"]), 1)
         self.assertEqual(payload["nodes"][0]["kind"], "local")

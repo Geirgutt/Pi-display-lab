@@ -32,13 +32,15 @@ body {
 }
 
 button,
-select {
+select,
+input {
   font: inherit;
 }
 
 button,
 a,
 select,
+input,
 summary {
   -webkit-tap-highlight-color: transparent;
 }
@@ -46,6 +48,7 @@ summary {
 button:focus-visible,
 a:focus-visible,
 select:focus-visible,
+input:focus-visible,
 summary:focus-visible {
   outline: 2px solid var(--cyan);
   outline-offset: 3px;
@@ -660,6 +663,145 @@ h1 {
   font-size: 14px;
 }
 
+.cluster-job-overview {
+  padding-top: 10px;
+}
+
+.cluster-job-summaries {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 7px;
+}
+
+.cluster-job-summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 6px 8px;
+  border: 1px solid #263c47;
+  border-radius: 4px;
+  color: #6f8792;
+  background: rgba(12, 27, 35, 0.75);
+  font-size: 7px;
+  letter-spacing: 0.08em;
+}
+
+.cluster-job-summary strong {
+  color: #d5e4e9;
+  font-size: 13px;
+}
+
+.cluster-job-summary.queued { border-left: 3px solid var(--violet); }
+.cluster-job-summary.running { border-left: 3px solid var(--amber); }
+.cluster-job-summary.completed { border-left: 3px solid var(--cyan); }
+
+.cluster-node-roster {
+  display: flex;
+  gap: 6px;
+  margin-top: 7px;
+  overflow: hidden;
+}
+
+.cluster-node-roster span {
+  display: inline-flex;
+  align-items: center;
+  min-width: 0;
+  gap: 4px;
+  padding: 3px 6px;
+  border: 1px solid #213642;
+  border-radius: 999px;
+  color: #5d7480;
+  font-size: 7px;
+  white-space: nowrap;
+}
+
+.cluster-node-roster i {
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+  background: #485a63;
+}
+
+.cluster-node-roster span.online {
+  color: #8eb9b6;
+}
+
+.cluster-node-roster span.online i {
+  background: var(--cyan);
+  box-shadow: 0 0 5px var(--cyan);
+}
+
+.cluster-job-list {
+  display: grid;
+  align-content: start;
+  flex: 1;
+  gap: 6px;
+  min-height: 0;
+  padding-top: 8px;
+}
+
+.cluster-job-row {
+  display: grid;
+  grid-template-columns: 63px 1fr 115px 58px;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+  padding: 7px 8px;
+  border: 1px solid #203642;
+  border-radius: 4px;
+  background: rgba(10, 24, 32, 0.78);
+}
+
+.cluster-job-row.running { border-left: 3px solid var(--amber); }
+.cluster-job-row.completed { border-left: 3px solid var(--cyan); }
+.cluster-job-row.queued { border-left: 3px solid var(--violet); }
+
+.cluster-job-row > div {
+  display: grid;
+  min-width: 0;
+  gap: 2px;
+}
+
+.cluster-job-row span {
+  color: #526b77;
+  font-size: 6px;
+  letter-spacing: 0.08em;
+}
+
+.cluster-job-row strong {
+  overflow: hidden;
+  color: #b9cbd2;
+  font-size: 8px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cluster-job-id strong { color: var(--amber); }
+.cluster-job-row.completed .cluster-job-id strong,
+.cluster-job-result strong { color: var(--cyan); }
+.cluster-job-row.queued .cluster-job-id strong { color: var(--violet); }
+
+.cluster-job-empty {
+  display: grid;
+  flex: 1;
+  place-content: center;
+  justify-items: center;
+  gap: 5px;
+  min-height: 105px;
+  border: 1px dashed #1c3540;
+  color: #4c6875;
+  text-align: center;
+}
+
+.cluster-job-empty strong {
+  color: #6b8490;
+  font-size: 10px;
+}
+
+.cluster-job-empty span {
+  font-size: 7px;
+}
+
 .nerd-layout {
   display: grid;
   grid-template-columns: 1.08fr 0.92fr;
@@ -860,10 +1002,15 @@ h1 {
   margin: 0;
 }
 
-#demo-state-label {
+#demo-state-label,
+#cluster-state-label {
   color: var(--amber);
   font: 700 9px/1 ui-monospace, SFMono-Regular, Consolas, monospace;
   letter-spacing: 0.1em;
+}
+
+#cluster-state-label.online {
+  color: var(--cyan);
 }
 
 .demo-controls label {
@@ -880,6 +1027,28 @@ h1 {
   border-radius: 6px;
   color: #c8d5dc;
   background: #0b131a;
+}
+
+.cluster-controls label {
+  display: block;
+  margin: 12px 0 7px;
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.cluster-controls input {
+  width: 100%;
+  padding: 9px 10px;
+  border: 1px solid #2b3f4c;
+  border-radius: 6px;
+  color: #c8d5dc;
+  background: #0b131a;
+}
+
+.cluster-range-inputs {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 9px;
 }
 
 .demo-stats .system-health.compact {

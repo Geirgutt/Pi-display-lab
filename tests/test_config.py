@@ -22,9 +22,16 @@ class ConfigTests(unittest.TestCase):
             path.write_text(
                 json.dumps(
                     {
+                        "node_role": "controller",
+                        "controller_host": "controller.local",
+                        "worker_hosts": ["worker-01.local", "worker-02.local"],
+                        "ssh_user": "pi",
+                        "coordinator_port": 5101,
+                        "app_port": 5100,
                         "cluster": {
                             "enabled": True,
                             "coordinator_url": "http://192.0.2.20:5001/",
+                            "poll_interval_seconds": 3,
                         }
                     }
                 ),
@@ -34,6 +41,13 @@ class ConfigTests(unittest.TestCase):
 
         self.assertTrue(settings.cluster.enabled)
         self.assertEqual(settings.cluster.coordinator_url, "http://192.0.2.20:5001")
+        self.assertEqual(settings.cluster.poll_interval_seconds, 3)
+        self.assertEqual(settings.node_role, "controller")
+        self.assertEqual(settings.controller_host, "controller.local")
+        self.assertEqual(settings.worker_hosts, ("worker-01.local", "worker-02.local"))
+        self.assertEqual(settings.ssh_user, "pi")
+        self.assertEqual(settings.coordinator_port, 5101)
+        self.assertEqual(settings.app_port, 5100)
 
 
 if __name__ == "__main__":

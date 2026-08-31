@@ -18,7 +18,6 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-
 def decode_throttle_flags(flags: int, available: bool = True) -> dict[str, Any]:
     """Gjør Raspberry Pi-bitfeltet lesbart for API og grensesnitt."""
 
@@ -511,7 +510,7 @@ class DashboardState:
     def register_node(self, payload: dict[str, Any], source_ip: str | None = None) -> dict[str, Any]:
         return self.nodes.heartbeat(payload, source_ip)
 
-    def snapshot(self) -> dict[str, Any]:
+    def snapshot(self, cluster_status: dict[str, Any] | None = None) -> dict[str, Any]:
         now = datetime.now().astimezone()
         system = self.monitor.read()
         demo = self.demo.snapshot()
@@ -560,6 +559,19 @@ class DashboardState:
             },
             "network": {"online": system["online"], "ip": system["ip"]},
             "demo": demo,
+            "cluster": cluster_status
+            if cluster_status is not None
+            else {
+                "enabled": False,
+                "available": False,
+                "status": "disabled",
+                "queued": 0,
+                "running": 0,
+                "completed": 0,
+                "queued_jobs": [],
+                "running_jobs": [],
+                "results": [],
+            },
             "message": message,
             "mock_mode": self.mock_mode,
             "backend": f"Python {sys.version_info.major}.{sys.version_info.minor}",
@@ -594,6 +606,34 @@ class DashboardState:
                 "runtime_seconds": 0,
                 "worker_count": 1,
                 "points": [],
+            },
+            "cluster": {
+                "enabled": True,
+                "available": True,
+                "status": "online",
+                "queued": 2,
+                "running": 1,
+                "completed": 3,
+                "queued_jobs": [],
+                "running_jobs": [
+                    {
+                        "job_id": 4,
+                        "job_type": "prime_count",
+                        "worker": "worker-01",
+                        "start": 300001,
+                        "end": 400000,
+                    }
+                ],
+                "results": [
+                    {
+                        "job_id": 3,
+                        "job_type": "prime_count",
+                        "worker": "worker-02",
+                        "start": 200001,
+                        "end": 300000,
+                        "prime_count": 8013,
+                    }
+                ],
             },
             "message": "Ready",
         }

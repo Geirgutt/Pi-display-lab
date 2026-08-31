@@ -9,7 +9,13 @@ from typing import Any
 
 from flask import Flask, jsonify, render_template, request
 
-from cluster_client import ClusterCoordinatorClient, CoordinatorUnavailable
+from cluster_client import (
+    ClusterCoordinatorClient,
+    ClusterStatusCache,
+    CoordinatorUnavailable,
+    disabled_cluster_status,
+)
+from cluster_jobs import validate_prime_range
 from config import AppConfig, load_config
 from display_state import DashboardState
 from transports import BrowserTransport, Esp32Transport, TransportHub
@@ -21,6 +27,7 @@ def create_app(
     update_manager: UpdateManager | None = None,
     settings: AppConfig | None = None,
     coordinator_client: ClusterCoordinatorClient | None = None,
+    cluster_status_cache: ClusterStatusCache | None = None,
 ) -> Flask:
     """Lag Flask-appen. Funksjonsformen gjør appen enkel å teste."""
 
@@ -35,6 +42,7 @@ def create_app(
     dashboard = DashboardState(mock_mode=mock_mode)
     updater = update_manager or UpdateManager()
     cluster = coordinator_client or ClusterCoordinatorClient(settings.cluster)
+    cluster_status = cluster_status_cache or ClusterStatusCache(cluster)
     browser = BrowserTransport()
     esp32 = Esp32Transport(enabled=False)
     transports = TransportHub([browser, esp32])
@@ -44,6 +52,7 @@ def create_app(
     app.extensions["transports"] = transports
     app.extensions["updater"] = updater
     app.extensions["cluster_coordinator"] = cluster
+    app.extensions["cluster_status"] = cluster_status
 
     @app.get("/")
     def index() -> str:
@@ -55,7 +64,7 @@ def create_app(
 
     @app.get("/api/state")
     def get_state() -> Any:
-        payload = dashboard.snapshot()
+        payload = dashboard.snapshot(cluster_status=cluster_status.snapshot())
         transports.publish(payload)
         return jsonify(browser.latest())
 
@@ -68,7 +77,7 @@ def create_app(
         except ValueError as error:
             return jsonify({"ok": False, "error": str(error)}), 400
 
-        payload = dashboard.snapshot()
+        payload = dashboard.snapshot(cluster_status=cluster_status.snapshot())
         transports.publish(payload)
         return jsonify({"ok": True, "state": browser.latest()})
 
@@ -121,32 +130,42 @@ def create_app(
     @app.get("/api/cluster-jobs")
     def cluster_jobs() -> Any:
         if not cluster.config.enabled:
-            return jsonify(
-                {
-                    "ok": True,
-                    "enabled": False,
-                    "status": "disabled",
-                    "message": "Cluster-integrasjonen er deaktivert",
-                    "completed": 0,
-                    "queued": 0,
-                    "results": [],
-                }
-            )
+            return jsonify(disabled_cluster_status())
 
         try:
-            return jsonify(cluster.fetch_status())
+            payload = cluster.fetch_status()
+            cluster_status.store(payload)
+            return jsonify(payload)
         except CoordinatorUnavailable:
+            payload = cluster_status.mark_unavailable()
             return (
-                jsonify(
-                    {
-                        "ok": False,
-                        "enabled": True,
-                        "status": "unavailable",
-                        "message": "Cluster coordinator svarer ikke",
-                    }
-                ),
+                jsonify(payload),
                 502,
             )
+
+    @app.post("/api/cluster/start")
+    def start_cluster_job() -> Any:
+        if not cluster.config.enabled:
+            return jsonify({"ok": False, "error": "Cluster-integrasjonen er deaktivert"}), 409
+        body = request.get_json(silent=True)
+        if not isinstance(body, dict):
+            return jsonify({"ok": False, "error": "Forventet et JSON-objekt"}), 400
+        try:
+            start, end, chunk_size = validate_prime_range(body)
+        except ValueError as error:
+            return jsonify({"ok": False, "error": str(error)}), 400
+
+        try:
+            result = cluster.start_prime_job(
+                {"start": start, "end": end, "chunk_size": chunk_size}
+            )
+        except CoordinatorUnavailable:
+            cluster_status.mark_unavailable()
+            return jsonify({"ok": False, "error": "Cluster coordinator svarer ikke"}), 502
+
+        cluster_status.invalidate()
+        dashboard.set_screen("cluster")
+        return jsonify(result), 202
 
     @app.post("/api/update/check")
     def update_check() -> Any:
@@ -168,16 +187,25 @@ app = create_app()
 
 
 if __name__ == "__main__":
+    runtime_settings = load_config()
     parser = argparse.ArgumentParser(description="Pi Display Lab")
     parser.add_argument(
         "--mock",
         action="store_true",
         help="bruk stabile eksempeldata (nyttig på Windows)",
     )
-    parser.add_argument("--port", type=int, default=5000, help="HTTP-port (standard: 5000)")
+    parser.add_argument(
+        "--port",
+        type=int,
+        default=runtime_settings.app_port,
+        help="HTTP-port (standard fra config.local.json)",
+    )
     args = parser.parse_args()
 
-    selected_app = create_app(mock_mode=True) if args.mock else app
+    selected_app = create_app(
+        mock_mode=True if args.mock else None,
+        settings=runtime_settings,
+    )
     mode = "MOCK" if selected_app.config["MOCK_MODE"] else "PI / LIVE"
     print(f"Pi Display Lab starter i {mode}-modus")
     print(f"Åpne http://127.0.0.1:{args.port} på denne maskinen")

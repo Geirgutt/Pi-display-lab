@@ -1,0 +1,116 @@
+---
+- name: Installer Pi Display Lab cluster-workers
+  hosts: cluster_workers
+  gather_facts: true
+
+  tasks:
+    - name: Installer systempakker
+      become: true
+      ansible.builtin.apt:
+        name:
+          - git
+          - python3
+          - python3-venv
+        state: present
+        update_cache: true
+
+    - name: Hent Pi-display-lab
+      ansible.builtin.git:
+        repo: "{{ project_repository }}"
+        dest: "{{ ansible_user_dir }}/Pi-display-lab"
+        version: "{{ project_version }}"
+        update: true
+
+    - name: Opprett virtuelt Python-miljø
+      ansible.builtin.command:
+        argv:
+          - python3
+          - -m
+          - venv
+          - "{{ ansible_user_dir }}/Pi-display-lab/.venv"
+        creates: "{{ ansible_user_dir }}/Pi-display-lab/.venv/bin/python"
+
+    - name: Installer Python-avhengigheter
+      ansible.builtin.pip:
+        requirements: "{{ ansible_user_dir }}/Pi-display-lab/requirements.txt"
+        virtualenv: "{{ ansible_user_dir }}/Pi-display-lab/.venv"
+
+    - name: Skriv lokal worker-konfigurasjon
+      ansible.builtin.copy:
+        dest: "{{ ansible_user_dir }}/Pi-display-lab/config.local.json"
+        mode: "0600"
+        content: |
+          {
+            "node_role": "worker",
+            "controller_host": "{{ controller_host }}",
+            "worker_hosts": [],
+            "ssh_user": "",
+            "coordinator_port": {{ coordinator_port }},
+            "app_port": {{ app_port }},
+            "cluster": {
+              "enabled": true,
+              "coordinator_url": "http://{{ controller_host }}:{{ coordinator_port }}",
+              "poll_interval_seconds": {{ worker_poll_interval }}
+            }
+          }
+
+    - name: Installer cluster-worker.service
+      become: true
+      ansible.builtin.copy:
+        dest: /etc/systemd/system/cluster-worker.service
+        mode: "0644"
+        content: |
+          [Unit]
+          Description=Pi Display Lab cluster worker
+          Wants=network-online.target
+          After=network-online.target
+
+          [Service]
+          Type=simple
+          User={{ ansible_user }}
+          WorkingDirectory={{ ansible_user_dir }}/Pi-display-lab
+          ExecStart={{ ansible_user_dir }}/Pi-display-lab/.venv/bin/python {{ ansible_user_dir }}/Pi-display-lab/cluster_worker.py
+          Restart=always
+          RestartSec=3
+          Environment=PYTHONUNBUFFERED=1
+
+          [Install]
+          WantedBy=multi-user.target
+
+    - name: Installer node-agenttjenesten
+      become: true
+      ansible.builtin.copy:
+        dest: /etc/systemd/system/pi-display-node-agent.service
+        mode: "0644"
+        content: |
+          [Unit]
+          Description=Pi Display Lab node agent
+          Wants=network-online.target
+          After=network-online.target
+
+          [Service]
+          Type=simple
+          User={{ ansible_user }}
+          WorkingDirectory={{ ansible_user_dir }}/Pi-display-lab
+          ExecStart={{ ansible_user_dir }}/Pi-display-lab/.venv/bin/python {{ ansible_user_dir }}/Pi-display-lab/node_agent.py --server http://{{ controller_host }}:{{ app_port }}
+          Restart=always
+          RestartSec=5
+          Environment=PYTHONUNBUFFERED=1
+
+          [Install]
+          WantedBy=multi-user.target
+
+    - name: Last systemd på nytt
+      become: true
+      ansible.builtin.systemd:
+        daemon_reload: true
+
+    - name: Start worker-tjenestene
+      become: true
+      ansible.builtin.systemd:
+        name: "{{ item }}"
+        enabled: true
+        state: restarted
+      loop:
+        - cluster-worker.service
+        - pi-display-node-agent.service

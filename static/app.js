@@ -24,6 +24,13 @@ const ui = {
   coreHint: document.querySelector("#core-hint"),
   startDemoLabel: document.querySelector("#start-demo-label"),
   demoStateLabel: document.querySelector("#demo-state-label"),
+  clusterStateLabel: document.querySelector("#cluster-state-label"),
+  clusterStart: document.querySelector("#cluster-start"),
+  clusterEnd: document.querySelector("#cluster-end"),
+  clusterChunkSize: document.querySelector("#cluster-chunk-size"),
+  startClusterJob: document.querySelector("#start-cluster-job"),
+  startClusterLabel: document.querySelector("#start-cluster-label"),
+  clusterHelper: document.querySelector("#cluster-helper"),
   lastUpdate: document.querySelector("#last-update"),
   rawPayload: document.querySelector("#raw-payload"),
   updateStatus: document.querySelector("#update-status"),
@@ -228,7 +235,7 @@ function emptyClusterCard(count) {
   return card;
 }
 
-function renderCluster(payload) {
+function renderNodeCluster(payload) {
   const fragment = document.createDocumentFragment();
   const onlineCount = payload.nodes.filter((node) => node.online).length;
   fragment.append(screenHeader(`CLUSTER · ${onlineCount}/${payload.nodes.length} ONLINE`, payload.time, onlineCount > 0));
@@ -237,6 +244,89 @@ function renderCluster(payload) {
   visibleNodes.forEach((node, index) => grid.append(nodeCard(node, index)));
   if (visibleNodes.length < 4) grid.append(emptyClusterCard(4 - visibleNodes.length));
   fragment.append(grid);
+  ui.screenContent.replaceChildren(fragment);
+}
+
+function clusterSummary(label, value, tone) {
+  const card = element("div", `cluster-job-summary ${tone}`);
+  card.append(element("span", "", label), element("strong", "", String(value || 0)));
+  return card;
+}
+
+function clusterJobRow(job) {
+  const row = element("article", `cluster-job-row ${job.viewStatus}`);
+  const identity = element("div", "cluster-job-id");
+  identity.append(
+    element("span", "", `JOB ${String(job.job_id).padStart(3, "0")}`),
+    element("strong", "", job.viewStatus.toUpperCase()),
+  );
+  const worker = element("div", "cluster-job-worker");
+  worker.append(element("span", "", "WORKER"), element("strong", "", job.worker || "VENTER"));
+  const range = element("div", "cluster-job-range");
+  range.append(
+    element("span", "", "RANGE"),
+    element("strong", "", `${Number(job.start).toLocaleString("nb-NO")}–${Number(job.end).toLocaleString("nb-NO")}`),
+  );
+  const result = element("div", "cluster-job-result");
+  result.append(
+    element("span", "", "RESULTAT"),
+    element("strong", "", job.prime_count === undefined ? "—" : Number(job.prime_count).toLocaleString("nb-NO")),
+  );
+  row.append(identity, worker, range, result);
+  return row;
+}
+
+function renderCluster(payload) {
+  const cluster = payload.cluster || { enabled: false };
+  if (!cluster.enabled) {
+    renderNodeCluster(payload);
+    return;
+  }
+
+  const fragment = document.createDocumentFragment();
+  fragment.append(
+    screenHeader(
+      `CLUSTER JOBS · ${cluster.available ? "ONLINE" : "OFFLINE"}`,
+      payload.time,
+      cluster.available,
+    ),
+  );
+
+  const overview = element("section", "cluster-job-overview");
+  const summaries = element("div", "cluster-job-summaries");
+  summaries.append(
+    clusterSummary("QUEUED", cluster.queued, "queued"),
+    clusterSummary("RUNNING", cluster.running, "running"),
+    clusterSummary("COMPLETED", cluster.completed, "completed"),
+  );
+  const roster = element("div", "cluster-node-roster");
+  payload.nodes.slice(0, 4).forEach((node) => {
+    const chip = element("span", node.online ? "online" : "");
+    chip.append(element("i", ""), document.createTextNode(node.name));
+    roster.append(chip);
+  });
+  overview.append(summaries, roster);
+
+  const list = element("section", "cluster-job-list");
+  const running = (cluster.running_jobs || []).map((job) => ({ ...job, viewStatus: "running" }));
+  const completed = [...(cluster.results || [])]
+    .reverse()
+    .map((job) => ({ ...job, viewStatus: "completed" }));
+  const queued = (cluster.queued_jobs || []).map((job) => ({ ...job, viewStatus: "queued" }));
+  const jobs = [...running, ...completed, ...queued].slice(0, 3);
+
+  if (jobs.length) {
+    jobs.forEach((job) => list.append(clusterJobRow(job)));
+  } else {
+    const empty = element("div", "cluster-job-empty");
+    empty.append(
+      element("strong", "", cluster.available ? "INGEN JOBBER ENNÅ" : "COORDINATOR UTILGJENGELIG"),
+      element("span", "", cluster.message || "Start en primtallsjobb fra kontrollpanelet"),
+    );
+    list.append(empty);
+  }
+
+  fragment.append(overview, list);
   ui.screenContent.replaceChildren(fragment);
 }
 
@@ -325,6 +415,19 @@ function updateCoreControls(payload) {
     : `Bruker ${workers} ${workers === 1 ? "beregningsprosess" : "beregningsprosesser"}.`;
 }
 
+function updateClusterControls(payload) {
+  const cluster = payload.cluster || { enabled: false, available: false };
+  const ready = cluster.enabled && cluster.available;
+  ui.startClusterJob.disabled = !ready;
+  ui.clusterStateLabel.textContent = !cluster.enabled ? "AV" : cluster.available ? "ONLINE" : "OFFLINE";
+  ui.clusterStateLabel.classList.toggle("online", ready);
+  ui.clusterHelper.textContent = !cluster.enabled
+    ? "Aktiver clusteret i config.local.json først."
+    : cluster.available
+      ? `${Number(cluster.queued || 0)} i kø · ${Number(cluster.running || 0)} kjører · ${Number(cluster.completed || 0)} ferdig`
+      : "Coordinatoren svarer ikke. Resten av appen kjører normalt.";
+}
+
 function render(payload) {
   const renderers = { home: renderHome, cluster: renderCluster, nerd: renderNerd };
   (renderers[payload.screen] || renderHome)(payload);
@@ -340,6 +443,7 @@ function render(payload) {
   ui.rawPayload.textContent = JSON.stringify(payload, null, 2);
   ui.lastUpdate.textContent = `${payload.time} · ${payload.mock_mode ? "mock" : "live"}`;
   updateCoreControls(payload);
+  updateClusterControls(payload);
 }
 
 async function fetchState() {
@@ -431,6 +535,24 @@ ui.startDemo.addEventListener("click", async () => {
   } catch (error) {
     ui.connectionText.textContent = error.message;
     ui.startDemo.disabled = false;
+  }
+});
+
+ui.startClusterJob.addEventListener("click", async () => {
+  ui.startClusterJob.disabled = true;
+  ui.startClusterLabel.textContent = "Oppretter …";
+  try {
+    const result = await postJson("/api/cluster/start", {
+      start: Number(ui.clusterStart.value),
+      end: Number(ui.clusterEnd.value),
+      chunk_size: Number(ui.clusterChunkSize.value),
+    });
+    ui.clusterHelper.textContent = `${Number(result.created || 0)} deljobber opprettet.`;
+    await fetchState();
+  } catch (error) {
+    ui.clusterHelper.textContent = error.message;
+  } finally {
+    ui.startClusterLabel.textContent = "Start cluster-jobb";
   }
 });
 

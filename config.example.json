@@ -1,6 +1,16 @@
 {
+  "node_role": "controller",
+  "controller_host": "controller.local",
+  "worker_hosts": [
+    "worker-01.local",
+    "worker-02.local"
+  ],
+  "ssh_user": "pi",
+  "coordinator_port": 5001,
+  "app_port": 5000,
   "cluster": {
     "enabled": false,
-    "coordinator_url": "http://127.0.0.1:5001"
+    "coordinator_url": "http://127.0.0.1:5001",
+    "poll_interval_seconds": 2
   }
 }

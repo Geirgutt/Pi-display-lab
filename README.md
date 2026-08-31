@@ -13,11 +13,11 @@ målinger eller beregningslogikk.
 
 - **Home:** klokke, CPU-bruk, CPU-temperatur, RAM, CPU-frekvens, strupestatus
   og nettverksstatus.
-- **Cluster:** hoved-Pi-en og opptil tre ekte maskiner med CPU, temperatur, RAM
-  og automatisk online/offline-status. Ingen dummy-enheter.
+- **Cluster:** ekte Pi-noder samt kø, aktive primtallsjobber, workers og
+  resultathistorikk fra den separate coordinator-tjenesten.
 - **Nerd:** Monte Carlo-estimat av pi med levende sirkelgrafikk for treff og bom.
-- **Developer controls:** bytt skjerm, velg jobbens størrelse, 1–4 kjerner og om
-  én kjerne skal holdes ledig på oppdragsgiveren.
+- **Developer controls:** bytt skjerm, start lokale Monte Carlo-beregninger og
+  del primtallsintervaller i små jobber til clusteret.
 - **Mock-modus:** test hele prosjektet på Windows uten Raspberry Pi.
 - **Transportlag:** `BrowserTransport` virker nå, mens `Esp32Transport` er en
   trygg stub for neste etappe.
@@ -25,12 +25,12 @@ målinger eller beregningslogikk.
 ## Slik henger delene sammen
 
 ```text
-Andre Pi-er → node_agent.py → heartbeat-API → NodeRegistry
-                                             │
-SystemMonitor + MonteCarloDemo ──────────────┤
-                                             ▼
-                                       DashboardState
-                                        (én felles state)
+Andre Pi-er → node_agent.py → heartbeat-API → NodeRegistry ─┐
+                                                            │
+Workers ← GET /job ─ Cluster coordinator ─ statuscache ─────┤
+             └─ POST /result                                ▼
+SystemMonitor + MonteCarloDemo ────────────────────── DashboardState
+                                                       (én felles state)
              │
              ▼
          TransportHub
@@ -139,22 +139,97 @@ Oppdateringsskriptet:
 Dette er den eneste oppdateringsveien. Du bestemmer dermed selv når en kontrollert
 GitHub-versjon skal installeres på Pi-en, og kommandoen må kjøres over SSH.
 
-## Koble til cluster coordinator
+## Fra blank Raspberry Pi til fungerende cluster
 
-Kopier eksempelkonfigurasjonen til en lokal fil som Git ignorerer:
+Oppsettet bruker én controller, for eksempel Pi2, og én eller flere workers,
+for eksempel Pi3. Alle maskinene bør kjøre Raspberry Pi OS og være på samme
+betrodde lokalnett. Installer SSH-nøkkelen fra controller-brukeren på workerne
+før du starter. Denne oppskriften forutsetter også at brukeren har `sudo`-tilgang.
+
+På controlleren:
 
 ```bash
+sudo apt update
+sudo apt install -y git
+cd ~
+git clone https://github.com/Geirgutt/Pi-display-lab.git
+cd Pi-display-lab
 cp config.example.json config.local.json
+nano config.local.json
 ```
 
-Endre deretter `enabled` til `true` og sett `coordinator_url` til adressen til
-coordinator-tjenesten. `config.local.json` skal bli liggende lokalt på Pi-en og
-skal ikke committes. Hvis filen mangler eller er ugyldig, starter appen normalt
-med cluster-integrasjonen deaktivert.
+Bruk dine lokale vertsnavn i den private filen. Et typisk oppsett ser slik ut:
 
-`GET /api/cluster-jobs` henter coordinatorens `/status` med to sekunders timeout.
-Hvis coordinatoren er nede, returnerer bare dette endepunktet en kontrollert
-feilstatus; resten av Pi Display Lab fortsetter å fungere.
+```json
+{
+  "node_role": "controller",
+  "controller_host": "controller.local",
+  "worker_hosts": ["worker-01.local", "worker-02.local"],
+  "ssh_user": "pi",
+  "coordinator_port": 5001,
+  "app_port": 5000,
+  "cluster": {
+    "enabled": true,
+    "coordinator_url": "http://127.0.0.1:5001",
+    "poll_interval_seconds": 2
+  }
+}
+```
+
+Kjør deretter ett script:
+
+```bash
+bash scripts/install-cluster.sh
+```
+
+Scriptet installerer controllerens Python-miljø og avhengigheter, oppretter
+`pi-display-lab.service` og `cluster-coordinator.service`, og bruker Ansible over
+de eksisterende SSH-nøklene til å:
+
+1. klone eller oppdatere samme public repo på workerne
+2. skrive en lokal `config.local.json` på hver worker
+3. opprette `cluster-worker.service`
+4. opprette den eksisterende `pi-display-node-agent.service`
+5. starte og aktivere tjenestene ved oppstart
+
+`config.local.json` og eventuelle lokale Ansible-inventoryfiler ignoreres av
+Git. Hvis config mangler eller er ugyldig, starter dashboardet fortsatt med
+cluster-integrasjonen deaktivert.
+
+Kontroller hele installasjonen når som helst med:
+
+```bash
+bash scripts/verify-cluster.sh
+```
+
+Den sjekker controller-tjenestene, coordinator-API-et, Pi Display Lab,
+cluster-API-et, SSH til workerne og begge worker-tjenestene.
+
+### Slik kjører clusterjobben
+
+Åpne dashboardet, fyll inn start, slutt og størrelse per deljobb under
+**Primtalls-cluster**, og trykk **Start cluster-jobb**. Det tilsvarer:
+
+```bash
+curl -X POST http://127.0.0.1:5000/api/cluster/start \
+  -H 'Content-Type: application/json' \
+  -d '{"start":1,"end":1000000,"chunk_size":100000}'
+```
+
+Coordinatoren lager inkluderende intervaller, for eksempel `1–100000` og
+`100001–200000`. Hver worker bruker hostname som navn, henter neste ledige jobb
+med `GET /job`, teller primtall og sender `POST /result`. Når køen er tom,
+fortsetter tjenesten å vente rolig på nye jobber.
+
+Kø, aktive jobber og resultathistorikk ligger foreløpig bare i minnet. En omstart
+av coordinatoren nullstiller dem. Det er bevisst for denne læringsversjonen.
+
+Dashboardet henter status i bakgrunnen med kort timeout. Hvis coordinatoren er
+nede, markeres Cluster-skjermen som offline uten at resten av Pi Display Lab
+stopper eller blir hengende.
+
+Coordinator- og app-API-et har foreløpig ingen innlogging. Hold port 5000 og
+5001 på det betrodde labnettet, og ikke videresend dem fra ruteren til internett.
 
 Status og logger kan alltid sjekkes med:
 
@@ -163,11 +238,11 @@ systemctl status pi-display-lab
 journalctl -u pi-display-lab -f
 ```
 
-## Koble til flere Raspberry Pi-er
+## Koble bare til en ekstra statusnode
 
-Hoved-Pi-en kjører webappen. På hver ekstra Pi kjører en liten agent som sender
-CPU, temperatur, RAM og antall kjerner hvert femte sekund. Agenten bruker bare
-Python sitt standardbibliotek.
+Hvis en maskin bare skal vises med CPU, temperatur og RAM uten å være
+cluster-worker, kan den eksisterende node-agenten fortsatt installeres manuelt.
+Agenten bruker bare Python sitt standardbibliotek.
 
 På en ekstra Raspberry Pi med vanlig Raspberry Pi OS:
 
@@ -207,9 +282,8 @@ de faktiske tilfeldige punktene: turkis betyr treff inne i sirkelen, lilla betyr
 bom i kvadratets hjørner. Alle punktene teller i resultatet, men bare opptil 720
 sendes til nettleseren for å holde grafikken lett.
 
-Eksterne Pi-agenter rapporterer nå hvor mange kjerner de har, men kjører ikke
-beregningsjobber ennå. Dette er bevisst: neste trinn blir en tokenbeskyttet
-jobbprotokoll der agentene selv henter arbeid, uten nye åpne porter.
+Node-agenten rapporterer maskinstatus, mens `cluster_worker.py` henter og utfører
+jobbchunks. De er separate, små tjenester og kan kjøre samtidig på samme Pi.
 
 ## CPU-frekvens og struping
 
@@ -309,9 +383,20 @@ Nyttige adresser:
 | `POST` | `/api/demo/start` | Starter beregning med f.eks. `{"iterations":50000000,"cores":4,"reserve_one":false}` |
 | `POST` | `/api/nodes/heartbeat` | Registrerer status fra en ekstern Pi-agent |
 | `GET` | `/api/cluster-jobs` | Henter jobbstatus fra konfigurert cluster coordinator |
+| `POST` | `/api/cluster/start` | Deler et primtallsintervall i cluster-jobber |
 | `GET` | `/api/update/status` | Viser lokal og eventuell tilgjengelig versjon |
 | `POST` | `/api/update/check` | Henter oppdatert status fra `origin/main` |
 | `GET` | `/api/protocol/example` | Gir en kort eksempelmelding for ESP32-testing |
+
+Coordinator-tjenesten på porten fra lokal config har et lite, kompatibelt API:
+
+| Metode | Adresse | Hva den gjør |
+|---|---|---|
+| `GET` | `/health` | Sjekker at coordinatoren lever |
+| `GET` | `/job?worker=HOSTNAME` | Tar neste jobb; tom kø gir HTTP 204 |
+| `POST` | `/result` | Registrerer worker, jobb-id og primtallsresultat |
+| `GET` | `/status` | Viser kø, aktive jobber og resultathistorikk |
+| `POST` | `/jobs` | Oppretter chunks for ett primtallsintervall |
 
 Kjernen i protokollen er liten og versjonert:
 
@@ -350,9 +435,15 @@ alltid tegne siste melding uten å måtte huske en lang historikk.
 | Fil | Rolle |
 |---|---|
 | `app.py` | Starter Flask og definerer API-adressene |
+| `cluster_coordinator.py` | Separat Flask-app med `/job`, `/result` og `/status` |
+| `cluster_jobs.py` | Trådsikker in-memory kø og primtallsberegning |
+| `cluster_worker.py` | Henter jobb, regner og sender resultat fra en worker |
+| `cluster_client.py` | Kort HTTP-klient og bakgrunnscache for dashboardet |
+| `config.py` | Validerer lokal config og gir sikre standardverdier |
 | `display_state.py` | Leser sensorer, holder noderegister/state og kjører pi-demoen |
 | `node_agent.py` | Sender systemmålinger fra en ekstra Raspberry Pi |
-| `scripts/` | Installerer tjenester og oppdaterer appen trygt |
+| `scripts/` | Installerer, verifiserer og oppdaterer app/cluster trygt |
+| `ansible/` | Ruller worker-kode og tjenester ut over eksisterende SSH-nøkler |
 | `updates.py` | Sjekker `origin/main` og lager lenke til en tilgjengelig commit |
 | `transports.py` | Felles `DeviceTransport`, nettlesertransport og ESP32-stub |
 | `templates/index.html` | Selve nettsidens struktur |
@@ -432,10 +523,9 @@ Med det virtuelle miljøet aktivt:
 python -m unittest discover -s tests -v
 ```
 
-Testene sjekker startsiden, protokollfeltene, heartbeat-validering,
-tokenbeskyttelse, kjernegrenser, visualiseringspunkter, skjermbytte,
-transportlaget og at Monte Carlo-jobben faktisk fullføres med et fornuftig
-estimat.
+Testene sjekker blant annet jobbkø, tom kø, resultatregistrering, coordinator-
+status, worker-beregning, lokal config, utilgjengelig coordinator, cluster-start,
+heartbeat, kjernegrenser, transportlaget og Monte Carlo-jobben.
 
 ## Vanlige problemer
 

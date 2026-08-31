@@ -104,6 +104,28 @@
             <p class="helper-text">Kjøretiden varierer med maskin og belastning. Skjermen oppdateres mens Python beregner.</p>
           </section>
 
+          <section class="control-group cluster-controls">
+            <div class="control-title-row">
+              <h3>Primtalls-cluster</h3>
+              <span id="cluster-state-label">AV</span>
+            </div>
+            <div class="cluster-range-inputs">
+              <label for="cluster-start">Fra
+                <input id="cluster-start" type="number" min="0" step="1" value="1">
+              </label>
+              <label for="cluster-end">Til
+                <input id="cluster-end" type="number" min="0" step="1" value="1000000">
+              </label>
+            </div>
+            <label for="cluster-chunk-size">Tall per deljobb</label>
+            <input id="cluster-chunk-size" type="number" min="1" step="1" value="100000">
+            <button class="primary-button" id="start-cluster-job" type="button" disabled>
+              <span id="start-cluster-label">Start cluster-jobb</span>
+              <span aria-hidden="true">→</span>
+            </button>
+            <p class="helper-text" id="cluster-helper">Aktiver clusteret i config.local.json først.</p>
+          </section>
+
           <section class="update-card" aria-live="polite">
             <div class="update-copy">
               <span class="api-label">APP-OPPDATERING</span>

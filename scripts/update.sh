@@ -51,3 +51,8 @@ else
   sudo systemctl --no-pager --full status "$SERVICE_NAME.service"
   exit 1
 fi
+
+if systemctl cat cluster-coordinator.service >/dev/null 2>&1; then
+  echo "Starter cluster coordinator på nytt ..."
+  sudo systemctl restart cluster-coordinator.service
+fi
