@@ -31,6 +31,7 @@ class InstallationWorkflowTests(unittest.TestCase):
         self.assertNotIn("admin_token", playbook)
         self.assertIn("no_log: true", playbook)
         self.assertIn('"https://{{ controller_host }}:{{ coordinator_port }}"', playbook)
+        self.assertIn('"worker_slots": {{ ansible_processor_vcpus', playbook)
         self.assertNotIn("ca.key", playbook)
 
     def test_services_are_non_root_and_have_low_risk_hardening(self) -> None:

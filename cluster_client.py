@@ -34,9 +34,11 @@ def disabled_cluster_status() -> dict[str, Any]:
         "queued": 0,
         "running": 0,
         "completed": 0,
+        "failed": 0,
         "queued_jobs": [],
         "running_jobs": [],
         "results": [],
+        "batches": [],
     }
 
 
@@ -54,9 +56,11 @@ def unavailable_cluster_status(status: str = "unavailable") -> dict[str, Any]:
         "queued": 0,
         "running": 0,
         "completed": 0,
+        "failed": 0,
         "queued_jobs": [],
         "running_jobs": [],
         "results": [],
+        "batches": [],
     }
 
 
@@ -138,7 +142,14 @@ class ClusterCoordinatorClient:
         return self._request_json("/health", authenticated=False) or {}
 
     def start_prime_job(self, payload: dict[str, Any]) -> dict[str, Any]:
-        return self._request_json("/jobs", method="POST", payload=payload) or {}
+        return self._request_json(
+            "/jobs", method="POST", payload={**payload, "job_type": "prime_count"}
+        ) or {}
+
+    def start_monte_carlo(self, payload: dict[str, Any]) -> dict[str, Any]:
+        return self._request_json(
+            "/jobs", method="POST", payload={**payload, "job_type": "monte_carlo"}
+        ) or {}
 
     def claim_job(self, worker: str) -> dict[str, Any] | None:
         return self._request_json(

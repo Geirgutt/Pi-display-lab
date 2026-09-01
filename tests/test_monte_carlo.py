@@ -2,12 +2,13 @@
 
 import unittest
 
-from display_state import MonteCarloDemo, _monte_carlo_batch
+from cluster_jobs import monte_carlo_batch
+from display_state import DashboardState
 
 
 class MonteCarloTests(unittest.TestCase):
     def test_batch_returns_hits_and_real_visual_points(self) -> None:
-        hits, points = _monte_carlo_batch(2_000, seed=1234, visual_count=25)
+        hits, points = monte_carlo_batch(2_000, seed=1234, visual_count=25)
         self.assertGreater(hits, 1_400)
         self.assertLess(hits, 1_700)
         self.assertEqual(len(points), 25)
@@ -21,11 +22,29 @@ class MonteCarloTests(unittest.TestCase):
             else:
                 self.assertGreaterEqual(x * x + y * y, 0.999)
 
-    def test_reserve_one_can_be_enabled_or_disabled(self) -> None:
-        demo = MonteCarloDemo(cpu_count=4)
-        self.assertEqual(demo.resolve_worker_count(4, reserve_one=True), 3)
-        self.assertEqual(demo.resolve_worker_count(4, reserve_one=False), 4)
-        self.assertEqual(demo.resolve_worker_count(2, reserve_one=True), 2)
+    def test_dashboard_projects_aggregated_cluster_batch(self) -> None:
+        dashboard = DashboardState(mock_mode=True)
+        payload = dashboard.snapshot(cluster_status={
+            "enabled": True,
+            "available": True,
+            "batches": [{
+                "batch_id": 9,
+                "job_type": "monte_carlo",
+                "status": "finished",
+                "samples": 10_000,
+                "samples_done": 10_000,
+                "inside": 7_850,
+                "estimate": 3.14,
+                "runtime_seconds": 2.5,
+                "slot_limit": 2,
+                "failed_jobs": 0,
+                "points": [[0.1, 0.2, 1]],
+            }],
+        })
+        self.assertEqual(payload["demo"]["status"], "finished")
+        self.assertEqual(payload["demo"]["estimate"], 3.14)
+        self.assertEqual(payload["demo"]["inside"] + payload["demo"]["outside"], 10_000)
+        self.assertEqual(payload["demo"]["batch_id"], 9)
 
 
 if __name__ == "__main__":

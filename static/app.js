@@ -18,8 +18,8 @@ const ui = {
   screenButtons: [...document.querySelectorAll(".screen-button")],
   startDemo: document.querySelector("#start-demo"),
   iterations: document.querySelector("#iterations"),
-  cores: document.querySelector("#cores"),
-  reserveOne: document.querySelector("#reserve-one"),
+  cores: document.querySelector("#demo-slots"),
+  reserveOne: document.querySelector("#demo-reserve-one"),
   coreCountLabel: document.querySelector("#core-count-label"),
   coreHint: document.querySelector("#core-hint"),
   startDemoLabel: document.querySelector("#start-demo-label"),
@@ -28,9 +28,13 @@ const ui = {
   clusterStart: document.querySelector("#cluster-start"),
   clusterEnd: document.querySelector("#cluster-end"),
   clusterChunkSize: document.querySelector("#cluster-chunk-size"),
+  clusterSlots: document.querySelector("#cluster-slots"),
+  clusterReserveOne: document.querySelector("#cluster-reserve-one"),
   startClusterJob: document.querySelector("#start-cluster-job"),
   startClusterLabel: document.querySelector("#start-cluster-label"),
   clusterHelper: document.querySelector("#cluster-helper"),
+  nodeStatusList: document.querySelector("#node-status-list"),
+  nodeCapacityLabel: document.querySelector("#node-capacity-label"),
   lastUpdate: document.querySelector("#last-update"),
   rawPayload: document.querySelector("#raw-payload"),
   updateStatus: document.querySelector("#update-status"),
@@ -96,6 +100,33 @@ function throttleTone(throttle) {
 function throttleText(throttle) {
   if (!throttle) return "STATUS UTILGJENGELIG";
   return `${throttle.summary}${throttle.available ? ` · ${throttle.raw}` : ""}`;
+}
+
+function renderNodeStatus(payload) {
+  const nodes = Array.isArray(payload.nodes) ? payload.nodes : [];
+  const fragment = document.createDocumentFragment();
+  nodes.forEach((node) => {
+    const row = element("article", `node-status-row ${node.online ? "online" : "offline"}`);
+    const head = element("div", "node-status-head");
+    const identity = element("strong", "", node.name || node.id || "Ukjent node");
+    const state = element("span", node.online ? "online" : "offline", node.online ? "ONLINE" : "OFFLINE");
+    head.append(identity, state);
+    const metrics = element("div", "node-status-metrics");
+    metrics.append(
+      element("span", "", `CPU ${number(node.cpu, "%")}`),
+      element("span", "", `RAM ${number(node.ram, "%")}`),
+      element("span", "", `TEMP ${number(node.temp, "°C")}`),
+      element("span", "", frequencyText(node.frequency_mhz)),
+      element("span", "", `${Number(node.cores || 0)} CORES`),
+    );
+    const throttle = element("small", `node-throttle ${throttleTone(node.throttle)}`, throttleText(node.throttle));
+    row.append(head, metrics, throttle);
+    fragment.append(row);
+  });
+  if (!nodes.length) fragment.append(element("p", "helper-text", "Ingen registrerte noder."));
+  ui.nodeStatusList.replaceChildren(fragment);
+  const capacity = payload.cluster?.capacity || {};
+  ui.nodeCapacityLabel.textContent = `${Number(capacity.total_slots || 0)} SLOTS`;
 }
 
 function systemHealthStrip(system, compact = false) {
@@ -256,21 +287,27 @@ function clusterSummary(label, value, tone) {
 function clusterJobRow(job) {
   const row = element("article", `cluster-job-row ${job.viewStatus}`);
   const identity = element("div", "cluster-job-id");
+  const typeLabel = job.job_type === "monte_carlo" ? "MONTE" : "PRIME";
   identity.append(
-    element("span", "", `JOB ${String(job.job_id).padStart(3, "0")}`),
+    element("span", "", `B${String(job.batch_id || 0).padStart(3, "0")} · J${String(job.job_id).padStart(3, "0")} · ${typeLabel}`),
     element("strong", "", job.viewStatus.toUpperCase()),
   );
   const worker = element("div", "cluster-job-worker");
   worker.append(element("span", "", "WORKER"), element("strong", "", job.worker || "VENTER"));
   const range = element("div", "cluster-job-range");
+  const isMonteCarlo = job.job_type === "monte_carlo";
   range.append(
-    element("span", "", "RANGE"),
-    element("strong", "", `${Number(job.start).toLocaleString("nb-NO")}–${Number(job.end).toLocaleString("nb-NO")}`),
+    element("span", "", isMonteCarlo ? "SAMPLES" : "RANGE"),
+    element("strong", "", isMonteCarlo
+      ? Number(job.samples || 0).toLocaleString("nb-NO")
+      : `${Number(job.start).toLocaleString("nb-NO")}–${Number(job.end).toLocaleString("nb-NO")}`),
   );
   const result = element("div", "cluster-job-result");
   result.append(
     element("span", "", "RESULTAT"),
-    element("strong", "", job.prime_count === undefined ? "—" : Number(job.prime_count).toLocaleString("nb-NO")),
+    element("strong", "", isMonteCarlo
+      ? (job.inside === undefined ? "—" : `${Number(job.inside).toLocaleString("nb-NO")} INNE`)
+      : (job.prime_count === undefined ? "—" : Number(job.prime_count).toLocaleString("nb-NO"))),
   );
   row.append(identity, worker, range, result);
   return row;
@@ -397,28 +434,50 @@ function renderNerd(payload) {
   drawMonteCarlo(canvas, demo.points || []);
 }
 
-function updateCoreControls(payload) {
-  const available = Math.max(1, Number(payload.nodes?.[0]?.cores || payload.demo.available_cores || 1));
-  ui.coreCountLabel.textContent = `${available} tilgjengelig`;
-  [...ui.cores.options].forEach((option) => {
-    option.disabled = Number(option.value) > available;
-  });
-  if (Number(ui.cores.value) > available) ui.cores.value = String(available);
+function fillSlotOptions(select, available) {
+  const previous = Number(select.value || 1);
+  const preferred = [1, 2, 4, 6, 8].filter((value) => value <= available);
+  if (available > 0 && !preferred.includes(available)) preferred.push(available);
+  preferred.sort((a, b) => a - b);
+  select.replaceChildren(...preferred.map((value) => {
+    const option = element("option", "", `${value} ${value === 1 ? "slot" : "slots"}`);
+    option.value = String(value);
+    return option;
+  }));
+  const selected = preferred.includes(previous) ? previous : preferred[preferred.length - 1];
+  if (selected !== undefined) select.value = String(selected);
+}
 
-  const requested = Number(ui.cores.value);
-  const reserve = ui.reserveOne.checked && available > 1;
-  const workers = Math.max(1, Math.min(requested, reserve ? available - 1 : available));
-  ui.reserveOne.disabled = payload.demo.status === "running" || available === 1;
-  ui.cores.disabled = payload.demo.status === "running";
-  ui.coreHint.textContent = reserve && requested > workers
-    ? `Bruker ${workers} prosesser · 1 kjerne holdes ledig.`
-    : `Bruker ${workers} ${workers === 1 ? "beregningsprosess" : "beregningsprosesser"}.`;
+function updateCoreControls(payload) {
+  const capacity = payload.cluster?.capacity || {};
+  const total = Number(capacity.total_slots || 0);
+  const reserved = Number(capacity.reserved_slots || 0);
+  const demoAvailable = ui.reserveOne.checked ? reserved : total;
+  const primeAvailable = ui.clusterReserveOne.checked ? reserved : total;
+  fillSlotOptions(ui.cores, demoAvailable);
+  fillSlotOptions(ui.clusterSlots, primeAvailable);
+  ui.coreCountLabel.textContent = `${demoAvailable} av ${total} tilgjengelig`;
+  const running = payload.demo.status === "running";
+  const clusterReady = payload.cluster?.enabled && payload.cluster?.available;
+  ui.reserveOne.disabled = running || total === 0;
+  ui.cores.disabled = running || demoAvailable === 0;
+  ui.startDemo.disabled = running || demoAvailable === 0 || !clusterReady;
+  ui.clusterReserveOne.disabled = total === 0;
+  ui.clusterSlots.disabled = primeAvailable === 0;
+  const selected = Number(ui.cores.value || 0);
+  ui.coreHint.textContent = demoAvailable
+    ? `Bruker inntil ${selected} cluster-slot${selected === 1 ? "" : "s"}. Controlleren regner ikke.`
+    : "Ingen online compute-workers er tilgjengelige.";
 }
 
 function updateClusterControls(payload) {
   const cluster = payload.cluster || { enabled: false, available: false };
   const ready = cluster.enabled && cluster.available;
-  ui.startClusterJob.disabled = !ready;
+  const capacity = cluster.capacity || {};
+  const available = ui.clusterReserveOne.checked
+    ? Number(capacity.reserved_slots || 0)
+    : Number(capacity.total_slots || 0);
+  ui.startClusterJob.disabled = !ready || available === 0;
   ui.clusterStateLabel.textContent = !cluster.enabled ? "AV" : cluster.available ? "ONLINE" : "OFFLINE";
   ui.clusterStateLabel.classList.toggle("online", ready);
   ui.clusterHelper.textContent = !cluster.enabled
@@ -442,6 +501,7 @@ function render(payload) {
   ui.demoStateLabel.textContent = running ? `${payload.demo.progress.toFixed(0)}%` : payload.demo.status.toUpperCase();
   ui.rawPayload.textContent = JSON.stringify(payload, null, 2);
   ui.lastUpdate.textContent = `${payload.time} · ${payload.mock_mode ? "mock" : "live"}`;
+  renderNodeStatus(payload);
   updateCoreControls(payload);
   updateClusterControls(payload);
 }
@@ -527,8 +587,8 @@ ui.startDemo.addEventListener("click", async () => {
   ui.startDemo.disabled = true;
   try {
     await postJson("/api/demo/start", {
-      iterations: Number(ui.iterations.value),
-      cores: Number(ui.cores.value),
+      samples: Number(ui.iterations.value),
+      slot_limit: Number(ui.cores.value),
       reserve_one: ui.reserveOne.checked,
     });
     await fetchState();
@@ -546,6 +606,8 @@ ui.startClusterJob.addEventListener("click", async () => {
       start: Number(ui.clusterStart.value),
       end: Number(ui.clusterEnd.value),
       chunk_size: Number(ui.clusterChunkSize.value),
+      slot_limit: Number(ui.clusterSlots.value),
+      reserve_one: ui.clusterReserveOne.checked,
     });
     ui.clusterHelper.textContent = `${Number(result.created || 0)} deljobber opprettet.`;
     await fetchState();
@@ -559,6 +621,8 @@ ui.startClusterJob.addEventListener("click", async () => {
 ui.checkUpdate.addEventListener("click", checkForUpdate);
 ui.cores.addEventListener("change", () => fetchState());
 ui.reserveOne.addEventListener("change", () => fetchState());
+ui.clusterSlots.addEventListener("change", () => fetchState());
+ui.clusterReserveOne.addEventListener("change", () => fetchState());
 
 function fitDevice() {
   const availableWidth = ui.deviceFit.clientWidth;

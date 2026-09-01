@@ -139,6 +139,7 @@ h1 {
 
 .workbench {
   display: grid;
+  align-items: start;
   grid-template-columns: minmax(0, 1.65fr) minmax(340px, 0.75fr);
   gap: 18px;
   margin-top: 32px;
@@ -957,6 +958,72 @@ h1 {
   letter-spacing: 0.04em;
 }
 
+#node-capacity-label {
+  color: var(--cyan);
+  font: 700 9px/1 ui-monospace, SFMono-Regular, Consolas, monospace;
+  letter-spacing: 0.1em;
+}
+
+.node-status-list {
+  display: grid;
+  gap: 7px;
+}
+
+.node-status-row {
+  padding: 9px 10px;
+  border: 1px solid #253743;
+  border-radius: 6px;
+  background: rgba(8, 17, 24, 0.62);
+}
+
+.node-status-row.offline {
+  opacity: 0.62;
+}
+
+.node-status-head,
+.node-status-metrics {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.node-status-head strong {
+  overflow: hidden;
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.node-status-head span {
+  color: var(--red);
+  font: 700 8px/1 ui-monospace, SFMono-Regular, Consolas, monospace;
+  letter-spacing: 0.08em;
+}
+
+.node-status-head span.online {
+  color: var(--cyan);
+}
+
+.node-status-metrics {
+  flex-wrap: wrap;
+  justify-content: flex-start;
+  margin-top: 7px;
+  color: #78909d;
+  font: 600 8px/1.2 ui-monospace, SFMono-Regular, Consolas, monospace;
+}
+
+.node-throttle {
+  display: block;
+  margin-top: 6px;
+  color: #607985;
+  font: 600 7px/1.25 ui-monospace, SFMono-Regular, Consolas, monospace;
+}
+
+.node-throttle.active { color: var(--red); }
+.node-throttle.history { color: var(--amber); }
+.node-throttle.ok { color: #609a91; }
+
 .screen-buttons {
   display: grid;
   grid-template-columns: repeat(3, 1fr);
@@ -1020,7 +1087,8 @@ h1 {
   font-size: 11px;
 }
 
-.demo-controls select {
+.demo-controls select,
+.cluster-controls select {
   width: 100%;
   padding: 10px 12px;
   border: 1px solid #2b3f4c;
@@ -1066,7 +1134,8 @@ h1 {
   font: 700 9px/1 ui-monospace, SFMono-Regular, Consolas, monospace;
 }
 
-.demo-controls .reserve-toggle {
+.demo-controls .reserve-toggle,
+.cluster-controls .reserve-toggle {
   display: flex;
   align-items: center;
   gap: 8px;

@@ -31,6 +31,7 @@ class ClusterConfig:
     ca_certificate_file: str = DEFAULT_CLUSTER_CA_FILE
     server_certificate_file: str = DEFAULT_COORDINATOR_CERT_FILE
     server_key_file: str = DEFAULT_COORDINATOR_KEY_FILE
+    worker_slots: int = 0
 
 
 @dataclass(frozen=True)
@@ -127,6 +128,14 @@ def load_config(path: str | Path | None = None) -> AppConfig:
     if isinstance(poll_interval, bool) or not isinstance(poll_interval, (int, float)):
         poll_interval = 2.0
     poll_interval = min(max(float(poll_interval), 0.5), 60.0)
+    raw_worker_slots = cluster.get("worker_slots", 0)
+    worker_slots = (
+        raw_worker_slots
+        if isinstance(raw_worker_slots, int)
+        and not isinstance(raw_worker_slots, bool)
+        and 0 <= raw_worker_slots <= 256
+        else 0
+    )
 
     raw_workers = raw.get("worker_hosts", [])
     worker_hosts = ()
@@ -158,6 +167,7 @@ def load_config(path: str | Path | None = None) -> AppConfig:
             server_key_file=_safe_private_file(
                 cluster.get("server_key_file"), DEFAULT_COORDINATOR_KEY_FILE
             ),
+            worker_slots=worker_slots,
         ),
         node_role=role,
         controller_host=_safe_host(raw.get("controller_host"), "127.0.0.1"),
@@ -247,6 +257,13 @@ def validate_controller_config(path: str | Path) -> AppConfig:
             or not 0.5 <= float(poll) <= 60
         ):
             errors.append("cluster.poll_interval_seconds må være mellom 0.5 og 60")
+        worker_slots = cluster.get("worker_slots", 0)
+        if (
+            isinstance(worker_slots, bool)
+            or not isinstance(worker_slots, int)
+            or not 0 <= worker_slots <= 256
+        ):
+            errors.append("cluster.worker_slots må være mellom 0 og 256")
         credentials_file = cluster.get(
             "credentials_file", DEFAULT_CLUSTER_CREDENTIALS_FILE
         )

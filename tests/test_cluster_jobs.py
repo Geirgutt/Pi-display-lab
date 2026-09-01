@@ -86,6 +86,47 @@ class ClusterJobQueueTests(unittest.TestCase):
                 }
             )
 
+    def test_monte_carlo_batch_is_claimed_and_aggregated(self) -> None:
+        queue = ClusterJobQueue()
+        job_ids = queue.enqueue_monte_carlo(
+            {"samples": 10_000, "samples_per_job": 5_000, "slot_limit": 2}
+        )
+        self.assertEqual(len(job_ids), 2)
+        first = queue.claim("worker-01")
+        second = queue.claim("worker-02")
+        self.assertNotEqual(first["seed"], second["seed"])
+
+        queue.record_result(
+            {**first, "worker": "worker-01", "inside": 3_900, "points": []}
+        )
+        queue.record_result(
+            {**second, "worker": "worker-02", "inside": 3_950, "points": []}
+        )
+        batch = queue.status()["batches"][0]
+        self.assertEqual(batch["status"], "finished")
+        self.assertEqual(batch["samples_done"], 10_000)
+        self.assertEqual(batch["inside"], 7_850)
+        self.assertEqual(batch["estimate"], 3.14)
+
+    def test_batch_slot_limit_is_enforced_across_workers(self) -> None:
+        queue = ClusterJobQueue()
+        queue.enqueue_prime_range(
+            {"start": 1, "end": 300, "chunk_size": 100, "slot_limit": 2}
+        )
+        first = queue.claim("worker-01")
+        self.assertIsNotNone(first)
+        self.assertIsNotNone(queue.claim("worker-02"))
+        self.assertIsNone(queue.claim("worker-03"))
+        queue.record_result({**first, "worker": "worker-01", "prime_count": 25})
+        self.assertIsNotNone(queue.claim("worker-03"))
+
+    def test_result_from_another_worker_is_rejected(self) -> None:
+        queue = ClusterJobQueue()
+        queue.enqueue_prime_range({"start": 1, "end": 10, "chunk_size": 10})
+        job = queue.claim("worker-01")
+        with self.assertRaisesRegex(ValueError, "feil worker"):
+            queue.record_result({**job, "worker": "worker-02", "prime_count": 4})
+
 
 if __name__ == "__main__":
     unittest.main()

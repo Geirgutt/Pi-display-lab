@@ -55,6 +55,7 @@ class ConfigTests(unittest.TestCase):
                             "enabled": True,
                             "coordinator_url": "http://192.0.2.20:5001/",
                             "poll_interval_seconds": 3,
+                            "worker_slots": 2,
                         }
                     }
                 ),
@@ -65,6 +66,7 @@ class ConfigTests(unittest.TestCase):
         self.assertTrue(settings.cluster.enabled)
         self.assertEqual(settings.cluster.coordinator_url, "http://192.0.2.20:5001")
         self.assertEqual(settings.cluster.poll_interval_seconds, 3)
+        self.assertEqual(settings.cluster.worker_slots, 2)
         self.assertEqual(settings.node_role, "controller")
         self.assertEqual(settings.controller_host, "controller.local")
         self.assertEqual(settings.worker_hosts, ("worker-01.local", "worker-02.local"))

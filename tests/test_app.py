@@ -1,9 +1,9 @@
 """Små tester som sjekker at de viktigste API-delene henger sammen."""
 
-import time
 import unittest
 
 from app import create_app
+from config import ClusterConfig
 
 
 class FakeUpdateManager:
@@ -24,6 +24,26 @@ class FakeUpdateManager:
     def check_async(self) -> bool:
         self.checked = True
         return True
+
+
+class FakeClusterCoordinator:
+    def __init__(self) -> None:
+        self.config = ClusterConfig(
+            enabled=True,
+            coordinator_url="http://controller.example:5001",
+            tls_enabled=False,
+        )
+        self.monte_payload: dict | None = None
+
+    def fetch_status(self) -> dict:
+        return {
+            "queued": 0, "running": 0, "completed": 0, "failed": 0,
+            "queued_jobs": [], "running_jobs": [], "results": [], "batches": [],
+        }
+
+    def start_monte_carlo(self, payload: dict) -> dict:
+        self.monte_payload = payload
+        return {"ok": True, "batch_id": 4, "created": 8}
 
 
 class AppSmokeTests(unittest.TestCase):
@@ -107,38 +127,55 @@ class AppSmokeTests(unittest.TestCase):
         invalid = self.client.post("/api/screen", json={"screen": "moon"})
         self.assertEqual(invalid.status_code, 400)
 
-    def test_demo_finishes_and_reports_an_estimate(self) -> None:
-        started = self.client.post(
+    def test_demo_is_submitted_to_workers_instead_of_running_locally(self) -> None:
+        coordinator = FakeClusterCoordinator()
+        app = create_app(mock_mode=True, coordinator_client=coordinator)
+        client = app.test_client()
+        client.post(
+            "/api/nodes/heartbeat",
+            json={"node_id": "worker-01", "cpu": 10, "temp": 45, "ram": 30, "cores": 4},
+        )
+        started = client.post(
             "/api/demo/start",
-            json={"iterations": 10_000, "cores": 1, "reserve_one": False},
+            json={"samples": 10_000, "slot_limit": 3, "reserve_one": True},
         )
         self.assertEqual(started.status_code, 202)
-
-        deadline = time.monotonic() + 3
-        payload = self.client.get("/api/state").get_json()
-        while payload["demo"]["status"] == "running" and time.monotonic() < deadline:
-            time.sleep(0.02)
-            payload = self.client.get("/api/state").get_json()
-
-        self.assertEqual(payload["demo"]["status"], "finished")
-        self.assertGreater(payload["demo"]["estimate"], 3.0)
-        self.assertLess(payload["demo"]["estimate"], 3.3)
-        self.assertEqual(payload["demo"]["inside"] + payload["demo"]["outside"], 10_000)
-        self.assertGreater(len(payload["demo"]["points"]), 0)
-        self.assertEqual(payload["demo"]["worker_count"], 1)
+        self.assertEqual(coordinator.monte_payload["samples"], 10_000)
+        self.assertEqual(coordinator.monte_payload["slot_limit"], 3)
+        self.assertFalse(hasattr(app.extensions["dashboard"], "demo"))
 
     def test_demo_rejects_invalid_core_controls(self) -> None:
+        coordinator = FakeClusterCoordinator()
+        app = create_app(mock_mode=True, coordinator_client=coordinator)
+        client = app.test_client()
+        client.post(
+            "/api/nodes/heartbeat",
+            json={"node_id": "worker-01", "cpu": 10, "temp": 45, "ram": 30, "cores": 4},
+        )
         self.assertEqual(
-            self.client.post("/api/demo/start", json={"iterations": 10_000, "cores": 0}).status_code,
+            client.post("/api/demo/start", json={"samples": 10_000, "slot_limit": 0}).status_code,
             400,
         )
         self.assertEqual(
-            self.client.post(
+            client.post(
                 "/api/demo/start",
-                json={"iterations": 10_000, "cores": 1, "reserve_one": "yes"},
+                json={"samples": 10_000, "slot_limit": 1, "reserve_one": "yes"},
             ).status_code,
             400,
         )
+
+    def test_state_reports_cluster_capacity_without_counting_controller(self) -> None:
+        coordinator = FakeClusterCoordinator()
+        app = create_app(mock_mode=True, coordinator_client=coordinator)
+        client = app.test_client()
+        client.post(
+            "/api/nodes/heartbeat",
+            json={"node_id": "worker-01", "cpu": 10, "temp": 45, "ram": 30, "cores": 4},
+        )
+        capacity = client.get("/api/state").get_json()["cluster"]["capacity"]
+        self.assertEqual(capacity["total_slots"], 4)
+        self.assertEqual(capacity["reserved_slots"], 3)
+        self.assertEqual(capacity["online_workers"], 1)
 
 
 if __name__ == "__main__":

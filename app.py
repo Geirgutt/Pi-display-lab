@@ -17,7 +17,7 @@ from cluster_client import (
     CoordinatorUnavailable,
     disabled_cluster_status,
 )
-from cluster_jobs import validate_prime_range
+from cluster_jobs import validate_monte_carlo, validate_prime_range, validate_slot_limit
 from config import AppConfig, load_config
 from display_state import DashboardState
 from transports import BrowserTransport, Esp32Transport, TransportHub
@@ -89,27 +89,46 @@ def create_app(
 
     @app.post("/api/demo/start")
     def start_demo() -> Any:
-        body = request.get_json(silent=True) or {}
-        iterations = body.get("iterations", 10_000_000)
-        requested_cores = body.get("cores", 1)
+        if not cluster.config.enabled:
+            return jsonify({"ok": False, "error": "Cluster-integrasjonen er deaktivert"}), 409
+        body = request.get_json(silent=True)
+        if not isinstance(body, dict):
+            return jsonify({"ok": False, "error": "Forventet et JSON-objekt"}), 400
         reserve_one = body.get("reserve_one", True)
-        if isinstance(iterations, bool) or isinstance(requested_cores, bool):
-            return jsonify({"ok": False, "error": "iterations og cores må være heltall"}), 400
+        normalized = {
+            "samples": body.get("samples", body.get("iterations", 10_000_000)),
+            "slot_limit": body.get("slot_limit", body.get("cores", 1)),
+            "reserve_one": reserve_one,
+        }
         try:
-            iterations = int(iterations)
-            requested_cores = int(requested_cores)
-        except (TypeError, ValueError):
-            return jsonify({"ok": False, "error": "iterations og cores må være heltall"}), 400
-        if requested_cores < 1:
-            return jsonify({"ok": False, "error": "cores må være minst 1"}), 400
-        if not isinstance(reserve_one, bool):
-            return jsonify({"ok": False, "error": "reserve_one må være true eller false"}), 400
+            samples, samples_per_job, slot_limit = validate_monte_carlo(normalized)
+            if not isinstance(reserve_one, bool):
+                raise ValueError("reserve_one må være true eller false")
+            capacity = dashboard.cluster_capacity(reserve_one)
+            if slot_limit > capacity:
+                raise ValueError(f"Bare {capacity} compute-slots er tilgjengelige")
+        except ValueError as error:
+            return jsonify({"ok": False, "error": str(error)}), 400
+        try:
+            result = cluster.start_monte_carlo({
+                "samples": samples,
+                "samples_per_job": samples_per_job,
+                "slot_limit": slot_limit,
+                "reserve_one": reserve_one,
+            })
+        except CoordinatorAuthenticationError:
+            cluster_status.mark_unavailable("authentication_failed")
+            return jsonify({"ok": False, "error": "Coordinator avviste lokal admin-credential"}), 502
+        except CoordinatorUnavailable:
+            cluster_status.mark_unavailable()
+            return jsonify({"ok": False, "error": "Cluster coordinator svarer ikke"}), 502
 
-        if not dashboard.start_demo(iterations, requested_cores, reserve_one):
-            return jsonify({"ok": False, "error": "Beregningen kjører allerede"}), 409
-
+        try:
+            cluster_status.store(cluster.fetch_status())
+        except CoordinatorUnavailable:
+            cluster_status.invalidate()
         dashboard.set_screen("nerd")
-        return jsonify({"ok": True, "message": "Monte Carlo-demo startet"}), 202
+        return jsonify(result), 202
 
     @app.post("/api/nodes/heartbeat")
     def node_heartbeat() -> Any:
@@ -161,12 +180,26 @@ def create_app(
             return jsonify({"ok": False, "error": "Forventet et JSON-objekt"}), 400
         try:
             start, end, chunk_size = validate_prime_range(body)
+            slot_limit = validate_slot_limit(body)
+            reserve_one = body.get("reserve_one", False)
+            if not isinstance(reserve_one, bool):
+                raise ValueError("reserve_one må være true eller false")
+            if "slot_limit" in body:
+                capacity = dashboard.cluster_capacity(reserve_one)
+                if slot_limit > capacity:
+                    raise ValueError(f"Bare {capacity} compute-slots er tilgjengelige")
         except ValueError as error:
             return jsonify({"ok": False, "error": str(error)}), 400
 
         try:
             result = cluster.start_prime_job(
-                {"start": start, "end": end, "chunk_size": chunk_size}
+                {
+                    "start": start,
+                    "end": end,
+                    "chunk_size": chunk_size,
+                    "slot_limit": slot_limit,
+                    "reserve_one": reserve_one,
+                }
             )
         except CoordinatorAuthenticationError:
             cluster_status.mark_unavailable("authentication_failed")
@@ -177,7 +210,10 @@ def create_app(
             cluster_status.mark_unavailable()
             return jsonify({"ok": False, "error": "Cluster coordinator svarer ikke"}), 502
 
-        cluster_status.invalidate()
+        try:
+            cluster_status.store(cluster.fetch_status())
+        except CoordinatorUnavailable:
+            cluster_status.invalidate()
         dashboard.set_screen("cluster")
         return jsonify(result), 202
 

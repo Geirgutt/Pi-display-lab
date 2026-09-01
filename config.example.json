@@ -13,6 +13,7 @@
     "enabled": false,
     "coordinator_url": "https://controller.local:5001",
     "poll_interval_seconds": 2,
+    "worker_slots": 0,
     "credentials_file": "/etc/pi-display-lab/cluster-credentials.json",
     "tls_enabled": true,
     "ca_certificate_file": "/etc/pi-display-lab/pki/ca.crt",

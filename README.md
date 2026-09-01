@@ -13,11 +13,11 @@ målinger eller beregningslogikk.
 
 - **Home:** klokke, CPU-bruk, CPU-temperatur, RAM, CPU-frekvens, strupestatus
   og nettverksstatus.
-- **Cluster:** ekte Pi-noder samt kø, aktive primtallsjobber, workers og
-  resultathistorikk fra den separate coordinator-tjenesten.
+- **Cluster:** ekte Pi-noder samt kø, aktive primtalls- og Monte Carlo-jobber,
+  workers og resultathistorikk fra den separate coordinator-tjenesten.
 - **Nerd:** Monte Carlo-estimat av pi med levende sirkelgrafikk for treff og bom.
-- **Developer controls:** bytt skjerm, start lokale Monte Carlo-beregninger og
-  del primtallsintervaller i små jobber til clusteret.
+- **Developer controls:** permanent nodestatus, valg av clusterkapasitet og
+  oppstart av Monte Carlo- og primtallsbatcher på workerne.
 - **Mock-modus:** test hele prosjektet på Windows uten Raspberry Pi.
 - **Transportlag:** `BrowserTransport` virker nå, mens `Esp32Transport` er en
   trygg stub for neste etappe.
@@ -28,8 +28,8 @@ målinger eller beregningslogikk.
 Andre Pi-er → node_agent.py → heartbeat-API → NodeRegistry ─┐
                                                             │
 Workers ← HTTPS GET /job ─ Cluster coordinator ─ statuscache ┤
-             └─ POST /result                                ▼
-SystemMonitor + MonteCarloDemo ────────────────────── DashboardState
+    └─ prime_count / monte_carlo ─ POST /result              ▼
+SystemMonitor ─────────────────────────────────────── DashboardState
                                                        (én felles state)
              │
              ▼
@@ -280,14 +280,15 @@ preflight-, PKI-, secret-, systemd-, Ansible- og verify-verktøyene er beholdt.
 ```bash
 curl -X POST http://127.0.0.1:5000/api/cluster/start \
   -H 'Content-Type: application/json' \
-  -d '{"start":1,"end":1000000,"chunk_size":100000}'
+  -d '{"start":1,"end":1000000,"chunk_size":100000,"slot_limit":6,"reserve_one":true}'
 ```
 
 Coordinatoren lager inkluderende intervaller, for eksempel `1–100000` og
-`100001–200000`. Hver worker bruker hostname som navn, henter neste ledige jobb
-med `GET /job`, teller primtall og sender `POST /result`. Workerens hostname og
-Bearer-token må tilhøre hverandre. Når køen er tom, fortsetter tjenesten å vente
-rolig på nye jobber.
+`100001–200000`. Hver worker bruker hostname som navn og har som standard én
+compute-slot per lokal CPU-kjerne. Slottene henter neste tillatte jobb med
+`GET /job`, utfører CPU-arbeidet i separate prosesser og sender `POST /result`.
+Workerens hostname og Bearer-token må tilhøre hverandre. Når køen er tom,
+venter tjenesten med konfigurert backoff i stedet for å busy-loope.
 
 Kø, aktive jobber og resultathistorikk ligger foreløpig bare i minnet. En omstart
 av coordinatoren nullstiller dem. Det er bevisst for denne læringsversjonen.
@@ -347,15 +348,22 @@ offline. Etter omstart av hovedappen dukker noden opp igjen ved neste heartbeat.
 
 ## Monte Carlo og flere kjerner
 
-Kontrollpanelet lar deg velge 1–4 kjerner på Pi-en som kjører webappen. Valget
-**Hold én kjerne ledig på oppdragsgiveren** begrenser fire valgte kjerner til tre
-arbeidsprosesser på en firekjerners Pi. Slår du valget av, brukes alle fire.
+Kontrollpanelet summerer kjernene på online workers. Controllerens kjerner vises
+i nodestatus, men teller aldri som compute-slots. Med to firekjerners workers er
+kapasiteten åtte slots. Valget **Hold én kjerne ledig per worker** reduserer den
+til seks. `cluster.worker_slots` kan settes til `1`–`4` på en worker; `0` betyr
+automatisk antall lokale CPU-kjerner og er den bakoverkompatible standarden.
 
-Ved mer enn én kjerne bruker Python separate prosesser, slik at beregningen ikke
-stoppes av éntrådsbegrensningen i Python. Nerd-skjermen viser et lite utvalg av
-de faktiske tilfeldige punktene: turkis betyr treff inne i sirkelen, lilla betyr
-bom i kvadratets hjørner. Alle punktene teller i resultatet, men bare opptil 720
-sendes til nettleseren for å holde grafikken lett.
+Monte Carlo opprettes som én batch med mange `monte_carlo`-deljobber. Hver del
+har samples, unik seed og batch-ID. Workerne returnerer samples og antall treff;
+coordinatoren beregner `4 * total_inside / total_samples`. Nerd-skjermen viser
+et lite utvalg ekte punkter: turkis betyr treff, lilla betyr bom. Alle punktene
+teller, men maksimalt 720 visualiseringspunkter beholdes.
+
+Primtall og Monte Carlo bruker samme pull-kø. En batch med slot-grense 4 kan ha
+inntil fire deljobber aktive på tvers av alle workers, selv om clusteret har åtte
+ledige slots. Dermed får raske slots mer arbeid uten statisk halvdeling mellom
+maskinene, samtidig som hver batch respekterer valgt kapasitet.
 
 Node-agenten rapporterer maskinstatus, mens `cluster_worker.py` henter og utfører
 jobbchunks. De er separate, små tjenester og kan kjøre samtidig på samme Pi.
@@ -457,7 +465,7 @@ Nyttige adresser:
 | `GET` | `/api/health` | Sjekker at backend lever |
 | `GET` | `/api/state` | Returnerer hele gjeldende display-state |
 | `POST` | `/api/screen` | Bytter skjerm med f.eks. `{"screen":"cluster"}` |
-| `POST` | `/api/demo/start` | Starter beregning med f.eks. `{"iterations":50000000,"cores":4,"reserve_one":false}` |
+| `POST` | `/api/demo/start` | Starter clusterberegning med f.eks. `{"samples":50000000,"slot_limit":6,"reserve_one":true}` |
 | `POST` | `/api/nodes/heartbeat` | Registrerer status fra en ekstern Pi-agent |
 | `GET` | `/api/cluster-jobs` | Henter jobbstatus fra konfigurert cluster coordinator |
 | `POST` | `/api/cluster/start` | Deler et primtallsintervall i cluster-jobber |
@@ -520,13 +528,13 @@ alltid tegne siste melding uten å måtte huske en lang historikk.
 |---|---|
 | `app.py` | Starter Flask og definerer API-adressene |
 | `cluster_coordinator.py` | Separat Flask-app med `/job`, `/result` og `/status` |
-| `cluster_jobs.py` | Trådsikker in-memory kø og primtallsberegning |
-| `cluster_worker.py` | Henter jobb, regner og sender resultat fra en worker |
+| `cluster_jobs.py` | Trådsikker batchkø, slot-grenser og begge beregningstypene |
+| `cluster_worker.py` | Fyller lokale prosess-slots og sender autentiserte resultater |
 | `cluster_client.py` | Kort HTTPS-klient og bakgrunnscache for dashboardet |
 | `cluster_tls.py` / `cluster_pki.py` | Verifisert TLS og privat lab-CA |
 | `cluster_auth.py` | Leser lokale credentials og binder token til riktig rolle/worker |
 | `config.py` | Validerer lokal config og gir sikre standardverdier |
-| `display_state.py` | Leser sensorer, holder noderegister/state og kjører pi-demoen |
+| `display_state.py` | Leser sensorer, holder noderegister og bygger felles dashboard-state |
 | `node_agent.py` | Sender systemmålinger fra en ekstra Raspberry Pi |
 | `scripts/setup-cluster.py` | Norsk veiviser og normal installasjonsvei |
 | `scripts/` | Lavnivåverktøy for installasjon, PKI, verifisering og oppdatering |

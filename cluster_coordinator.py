@@ -90,10 +90,23 @@ def create_coordinator_app(
         if not isinstance(body, dict):
             return jsonify({"ok": False, "error": "Forventet et JSON-objekt"}), 400
         try:
-            job_ids = queue.enqueue_prime_range(body)
+            job_type = body.get("job_type", "prime_count")
+            if job_type == "prime_count":
+                job_ids = queue.enqueue_prime_range(body)
+            elif job_type == "monte_carlo":
+                job_ids = queue.enqueue_monte_carlo(body)
+            else:
+                raise ValueError("Ukjent jobbtype")
         except ValueError as error:
             return jsonify({"ok": False, "error": str(error)}), 400
-        return jsonify({"ok": True, "created": len(job_ids), "job_ids": job_ids}), 201
+        batch_id = queue.batch_id_for_job(job_ids[0]) if job_ids else None
+        return jsonify({
+            "ok": True,
+            "job_type": job_type,
+            "batch_id": batch_id,
+            "created": len(job_ids),
+            "job_ids": job_ids,
+        }), 201
 
     return app
 

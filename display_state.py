@@ -1,11 +1,9 @@
-"""Forretningslogikken: målinger, valgt skjerm og beregningsdemo."""
+"""Forretningslogikken: målinger, noder og samlet dashboard-state."""
 
 from __future__ import annotations
 
 import math
-import multiprocessing
 import os
-import random
 import re
 import socket
 import subprocess
@@ -13,7 +11,6 @@ import sys
 import threading
 import time
 from collections.abc import Callable
-from concurrent.futures import ProcessPoolExecutor, as_completed
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -61,27 +58,6 @@ def decode_throttle_flags(flags: int, available: bool = True) -> dict[str, Any]:
         "soft_temp_limit": bool(flags & (1 << 3)),
         "summary": summary,
     }
-
-
-def _monte_carlo_batch(
-    sample_count: int,
-    seed: int,
-    visual_count: int,
-) -> tuple[int, list[list[float | int]]]:
-    """Beregn én isolert arbeidsbit; funksjonen kan kjøres i en egen prosess."""
-
-    rng = random.Random(seed)
-    hits = 0
-    points: list[list[float | int]] = []
-    for index in range(sample_count):
-        x = rng.random() * 2 - 1
-        y = rng.random() * 2 - 1
-        inside = x * x + y * y <= 1
-        if inside:
-            hits += 1
-        if index < visual_count:
-            points.append([round(x, 4), round(y, 4), 1 if inside else 0])
-    return hits, points
 
 
 class SystemMonitor:
@@ -318,7 +294,7 @@ class NodeRegistry:
             self._nodes[node_id] = node
         return self._public_node(node, now)
 
-    def snapshot(self, limit: int = 3) -> list[dict[str, Any]]:
+    def snapshot(self, limit: int = MAX_REGISTERED_NODES) -> list[dict[str, Any]]:
         now = self._clock()
         with self._lock:
             nodes = [dict(node) for node in self._nodes.values()]
@@ -345,145 +321,6 @@ class NodeRegistry:
         }
 
 
-class MonteCarloDemo:
-    """Bakgrunnsjobb som estimerer pi og rapporterer fremdrift underveis."""
-
-    MIN_ITERATIONS = 10_000
-    MAX_ITERATIONS = 100_000_000
-    MAX_VISUAL_POINTS = 720
-    MAX_WORKERS = 4
-
-    def __init__(self, cpu_count: int | None = None) -> None:
-        self._lock = threading.Lock()
-        self._available_cores = max(1, min(cpu_count or os.cpu_count() or 1, self.MAX_WORKERS))
-        self._status = "idle"
-        self._samples_done = 0
-        self._iterations = 0
-        self._inside = 0
-        self._estimate: float | None = None
-        self._started_at = 0.0
-        self._runtime_seconds = 0.0
-        self._error: str | None = None
-        self._requested_cores = 1
-        self._worker_count = 1
-        self._reserve_one = True
-        self._points: list[list[float | int]] = []
-
-    def start(self, iterations: int, requested_cores: int = 1, reserve_one: bool = True) -> bool:
-        iterations = min(max(iterations, self.MIN_ITERATIONS), self.MAX_ITERATIONS)
-        worker_count = self.resolve_worker_count(requested_cores, reserve_one)
-        with self._lock:
-            if self._status == "running":
-                return False
-            self._status = "running"
-            self._samples_done = 0
-            self._iterations = iterations
-            self._inside = 0
-            self._estimate = None
-            self._runtime_seconds = 0.0
-            self._started_at = time.perf_counter()
-            self._error = None
-            self._requested_cores = requested_cores
-            self._worker_count = worker_count
-            self._reserve_one = reserve_one
-            self._points = []
-
-        worker = threading.Thread(target=self._calculate, daemon=True, name="pi-demo")
-        worker.start()
-        return True
-
-    def snapshot(self) -> dict[str, Any]:
-        with self._lock:
-            runtime = self._runtime_seconds
-            if self._status == "running":
-                runtime = time.perf_counter() - self._started_at
-            progress = self._samples_done / self._iterations * 100 if self._iterations else 0
-            return {
-                "status": self._status,
-                "progress": round(progress, 1),
-                "samples_done": self._samples_done,
-                "iterations": self._iterations,
-                "estimate": self._estimate,
-                "runtime_seconds": round(runtime, 2),
-                "error": self._error,
-                "inside": self._inside,
-                "outside": self._samples_done - self._inside,
-                "points": [list(point) for point in self._points],
-                "available_cores": self._available_cores,
-                "requested_cores": self._requested_cores,
-                "worker_count": self._worker_count,
-                "reserve_one": self._reserve_one,
-            }
-
-    def resolve_worker_count(self, requested_cores: int, reserve_one: bool) -> int:
-        requested = max(1, min(int(requested_cores), self._available_cores))
-        limit = self._available_cores
-        if reserve_one and self._available_cores > 1:
-            limit -= 1
-        return max(1, min(requested, limit))
-
-    def _calculate(self) -> None:
-        try:
-            with self._lock:
-                iterations = self._iterations
-                workers = self._worker_count
-
-            task_count = min(iterations // self.MIN_ITERATIONS, max(24, workers * 48))
-            task_count = max(1, task_count)
-            base_size, extra = divmod(iterations, task_count)
-            work_sizes = [base_size + (1 if index < extra else 0) for index in range(task_count)]
-            visual_per_task = math.ceil(self.MAX_VISUAL_POINTS / task_count)
-            seed_base = time.time_ns() ^ os.getpid()
-
-            if workers == 1:
-                for index, work_size in enumerate(work_sizes):
-                    result = _monte_carlo_batch(
-                        work_size,
-                        seed_base + index * 1_000_003,
-                        visual_per_task,
-                    )
-                    self._record_batch(work_size, *result)
-                    time.sleep(0)
-            else:
-                context = multiprocessing.get_context("spawn")
-                with ProcessPoolExecutor(max_workers=workers, mp_context=context) as executor:
-                    futures = {
-                        executor.submit(
-                            _monte_carlo_batch,
-                            work_size,
-                            seed_base + index * 1_000_003,
-                            visual_per_task,
-                        ): work_size
-                        for index, work_size in enumerate(work_sizes)
-                    }
-                    for future in as_completed(futures):
-                        hits, points = future.result()
-                        self._record_batch(futures[future], hits, points)
-
-            with self._lock:
-                self._runtime_seconds = time.perf_counter() - self._started_at
-                self._status = "finished"
-        except Exception as error:  # Sikrer at UI-et ikke blir stående på "running".
-            with self._lock:
-                self._runtime_seconds = time.perf_counter() - self._started_at
-                self._status = "error"
-                self._error = str(error)
-
-    def _record_batch(
-        self,
-        sample_count: int,
-        hits: int,
-        points: list[list[float | int]],
-    ) -> None:
-        with self._lock:
-            self._inside += hits
-            self._samples_done += sample_count
-            self._estimate = round(4 * self._inside / self._samples_done, 6)
-            remaining = self.MAX_VISUAL_POINTS - len(self._points)
-            if remaining > 0:
-                self._points.extend(points[:remaining])
-
-
 class DashboardState:
     """Samler all state i ett stabilt, skjerm-uavhengig JSON-format."""
 
@@ -492,7 +329,6 @@ class DashboardState:
     def __init__(self, mock_mode: bool = False) -> None:
         self.monitor = SystemMonitor(mock_mode=mock_mode)
         self.nodes = NodeRegistry()
-        self.demo = MonteCarloDemo()
         self.mock_mode = mock_mode
         self._screen = "home"
         self._lock = threading.Lock()
@@ -504,16 +340,61 @@ class DashboardState:
         with self._lock:
             self._screen = screen
 
-    def start_demo(self, iterations: int, requested_cores: int = 1, reserve_one: bool = True) -> bool:
-        return self.demo.start(iterations, requested_cores, reserve_one)
-
     def register_node(self, payload: dict[str, Any], source_ip: str | None = None) -> dict[str, Any]:
         return self.nodes.heartbeat(payload, source_ip)
+
+    def cluster_capacity(self, reserve_one: bool = False) -> int:
+        """Summer bare online compute-workers; controlleren er aldri med."""
+
+        capacity = 0
+        for node in self.nodes.snapshot():
+            if node["online"]:
+                cores = int(node.get("cores") or 0)
+                capacity += max(0, cores - (1 if reserve_one else 0))
+        return capacity
+
+    def _cluster_demo(self, cluster_status: dict[str, Any] | None) -> dict[str, Any]:
+        batches = list((cluster_status or {}).get("batches") or [])
+        monte_batches = [batch for batch in batches if batch.get("job_type") == "monte_carlo"]
+        batch = monte_batches[-1] if monte_batches else None
+        if batch is None:
+            return {
+                "status": "idle", "progress": 0.0, "samples_done": 0,
+                "iterations": 0, "estimate": None, "runtime_seconds": 0.0,
+                "error": None, "inside": 0, "outside": 0, "points": [],
+                "available_cores": self.cluster_capacity(), "requested_cores": 1,
+                "worker_count": 1, "reserve_one": True, "batch_id": None,
+            }
+        samples = int(batch.get("samples") or 0)
+        samples_done = int(batch.get("samples_done") or 0)
+        inside = int(batch.get("inside") or 0)
+        batch_status = str(batch.get("status") or "queued")
+        status = {
+            "queued": "running", "running": "running", "finished": "finished",
+            "error": "error",
+        }.get(batch_status, "error")
+        return {
+            "status": status,
+            "progress": round(samples_done / samples * 100, 1) if samples else 0.0,
+            "samples_done": samples_done,
+            "iterations": samples,
+            "estimate": batch.get("estimate"),
+            "runtime_seconds": float(batch.get("runtime_seconds") or 0),
+            "error": "En eller flere deljobber feilet" if batch.get("failed_jobs") else None,
+            "inside": inside,
+            "outside": samples_done - inside,
+            "points": [list(point) for point in batch.get("points") or []],
+            "available_cores": self.cluster_capacity(),
+            "requested_cores": int(batch.get("slot_limit") or 1),
+            "worker_count": int(batch.get("slot_limit") or 1),
+            "reserve_one": bool(batch.get("reserve_one")),
+            "batch_id": batch.get("batch_id"),
+        }
 
     def snapshot(self, cluster_status: dict[str, Any] | None = None) -> dict[str, Any]:
         now = datetime.now().astimezone()
         system = self.monitor.read()
-        demo = self.demo.snapshot()
+        demo = self._cluster_demo(cluster_status)
         with self._lock:
             screen = self._screen
 
@@ -525,7 +406,7 @@ class DashboardState:
                 "cpu": system["cpu"],
                 "temp": system["temp"],
                 "ram": system["ram"],
-                "cores": demo["available_cores"],
+                "cores": max(os.cpu_count() or 1, 1),
                 "frequency_mhz": system["frequency_mhz"],
                 "throttle": system["throttle"],
                 "ip": system["ip"],
@@ -535,7 +416,16 @@ class DashboardState:
                 "last_seen_seconds": 0.0,
             }
         ]
-        nodes.extend(self.nodes.snapshot(limit=3))
+        nodes.extend(self.nodes.snapshot())
+
+        cluster_payload = dict(cluster_status or {})
+        cluster_payload["capacity"] = {
+            "total_slots": self.cluster_capacity(False),
+            "reserved_slots": self.cluster_capacity(True),
+            "online_workers": sum(
+                1 for node in nodes if node["kind"] == "remote" and node["online"]
+            ),
+        }
 
         if demo["status"] == "running":
             message = "Beregner pi ..."
@@ -559,7 +449,7 @@ class DashboardState:
             },
             "network": {"online": system["online"], "ip": system["ip"]},
             "demo": demo,
-            "cluster": cluster_status
+            "cluster": cluster_payload
             if cluster_status is not None
             else {
                 "enabled": False,

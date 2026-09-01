@@ -133,6 +133,7 @@ def build_controller_config(
             "enabled": True,
             "coordinator_url": f"https://{controller_host.strip()}:{coordinator_port}",
             "poll_interval_seconds": poll_interval_seconds,
+            "worker_slots": 0,
             "credentials_file": DEFAULT_CLUSTER_CREDENTIALS_FILE,
             "tls_enabled": True,
             "ca_certificate_file": DEFAULT_CLUSTER_CA_FILE,

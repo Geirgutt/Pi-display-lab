@@ -112,7 +112,7 @@ class ClusterApiTests(unittest.TestCase):
 
         self.assertEqual(response.status_code, 202)
         self.assertEqual(response.get_json()["created"], 10)
-        request = mocked_urlopen.call_args.args[0]
+        request = mocked_urlopen.call_args_list[0].args[0]
         self.assertEqual(request.full_url, "http://127.0.0.1:5001/jobs")
         self.assertEqual(request.method, "POST")
 

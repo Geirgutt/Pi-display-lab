@@ -56,6 +56,14 @@
             <span class="control-led" title="Kontrollpanel aktivt"></span>
           </div>
 
+          <section class="control-group node-status-group" aria-labelledby="node-status-title">
+            <div class="control-title-row">
+              <h3 id="node-status-title">Node status</h3>
+              <span id="node-capacity-label">0 SLOTS</span>
+            </div>
+            <div class="node-status-list" id="node-status-list" aria-live="polite"></div>
+          </section>
+
           <section class="control-group">
             <h3>Velg skjerm</h3>
             <div class="screen-buttons" id="screen-buttons">
@@ -85,16 +93,11 @@
               <option value="50000000" selected>50 000 000 punkter</option>
               <option value="100000000">100 000 000 punkter</option>
             </select>
-            <label for="cores">Kjerner på oppdragsgiveren <span id="core-count-label">oppdager …</span></label>
-            <select id="cores">
-              <option value="1" selected>1 kjerne</option>
-              <option value="2">2 kjerner</option>
-              <option value="3">3 kjerner</option>
-              <option value="4">4 kjerner</option>
-            </select>
-            <label class="reserve-toggle" for="reserve-one">
-              <input id="reserve-one" type="checkbox" checked>
-              <span>Hold én kjerne ledig på oppdragsgiveren</span>
+            <label for="demo-slots">Compute slots <span id="core-count-label">oppdager …</span></label>
+            <select id="demo-slots"><option value="1">1 slot</option></select>
+            <label class="reserve-toggle" for="demo-reserve-one">
+              <input id="demo-reserve-one" type="checkbox" checked>
+              <span>Hold én kjerne ledig per worker</span>
             </label>
             <p class="core-hint" id="core-hint">Bruker 1 beregningsprosess.</p>
             <button class="primary-button" id="start-demo" type="button">
@@ -119,6 +122,12 @@
             </div>
             <label for="cluster-chunk-size">Tall per deljobb</label>
             <input id="cluster-chunk-size" type="number" min="1" step="1" value="100000">
+            <label for="cluster-slots">Compute slots</label>
+            <select id="cluster-slots"><option value="1">1 slot</option></select>
+            <label class="reserve-toggle" for="cluster-reserve-one">
+              <input id="cluster-reserve-one" type="checkbox" checked>
+              <span>Hold én kjerne ledig per worker</span>
+            </label>
             <button class="primary-button" id="start-cluster-job" type="button" disabled>
               <span id="start-cluster-label">Start cluster-jobb</span>
               <span aria-hidden="true">→</span>

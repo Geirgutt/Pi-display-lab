@@ -146,6 +146,27 @@ class CoordinatorApiTests(unittest.TestCase):
             403,
         )
 
+    def test_monte_carlo_job_uses_same_authenticated_flow(self) -> None:
+        created = self.client.post(
+            "/jobs",
+            json={
+                "job_type": "monte_carlo", "samples": 10_000,
+                "samples_per_job": 10_000, "slot_limit": 1,
+            },
+            headers=self.admin_headers(),
+        )
+        self.assertEqual(created.status_code, 201)
+        self.assertEqual(created.get_json()["job_type"], "monte_carlo")
+        job = self.client.get("/job", headers=self.worker_headers()).get_json()
+        accepted = self.client.post(
+            "/result",
+            json={**job, "worker": "worker-01", "inside": 7_850, "points": []},
+            headers=self.worker_headers(),
+        )
+        self.assertEqual(accepted.status_code, 202)
+        batch = self.client.get("/status", headers=self.admin_headers()).get_json()["batches"][0]
+        self.assertEqual(batch["estimate"], 3.14)
+
 
 if __name__ == "__main__":
     unittest.main()

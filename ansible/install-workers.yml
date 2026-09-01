@@ -93,6 +93,7 @@
               "enabled": true,
               "coordinator_url": "https://{{ controller_host }}:{{ coordinator_port }}",
               "poll_interval_seconds": {{ worker_poll_interval }},
+              "worker_slots": {{ ansible_processor_vcpus | default(ansible_processor_count | default(0)) }},
               "credentials_file": "{{ cluster_credentials_file }}",
               "tls_enabled": true,
               "ca_certificate_file": "{{ cluster_ca_file }}",
