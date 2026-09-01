@@ -96,12 +96,23 @@ def _run(command: list[str]) -> subprocess.CompletedProcess[bytes]:
             command,
             check=True,
             capture_output=True,
-            timeout=30,
+            timeout=180,
         )
     except FileNotFoundError as error:
         raise RuntimeError("Fant ikke openssl på controlleren") from error
-    except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as error:
-        raise RuntimeError("OpenSSL kunne ikke validere eller lage cluster-PKI") from error
+    except subprocess.TimeoutExpired as error:
+        raise RuntimeError(
+            "OpenSSL brukte mer enn 180 sekunder. "
+            "Dette kan skje ved nøkkelgenerering på en eldre Raspberry Pi."
+        ) from error
+    except subprocess.CalledProcessError as error:
+        stderr = (error.stderr or b"").decode(
+            "utf-8", errors="replace"
+        ).strip()
+        detail = stderr or f"exit-kode {error.returncode}"
+        raise RuntimeError(
+            f"OpenSSL-kommando feilet: {detail}"
+        ) from error
 
 
 def _same_public_key(certificate: Path, private_key: Path) -> bool:
