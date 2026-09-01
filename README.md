@@ -27,7 +27,7 @@ målinger eller beregningslogikk.
 ```text
 Andre Pi-er → node_agent.py → heartbeat-API → NodeRegistry ─┐
                                                             │
-Workers ← GET /job ─ Cluster coordinator ─ statuscache ─────┤
+Workers ← HTTPS GET /job ─ Cluster coordinator ─ statuscache ┤
              └─ POST /result                                ▼
 SystemMonitor + MonteCarloDemo ────────────────────── DashboardState
                                                        (én felles state)
@@ -140,6 +140,8 @@ Oppdateringsskriptet:
 
 Dette er den eneste oppdateringsveien. Du bestemmer dermed selv når en kontrollert
 GitHub-versjon skal installeres på Pi-en, og kommandoen må kjøres over SSH.
+Hvis en eldre lokal config trenger TLS-migrering, stopper oppdateringen etter
+trygg Git-oppdatering og ber deg kjøre `python3 scripts/setup-cluster.py`.
 
 ## Fra blank Raspberry Pi til fungerende cluster
 
@@ -155,14 +157,22 @@ Oppsettet har tre enkle roller:
   node-agenten.
 
 Alle maskinene bør kjøre Raspberry Pi OS og være på samme betrodde lokalnett.
-Installasjonen bruker **SSH-nøkler** når Ansible kobler til og installerer på
-workerne. Clusterets **API-tokens er separate credentials** som brukes av
-tjenestene etter installasjonen. Scriptet lager dem automatisk; de erstatter
-ikke SSH-nøklene.
+Installasjonen bruker **SSH-nøkler** for administrasjon og Ansible. Clusterets
+**API-tokens er separate credentials** som tjenestene bruker mens clusteret
+kjører. HTTPS krypterer tokenene på port 5001; SSH-nøklene erstatter ikke
+API-tokenene og omvendt.
 
-Lag og kopier SSH-nøklene til hver worker først. Logg deretter inn på hver worker
-én gang manuelt fra controlleren, kontroller SSH-fingerprint og godkjenn host
-key. Installasjonen skrur ikke av host-key-kontroll.
+Lag og kopier SSH-nøkkelen til hver worker først:
+
+```bash
+ssh-copy-id labuser@worker-01.example
+ssh labuser@worker-01.example
+```
+
+Kontroller fingerprint og svar `yes` første gang. Gjenta for hver worker.
+Veiviseren skrur aldri av host-key-kontrollen.
+
+### Normal installasjon: én norsk veiviser
 
 På controlleren:
 
@@ -172,70 +182,95 @@ sudo apt install -y git
 cd ~
 git clone https://github.com/Geirgutt/Pi-display-lab.git
 cd Pi-display-lab
-cp config.example.json config.local.json
-nano config.local.json
+python3 scripts/setup-cluster.py
 ```
 
-Bruk dine lokale vertsnavn i den private filen. Et typisk oppsett ser slik ut:
+Veiviseren oppdager og viser bruker, hostname, sannsynlig LAN-adresse,
+prosjektmappe, Git-branch/commit, eksisterende config/tjenester og brukte porter.
+Den spør bare om:
 
-```json
-{
-  "node_role": "controller",
-  "controller_host": "controller.local",
-  "worker_hosts": ["worker-01.local", "worker-02.local"],
-  "ssh_user": "labuser",
-  "coordinator_port": 5001,
-  "app_port": 5000,
-  "node_heartbeat_auth": false,
-  "cluster": {
-    "enabled": true,
-    "coordinator_url": "http://127.0.0.1:5001",
-    "poll_interval_seconds": 2,
-    "credentials_file": "/etc/pi-display-lab/cluster-credentials.json"
-  }
-}
-```
+- controller-adressen workerne faktisk kan nå
+- SSH-brukeren på workerne
+- worker-adresse/hostname, én om gangen
+- om heartbeat-token skal aktiveres (standard: ja)
+- om et gammelt serversertifikat skal fornyes når adressen har endret seg
+- en endelig bekreftelse før noe installeres eller endres
 
-Kjør deretter ett script:
+Før bekreftelsen utføres bare lesende kontroller av DNS/IP, godkjent SSH host
+key, SSH-nøkkel, remote hostname, Python, sudo, apt-get og controller-oppslag.
+Hvis host key mangler, ber veiviseren deg kjøre `ssh user@worker`. Hvis
+nøkkelinnlogging mangler, bruker du `ssh-copy-id user@worker`.
+
+Veiviseren lager den Git-ignorerte `config.local.json`, installerer avhengigheter,
+lager/bevarer credentials og privat CA, installerer systemd-tjenestene og ruller
+ut nøyaktig controllerens Git-commit til hver worker. Controlleren kjører bare
+Pi Display Lab og coordinatoren; den blir ikke compute-worker.
+
+Controllerens `sudo -v` spør normalt én gang. Workerne behandles sekvensielt.
+Har de forskjellige sudo-passord, får hver worker sitt eget interaktive
+Ansible `--ask-become-pass`-spørsmål. Passord lagres aldri i filer, miljø,
+kommandolinjevariabler eller logger.
+
+### Eksisterende installasjon og trygg migrering
 
 ```bash
-bash scripts/install-cluster.sh
+cd ~/Pi-display-lab
+bash scripts/update.sh
+python3 scripts/setup-cluster.py
 ```
 
-Kjør scriptet som den vanlige controller-brukeren, ikke med `sudo bash`.
-`sudo -v` ber om controllerens sudo-passord én gang. Hvis workerne trenger et
-sudo-passord, spør Ansible med `--ask-become-pass`; passordet lagres ikke.
+Når lokal config allerede finnes, tilbyr veiviseren å verifisere, reinstallere,
+endre workers, endre controller/nettverk eller avbryte. Gyldige tokens og CA
+bevares. En ny worker får bare sitt eget nye token. Fjerning vises og må
+bekreftes før worker-tokenet trekkes tilbake.
+Den fjernede maskinen slettes eller ryddes ikke automatisk; dens gamle worker-
+tjeneste vil bare bli avvist av coordinatoren til du stopper den manuelt.
 
-Scriptet validerer config og nettverk først, installerer controllerens
-Python-miljø, oppretter `pi-display-lab.service` og
-`cluster-coordinator.service`, genererer credentials lokalt og bruker Ansible
-over de eksisterende SSH-nøklene til å:
+Gamle `~/coordinator.py` og `~/worker.py` slettes aldri automatisk. Hvis port
+5001 er opptatt, vises PID, program og kommandolinje. Bare en prosess som tydelig
+ser ut som den gamle manuelle `coordinator.py`, tilbys stoppet, og det krever en
+egen bekreftelse. En ukjent prosess blir ikke drept.
 
-1. klone eller oppdatere repoet til nøyaktig samme Git-commit som controlleren
-2. skrive en privat `config.local.json` på hver worker
-3. gi hver worker bare dens eget tilfeldige worker-token
-4. opprette `cluster-worker.service` og `pi-display-node-agent.service`
-5. starte tjenestene nå og aktivere dem ved hver oppstart
+### TLS og lokale hemmeligheter
 
-Controlleren installerer ikke `cluster-worker.service` på seg selv. Alle
-tjenestene kjører som de vanlige, konfigurerte brukerne, ikke root.
+Første installasjon oppretter en liten privat lab-CA og et coordinator-
+serversertifikat med SAN for valgt controller-IP eller hostname:
 
-`config.local.json` ligger i prosjektmappen og ignoreres av Git. Genererte
-cluster-credentials ligger som standard i
-`/etc/pi-display-lab/cluster-credentials.json` med modus `0600`. Controlleren har
-admin-token og worker-kartet; hver worker har en fil på samme sti som bare
-inneholder dens eget token. Midlertidig inventory og Ansible-variabler slettes
-når installasjonen er ferdig.
+```text
+/etc/pi-display-lab/pki/ca.key              0600, bare controller
+/etc/pi-display-lab/pki/ca.crt              offentlig CA-sertifikat
+/etc/pi-display-lab/pki/coordinator.key     0600, bare controller
+/etc/pi-display-lab/pki/coordinator.crt     serversertifikat
+/etc/pi-display-lab/cluster-credentials.json 0600
+/etc/pi-display-lab/node-heartbeat.env      0600, når aktivert
+```
 
-Kontroller hele installasjonen når som helst med:
+CA-privatnøkkelen forlater aldri controlleren. Hver worker får bare offentlig
+`ca.crt`, sitt eget worker-token og eventuelt det delte heartbeat-tokenet. Pi
+Display Lab beholder admin-tokenet lokalt. Klientene validerer både CA-kjeden og
+at sertifikatets SAN matcher controller-adressen; det finnes ingen
+`verify=False`-reserve. Ved adresseendring kan veiviseren lage bare et nytt
+serversertifikat og beholde CA-en.
+
+Dashboardet på port 5000 er fortsatt vanlig HTTP uten innlogging. Coordinator-
+trafikken på port 5001 er HTTPS med Bearer-token. Begge portene er bare for et
+betrodd hjem/lab-LAN og skal aldri videresendes direkte fra ruteren til
+Internett.
+
+### Verifisering og avansert installasjon
 
 ```bash
 bash scripts/verify-cluster.sh
 ```
 
-Den sjekker controller-tjenestene, åpne health-endepunkter, autentisert
-coordinator-status, appens cluster-API, SSH til workerne og begge
-worker-tjenestene. Du trenger aldri lime inn et token ved verifisering.
+Verifiseringen sjekker tjenester, HTTPS-handshake, CA-kjede, hostname/IP,
+health, autentisert status, appens cluster-API, SSH, worker-identitet og at alle
+noder kjører samme commit. Tokens skrives ikke ut.
+
+Avanserte brukere kan fortsatt kopiere `config.example.json` til
+`config.local.json`, fylle inn lokale verdier og sette `cluster.enabled` til
+`true`, og så kjøre `bash scripts/install-cluster.sh`. De lavere
+preflight-, PKI-, secret-, systemd-, Ansible- og verify-verktøyene er beholdt.
 
 ### Slik kjører clusterjobben
 
@@ -261,10 +296,10 @@ Dashboardet henter status i bakgrunnen med kort timeout. Hvis coordinatoren er
 nede, markeres Cluster-skjermen som offline uten at resten av Pi Display Lab
 stopper eller blir hengende.
 
-Coordinatorens worker- og admin-API er tokenbeskyttet. Dashboardet på port 5000
-har fortsatt ikke brukerinnlogging, og tokenene sendes over vanlig, ukryptert
-HTTP. Hold derfor port 5000 og 5001 på det betrodde labnettet, og ikke videresend
-dem fra ruteren til Internett.
+Coordinatorens worker- og admin-API er tokenbeskyttet, og port 5001 bruker HTTPS
+med lab-CA-verifisering. Dashboardet på port 5000 har fortsatt ikke
+brukerinnlogging og er ikke kryptert. Hold derfor begge portene på det betrodde
+labnettet, og ikke videresend dem fra ruteren til Internett.
 
 Status og logger kan sjekkes uten å starte Python manuelt:
 
@@ -487,12 +522,14 @@ alltid tegne siste melding uten å måtte huske en lang historikk.
 | `cluster_coordinator.py` | Separat Flask-app med `/job`, `/result` og `/status` |
 | `cluster_jobs.py` | Trådsikker in-memory kø og primtallsberegning |
 | `cluster_worker.py` | Henter jobb, regner og sender resultat fra en worker |
-| `cluster_client.py` | Kort HTTP-klient og bakgrunnscache for dashboardet |
+| `cluster_client.py` | Kort HTTPS-klient og bakgrunnscache for dashboardet |
+| `cluster_tls.py` / `cluster_pki.py` | Verifisert TLS og privat lab-CA |
 | `cluster_auth.py` | Leser lokale credentials og binder token til riktig rolle/worker |
 | `config.py` | Validerer lokal config og gir sikre standardverdier |
 | `display_state.py` | Leser sensorer, holder noderegister/state og kjører pi-demoen |
 | `node_agent.py` | Sender systemmålinger fra en ekstra Raspberry Pi |
-| `scripts/` | Installerer, verifiserer og oppdaterer app/cluster trygt |
+| `scripts/setup-cluster.py` | Norsk veiviser og normal installasjonsvei |
+| `scripts/` | Lavnivåverktøy for installasjon, PKI, verifisering og oppdatering |
 | `ansible/` | Ruller worker-kode og tjenester ut over eksisterende SSH-nøkler |
 | `updates.py` | Sjekker `origin/main` og lager lenke til en tilgjengelig commit |
 | `transports.py` | Felles `DeviceTransport`, nettlesertransport og ESP32-stub |

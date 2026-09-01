@@ -8,11 +8,15 @@
   "ssh_user": "labuser",
   "coordinator_port": 5001,
   "app_port": 5000,
-  "node_heartbeat_auth": false,
+  "node_heartbeat_auth": true,
   "cluster": {
     "enabled": false,
-    "coordinator_url": "http://127.0.0.1:5001",
+    "coordinator_url": "https://controller.local:5001",
     "poll_interval_seconds": 2,
-    "credentials_file": "/etc/pi-display-lab/cluster-credentials.json"
+    "credentials_file": "/etc/pi-display-lab/cluster-credentials.json",
+    "tls_enabled": true,
+    "ca_certificate_file": "/etc/pi-display-lab/pki/ca.crt",
+    "server_certificate_file": "/etc/pi-display-lab/pki/coordinator.crt",
+    "server_key_file": "/etc/pi-display-lab/pki/coordinator.key"
   }
 }

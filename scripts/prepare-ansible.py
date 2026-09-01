@@ -47,6 +47,7 @@ def main() -> int:
         "app_port": settings.app_port,
         "worker_poll_interval": settings.cluster.poll_interval_seconds,
         "cluster_credentials_file": settings.cluster.credentials_file,
+        "cluster_ca_file": settings.cluster.ca_certificate_file,
     }
     (output_dir / "vars.json").write_text(
         json.dumps(variables, indent=2) + "\n",

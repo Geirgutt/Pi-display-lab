@@ -39,6 +39,7 @@ class ClusterApiTests(unittest.TestCase):
                 enabled=True,
                 coordinator_url="http://127.0.0.1:5001",
                 credentials_file=str(credentials_path),
+                tls_enabled=False,
             )
         )
 
@@ -74,7 +75,7 @@ class ClusterApiTests(unittest.TestCase):
             ],
         }
         mocked_urlopen.return_value = FakeResponse(expected)
-        settings = AppConfig(ClusterConfig(True, "http://127.0.0.1:5001"))
+        settings = AppConfig(ClusterConfig(True, "http://127.0.0.1:5001", tls_enabled=False))
         response = create_app(mock_mode=True, settings=settings).test_client().get(
             "/api/cluster-jobs"
         )
@@ -85,7 +86,7 @@ class ClusterApiTests(unittest.TestCase):
 
     @patch("cluster_client.urlopen", side_effect=URLError("offline"))
     def test_unavailable_coordinator_does_not_break_app(self, _mocked_urlopen) -> None:
-        settings = AppConfig(ClusterConfig(True, "http://127.0.0.1:5001"))
+        settings = AppConfig(ClusterConfig(True, "http://127.0.0.1:5001", tls_enabled=False))
         client = create_app(mock_mode=True, settings=settings).test_client()
 
         cluster_response = client.get("/api/cluster-jobs")
@@ -101,7 +102,7 @@ class ClusterApiTests(unittest.TestCase):
         mocked_urlopen.return_value = FakeResponse(
             {"ok": True, "created": 10, "job_ids": list(range(1, 11))}
         )
-        settings = AppConfig(ClusterConfig(True, "http://127.0.0.1:5001"))
+        settings = AppConfig(ClusterConfig(True, "http://127.0.0.1:5001", tls_enabled=False))
         client = create_app(mock_mode=True, settings=settings).test_client()
 
         response = client.post(
@@ -116,7 +117,7 @@ class ClusterApiTests(unittest.TestCase):
         self.assertEqual(request.method, "POST")
 
     def test_cluster_job_start_is_validated(self) -> None:
-        settings = AppConfig(ClusterConfig(True, "http://127.0.0.1:5001"))
+        settings = AppConfig(ClusterConfig(True, "http://127.0.0.1:5001", tls_enabled=False))
         client = create_app(mock_mode=True, settings=settings).test_client()
         response = client.post(
             "/api/cluster/start",
@@ -152,7 +153,7 @@ class ClusterApiTests(unittest.TestCase):
         side_effect=HTTPError("http://127.0.0.1:5001/status", 401, "no", None, None),
     )
     def test_rejected_admin_token_is_a_controlled_status(self, _mocked_urlopen) -> None:
-        settings = AppConfig(ClusterConfig(True, "http://127.0.0.1:5001"))
+        settings = AppConfig(ClusterConfig(True, "http://127.0.0.1:5001", tls_enabled=False))
         client = create_app(mock_mode=True, settings=settings).test_client()
         response = client.get("/api/cluster-jobs")
 

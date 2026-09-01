@@ -9,6 +9,7 @@ from flask import Flask, jsonify, request
 
 from cluster_auth import ClusterCredentials, bearer_token, load_cluster_credentials
 from cluster_jobs import ClusterJobQueue
+from cluster_tls import create_server_ssl_context
 from config import AppConfig, load_config
 
 
@@ -105,5 +106,12 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Pi Display Lab cluster coordinator")
     parser.add_argument("--port", type=int, default=settings.coordinator_port)
     args = parser.parse_args()
-    print(f"Cluster coordinator lytter på port {args.port}")
-    app.run(host="0.0.0.0", port=args.port, debug=False, threaded=True)
+    tls_context = create_server_ssl_context(settings.cluster)
+    print(f"Cluster coordinator lytter med HTTPS på port {args.port}")
+    app.run(
+        host="0.0.0.0",
+        port=args.port,
+        debug=False,
+        threaded=True,
+        ssl_context=tls_context,
+    )

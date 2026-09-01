@@ -59,7 +59,11 @@ class ClusterWorkerTests(unittest.TestCase):
         ]
         token = secrets.token_urlsafe(32)
         client = ClusterCoordinatorClient(
-            ClusterConfig(enabled=True, coordinator_url="http://controller.example:5001"),
+            ClusterConfig(
+                enabled=True,
+                coordinator_url="http://controller.example:5001",
+                tls_enabled=False,
+            ),
             bearer_token=token,
         )
 

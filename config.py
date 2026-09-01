@@ -10,8 +10,11 @@ from typing import Any
 from urllib.parse import urlsplit
 
 
-DEFAULT_COORDINATOR_URL = "http://127.0.0.1:5001"
+DEFAULT_COORDINATOR_URL = "https://127.0.0.1:5001"
 DEFAULT_CLUSTER_CREDENTIALS_FILE = "/etc/pi-display-lab/cluster-credentials.json"
+DEFAULT_CLUSTER_CA_FILE = "/etc/pi-display-lab/pki/ca.crt"
+DEFAULT_COORDINATOR_CERT_FILE = "/etc/pi-display-lab/pki/coordinator.crt"
+DEFAULT_COORDINATOR_KEY_FILE = "/etc/pi-display-lab/pki/coordinator.key"
 
 
 class ConfigValidationError(ValueError):
@@ -24,6 +27,10 @@ class ClusterConfig:
     coordinator_url: str = DEFAULT_COORDINATOR_URL
     poll_interval_seconds: float = 2.0
     credentials_file: str = DEFAULT_CLUSTER_CREDENTIALS_FILE
+    tls_enabled: bool = True
+    ca_certificate_file: str = DEFAULT_CLUSTER_CA_FILE
+    server_certificate_file: str = DEFAULT_COORDINATOR_CERT_FILE
+    server_key_file: str = DEFAULT_COORDINATOR_KEY_FILE
 
 
 @dataclass(frozen=True)
@@ -84,9 +91,9 @@ def _safe_host(value: Any, default: str = "") -> str:
     return cleaned
 
 
-def _safe_credentials_file(value: Any) -> str:
+def _safe_private_file(value: Any, default: str) -> str:
     if not isinstance(value, str):
-        return DEFAULT_CLUSTER_CREDENTIALS_FILE
+        return default
     cleaned = value.strip()
     if (
         not cleaned.startswith("/")
@@ -94,8 +101,12 @@ def _safe_credentials_file(value: Any) -> str:
         or re.fullmatch(r"/[A-Za-z0-9_./-]+", cleaned) is None
         or ".." in Path(cleaned).parts
     ):
-        return DEFAULT_CLUSTER_CREDENTIALS_FILE
+        return default
     return cleaned
+
+
+def _safe_credentials_file(value: Any) -> str:
+    return _safe_private_file(value, DEFAULT_CLUSTER_CREDENTIALS_FILE)
 
 
 def load_config(path: str | Path | None = None) -> AppConfig:
@@ -137,6 +148,16 @@ def load_config(path: str | Path | None = None) -> AppConfig:
             coordinator_url=coordinator_url or DEFAULT_COORDINATOR_URL,
             poll_interval_seconds=poll_interval,
             credentials_file=_safe_credentials_file(cluster.get("credentials_file")),
+            tls_enabled=cluster.get("tls_enabled", True) is True,
+            ca_certificate_file=_safe_private_file(
+                cluster.get("ca_certificate_file"), DEFAULT_CLUSTER_CA_FILE
+            ),
+            server_certificate_file=_safe_private_file(
+                cluster.get("server_certificate_file"), DEFAULT_COORDINATOR_CERT_FILE
+            ),
+            server_key_file=_safe_private_file(
+                cluster.get("server_key_file"), DEFAULT_COORDINATOR_KEY_FILE
+            ),
         ),
         node_role=role,
         controller_host=_safe_host(raw.get("controller_host"), "127.0.0.1"),
@@ -208,8 +229,17 @@ def validate_controller_config(path: str | Path) -> AppConfig:
     else:
         if cluster.get("enabled") is not True:
             errors.append("cluster.enabled må være true")
-        if _valid_coordinator_url(cluster.get("coordinator_url")) is None:
+        coordinator_url = _valid_coordinator_url(cluster.get("coordinator_url"))
+        if coordinator_url is None:
             errors.append("cluster.coordinator_url mangler eller er ugyldig")
+        elif urlsplit(coordinator_url).scheme != "https":
+            errors.append("cluster.coordinator_url må bruke https")
+        elif controller_host and urlsplit(coordinator_url).hostname != controller_host:
+            errors.append("cluster.coordinator_url må bruke samme adresse som controller_host")
+        elif urlsplit(coordinator_url).port != raw.get("coordinator_port"):
+            errors.append("cluster.coordinator_url må bruke coordinator_port")
+        if cluster.get("tls_enabled", True) is not True:
+            errors.append("cluster.tls_enabled må være true")
         poll = cluster.get("poll_interval_seconds", 2)
         if (
             isinstance(poll, bool)
@@ -227,6 +257,18 @@ def validate_controller_config(path: str | Path) -> AppConfig:
             errors.append(
                 "cluster.credentials_file må ligge under /etc/pi-display-lab/"
             )
+        tls_files = {
+            "ca_certificate_file": DEFAULT_CLUSTER_CA_FILE,
+            "server_certificate_file": DEFAULT_COORDINATOR_CERT_FILE,
+            "server_key_file": DEFAULT_COORDINATOR_KEY_FILE,
+        }
+        for key, default in tls_files.items():
+            value = cluster.get(key, default)
+            if (
+                _safe_private_file(value, default) != value
+                or not value.startswith("/etc/pi-display-lab/pki/")
+            ):
+                errors.append(f"cluster.{key} må ligge under /etc/pi-display-lab/pki/")
 
     if not isinstance(raw.get("node_heartbeat_auth", False), bool):
         errors.append("node_heartbeat_auth må være true eller false")

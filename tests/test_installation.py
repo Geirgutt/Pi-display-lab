@@ -16,6 +16,8 @@ class InstallationWorkflowTests(unittest.TestCase):
         preflight = self.read("scripts/preflight-cluster.py")
         self.assertIn("sudo -v", installer)
         self.assertIn("--ask-become-pass", installer)
+        self.assertIn('for WORKER in "${WORKERS[@]}"', installer)
+        self.assertIn('--limit "$WORKER"', installer)
         self.assertIn("StrictHostKeyChecking=yes", preflight)
         self.assertNotIn("StrictHostKeyChecking=no", installer + preflight)
         self.assertNotIn("ANSIBLE_HOST_KEY_CHECKING", installer + preflight)
@@ -28,6 +30,8 @@ class InstallationWorkflowTests(unittest.TestCase):
         self.assertIn("worker_revision.stdout == project_version", playbook)
         self.assertNotIn("admin_token", playbook)
         self.assertIn("no_log: true", playbook)
+        self.assertIn('"https://{{ controller_host }}:{{ coordinator_port }}"', playbook)
+        self.assertNotIn("ca.key", playbook)
 
     def test_services_are_non_root_and_have_low_risk_hardening(self) -> None:
         playbook = self.read("ansible/install-workers.yml")
@@ -48,6 +52,15 @@ class InstallationWorkflowTests(unittest.TestCase):
         self.assertNotIn("--become", verify)
         self.assertNotIn(" -b ", verify)
         self.assertIn("verify-controller-api.py", verify)
+        self.assertIn("ansible/verify-workers.yml", verify)
+
+    def test_beginner_wizard_is_primary_orchestrator(self) -> None:
+        wizard = self.read("scripts/setup-cluster.py")
+        logic = self.read("setup_cluster.py")
+        self.assertIn("run_wizard", wizard)
+        self.assertIn("Fortsette installasjonen?", logic)
+        self.assertIn("scripts/install-cluster.sh", logic)
+        self.assertIn("config.local.json", logic)
 
     def test_update_remains_explicit_and_fast_forward_only(self) -> None:
         update = self.read("scripts/update.sh")

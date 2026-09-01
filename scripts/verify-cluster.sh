@@ -30,17 +30,10 @@ systemctl is-active --quiet cluster-coordinator.service
 echo "Kontrollerer app, coordinator og autentisert status ..."
 "$PYTHON_BIN" scripts/verify-controller-api.py "$CONFIG_FILE"
 
-echo "Kontrollerer SSH til workerne ..."
-ansible all -i "$TEMP_DIR/inventory.ini" -m ansible.builtin.ping
-
-echo "Kontrollerer worker-tjenester uten sudo ..."
-ansible all \
+echo "Kontrollerer SSH, eksakt commit, tjenester, TLS og identitet på workerne ..."
+ansible-playbook \
   -i "$TEMP_DIR/inventory.ini" \
-  -m ansible.builtin.command \
-  -a "systemctl is-active cluster-worker.service"
-ansible all \
-  -i "$TEMP_DIR/inventory.ini" \
-  -m ansible.builtin.command \
-  -a "systemctl is-active pi-display-node-agent.service"
+  ansible/verify-workers.yml \
+  --extra-vars "@$TEMP_DIR/vars.json"
 
-echo "Alt ser bra ut: controller, coordinator-auth, dashboard og workers svarer."
+echo "Alt ser bra ut: HTTPS/CA, auth, eksakt commit, dashboard og workers svarer."

@@ -22,11 +22,15 @@ def main() -> int:
             "app_port",
             "cluster_enabled",
             "cluster_credentials_file",
+            "cluster_ca_file",
+            "cluster_server_cert_file",
+            "cluster_server_key_file",
             "controller_host",
             "coordinator_port",
             "node_heartbeat_auth",
             "node_role",
             "ssh_user",
+            "worker_hosts",
         ),
     )
     parser.add_argument("--config", default=str(PROJECT_DIR / "config.local.json"))
@@ -56,10 +60,19 @@ def main() -> int:
         settings = load_config(args.config)
     if args.key == "cluster_credentials_file":
         value = settings.cluster.credentials_file
+    elif args.key == "cluster_ca_file":
+        value = settings.cluster.ca_certificate_file
+    elif args.key == "cluster_server_cert_file":
+        value = settings.cluster.server_certificate_file
+    elif args.key == "cluster_server_key_file":
+        value = settings.cluster.server_key_file
     elif args.key == "cluster_enabled":
         value = settings.cluster.enabled
     else:
         value = getattr(settings, args.key)
+    if args.key == "worker_hosts":
+        print("\n".join(settings.worker_hosts))
+        return 0
     if isinstance(value, bool):
         value = "true" if value else "false"
     print(value)

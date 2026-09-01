@@ -56,12 +56,26 @@ def _ssh(user: str, host: str, *remote_command: str) -> str:
         elif "Permission denied" in stderr:
             detail = (
                 "SSH-nøkkelen ble avvist. Installer controller-brukerens offentlige "
-                "SSH-nøkkel på workeren først."
+                f"SSH-nøkkel på workeren først med: ssh-copy-id {user}@{host}"
             )
         else:
             detail = "SSH-kommandoen feilet eller brukte for lang tid."
         raise RuntimeError(f"{host}: {detail}") from error
     return result.stdout.strip()
+
+
+def _known_host(host: str) -> bool:
+    try:
+        result = subprocess.run(
+            ["ssh-keygen", "-F", host],
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+    except (FileNotFoundError, subprocess.TimeoutExpired):
+        return False
+    return result.returncode == 0 and bool(result.stdout.strip())
 
 
 def main() -> int:
@@ -83,13 +97,28 @@ def main() -> int:
 
     identities: dict[str, str] = {}
     for host in settings.worker_hosts:
+        print(f"\nTester {host} ...", flush=True)
         try:
+            socket.getaddrinfo(host, 22)
+            print("✓ DNS/IP kan nås", flush=True)
+            if not _known_host(host):
+                raise RuntimeError(
+                    f"{host}: SSH host key er ikke godkjent. Kjør først:\n\n"
+                    f"ssh {settings.ssh_user}@{host}\n\n"
+                    "Kontroller fingerprint og svar yes hvis den er riktig."
+                )
+            print("✓ SSH host key er godkjent", flush=True)
             identity = valid_worker_id(_ssh(settings.ssh_user, host, "hostname"))
             if not identity:
                 raise RuntimeError(f"{host}: hostname er tomt eller ugyldig")
+            print("✓ SSH-nøkkel fungerer", flush=True)
+            print(f"✓ Hostname: {identity}", flush=True)
             _ssh(settings.ssh_user, host, "command", "-v", "python3")
+            print("✓ Python finnes", flush=True)
             _ssh(settings.ssh_user, host, "command", "-v", "sudo")
+            print("✓ sudo finnes", flush=True)
             _ssh(settings.ssh_user, host, "command", "-v", "apt-get")
+            print("✓ apt-get finnes", flush=True)
             _ssh(
                 settings.ssh_user,
                 host,
@@ -97,6 +126,11 @@ def main() -> int:
                 "hosts",
                 settings.controller_host,
             )
+            print("✓ Controller-adressen kan nås fra workeren", flush=True)
+        except socket.gaierror as error:
+            raise SystemExit(
+                f"Preflight stoppet før workerne ble endret: {host} kan ikke slås opp"
+            ) from error
         except RuntimeError as error:
             raise SystemExit(f"Preflight stoppet før workerne ble endret: {error}") from error
         identities[host] = identity

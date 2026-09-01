@@ -1,0 +1,41 @@
+---
+- name: Verifiser Pi Display Lab cluster-workers
+  hosts: cluster_workers
+  gather_facts: true
+
+  tasks:
+    - name: Les workerens Git-revisjon
+      ansible.builtin.command:
+        argv:
+          - git
+          - -C
+          - "{{ ansible_user_dir }}/Pi-display-lab"
+          - rev-parse
+          - HEAD
+      register: worker_revision
+      changed_when: false
+
+    - name: Krev samme commit som controlleren
+      ansible.builtin.assert:
+        that:
+          - worker_revision.stdout == project_version
+        fail_msg: "Workeren kjører ikke controllerens eksakte Git-revisjon."
+
+    - name: Les worker-tjenestenes status
+      ansible.builtin.command:
+        argv:
+          - systemctl
+          - is-active
+          - "{{ item }}"
+      loop:
+        - cluster-worker.service
+        - pi-display-node-agent.service
+      changed_when: false
+
+    - name: Verifiser HTTPS/CA og worker-identitet
+      ansible.builtin.command:
+        argv:
+          - "{{ ansible_user_dir }}/Pi-display-lab/.venv/bin/python"
+          - "{{ ansible_user_dir }}/Pi-display-lab/scripts/verify-worker.py"
+          - "{{ ansible_user_dir }}/Pi-display-lab/config.local.json"
+      changed_when: false

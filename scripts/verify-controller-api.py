@@ -14,6 +14,7 @@ PROJECT_DIR = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(PROJECT_DIR))
 
 from cluster_auth import load_cluster_credentials  # noqa: E402
+from cluster_client import ClusterCoordinatorClient, CoordinatorUnavailable  # noqa: E402
 from config import validate_controller_config  # noqa: E402
 
 
@@ -42,19 +43,22 @@ def main() -> int:
         raise SystemExit("Controllerens admin-credential mangler eller er ugyldig")
 
     app_base = f"http://127.0.0.1:{settings.app_port}"
-    coordinator_base = f"http://127.0.0.1:{settings.coordinator_port}"
+    coordinator = ClusterCoordinatorClient(
+        settings.cluster,
+        bearer_token=credentials.admin_token,
+    )
     try:
         if not _check_json(f"{app_base}/api/health").get("ok"):
             raise RuntimeError("Pi Display Lab health rapporterte feil")
-        if not _check_json(f"{coordinator_base}/health").get("ok"):
+        if not coordinator.fetch_health().get("ok"):
             raise RuntimeError("Coordinator health rapporterte feil")
-        _check_json(f"{coordinator_base}/status", credentials.admin_token)
+        coordinator.fetch_status()
         cluster_status = _check_json(f"{app_base}/api/cluster-jobs")
         if cluster_status.get("status") in {"unavailable", "authentication_failed"}:
             raise RuntimeError("Pi Display Lab får ikke autentisert coordinator-status")
-    except RuntimeError as error:
+    except (CoordinatorUnavailable, RuntimeError, OSError, ValueError) as error:
         raise SystemExit(str(error)) from error
-    print("Controller-API, coordinator-auth og appens cluster-API svarer.")
+    print("Controller-API, verifisert coordinator-HTTPS og appens cluster-API svarer.")
     return 0
 
 

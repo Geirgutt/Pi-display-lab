@@ -6,24 +6,23 @@ from __future__ import annotations
 import argparse
 import json
 import os
-import secrets
 import sys
 from pathlib import Path
 
 PROJECT_DIR = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(PROJECT_DIR))
 
-from cluster_auth import load_cluster_credentials, valid_worker_id  # noqa: E402
+from cluster_auth import (  # noqa: E402
+    load_cluster_credentials,
+    merge_controller_credentials,
+    valid_worker_id,
+)
 from config import validate_controller_config  # noqa: E402
 
 
 def _write_private_json(path: Path, payload: dict[str, object]) -> None:
     path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
     os.chmod(path, 0o600)
-
-
-def _new_token() -> str:
-    return secrets.token_urlsafe(32)
 
 
 def main() -> int:
@@ -59,14 +58,14 @@ def main() -> int:
             "Flytt den til et trygt sted og kjør installasjonen på nytt."
         )
 
-    admin_token = existing.admin_token or _new_token()
-    worker_tokens = {
-        identity: existing.worker_tokens.get(identity) or _new_token()
-        for identity in normalized.values()
-    }
-    node_token = ""
-    if settings.node_heartbeat_auth:
-        node_token = existing.node_heartbeat_token or _new_token()
+    merged = merge_controller_credentials(
+        existing,
+        list(normalized.values()),
+        heartbeat_enabled=settings.node_heartbeat_auth,
+    )
+    admin_token = merged.admin_token
+    worker_tokens = merged.worker_tokens
+    node_token = merged.node_heartbeat_token
 
     output_dir = Path(args.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -87,12 +86,21 @@ def main() -> int:
         }
         for host, identity in normalized.items()
     }
+    ca_certificate_path = output_dir / "ca.crt"
+    try:
+        ca_certificate = ca_certificate_path.read_text(encoding="ascii")
+    except OSError as error:
+        raise SystemExit("Mangler klargjort offentlig CA-sertifikat") from error
+    if "BEGIN CERTIFICATE" not in ca_certificate:
+        raise SystemExit("Klargjort offentlig CA-sertifikat er ugyldig")
     _write_private_json(
         output_dir / "worker-secrets.json",
         {
             "worker_credentials": worker_credentials,
             "node_heartbeat_enabled": settings.node_heartbeat_auth,
             "node_heartbeat_token": node_token,
+            # Bare offentlig CA-sertifikat distribueres. CA-nøkkelen leses aldri her.
+            "cluster_ca_certificate": ca_certificate,
         },
     )
 

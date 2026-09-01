@@ -30,7 +30,7 @@ fi
 
 CLUSTER_ENABLED="false"
 if [[ -f "$CONFIG_FILE" ]]; then
-  CLUSTER_ENABLED="$(python3 scripts/config-value.py cluster_enabled --validate --config "$CONFIG_FILE")"
+  CLUSTER_ENABLED="$(python3 scripts/config-value.py cluster_enabled --config "$CONFIG_FILE")"
 fi
 
 echo "Kontrollerer lokal sudo-tilgang før Git endres ..."
@@ -45,6 +45,12 @@ git merge --ff-only "origin/$BRANCH"
 REVISION="$(git rev-parse HEAD)"
 
 if [[ "$CLUSTER_ENABLED" == "true" ]]; then
+  if ! python3 scripts/config-value.py cluster_enabled --validate --config "$CONFIG_FILE" >/dev/null; then
+    echo
+    echo "Koden er oppdatert, men den lokale cluster-configen må migreres."
+    echo "Kjør nå: python3 scripts/setup-cluster.py"
+    exit 2
+  fi
   echo "Oppdaterer controller og workers til eksakt commit $REVISION ..."
   bash scripts/install-cluster.sh
   exit 0

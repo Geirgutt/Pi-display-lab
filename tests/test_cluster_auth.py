@@ -6,7 +6,12 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from cluster_auth import bearer_token, load_cluster_credentials
+from cluster_auth import (
+    ClusterCredentials,
+    bearer_token,
+    load_cluster_credentials,
+    merge_controller_credentials,
+)
 
 
 class ClusterAuthenticationTests(unittest.TestCase):
@@ -47,6 +52,29 @@ class ClusterAuthenticationTests(unittest.TestCase):
         self.assertEqual(bearer_token(f"Bearer {token}"), token)
         self.assertEqual(bearer_token(token), "")
         self.assertEqual(bearer_token("Basic value"), "")
+
+    def test_reinstall_preserves_credentials_and_only_adds_new_worker(self) -> None:
+        existing = ClusterCredentials(
+            admin_token=secrets.token_urlsafe(32),
+            worker_tokens={"worker-01": secrets.token_urlsafe(32)},
+            node_heartbeat_token=secrets.token_urlsafe(32),
+        )
+        merged = merge_controller_credentials(
+            existing,
+            ["worker-01", "worker-02"],
+            heartbeat_enabled=True,
+        )
+        self.assertEqual(merged.admin_token, existing.admin_token)
+        self.assertEqual(merged.worker_tokens["worker-01"], existing.worker_tokens["worker-01"])
+        self.assertNotEqual(merged.worker_tokens["worker-02"], existing.worker_tokens["worker-01"])
+        self.assertEqual(merged.node_heartbeat_token, existing.node_heartbeat_token)
+
+        removed = merge_controller_credentials(
+            merged,
+            ["worker-02"],
+            heartbeat_enabled=True,
+        )
+        self.assertNotIn("worker-01", removed.worker_tokens)
 
 
 if __name__ == "__main__":

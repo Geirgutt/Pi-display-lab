@@ -90,9 +90,13 @@
             "node_heartbeat_auth": {{ 'true' if node_heartbeat_enabled else 'false' }},
             "cluster": {
               "enabled": true,
-              "coordinator_url": "http://{{ controller_host }}:{{ coordinator_port }}",
+              "coordinator_url": "https://{{ controller_host }}:{{ coordinator_port }}",
               "poll_interval_seconds": {{ worker_poll_interval }},
-              "credentials_file": "{{ cluster_credentials_file }}"
+              "credentials_file": "{{ cluster_credentials_file }}",
+              "tls_enabled": true,
+              "ca_certificate_file": "{{ cluster_ca_file }}",
+              "server_certificate_file": "/etc/pi-display-lab/pki/coordinator.crt",
+              "server_key_file": "/etc/pi-display-lab/pki/coordinator.key"
             }
           }
 
@@ -117,6 +121,22 @@
             "worker_token": {{ worker_credentials[inventory_hostname]['worker_token'] | to_json }}
           }
       no_log: true
+
+    - name: Opprett mappe for offentlig cluster-CA
+      become: true
+      ansible.builtin.file:
+        path: "{{ cluster_ca_file | dirname }}"
+        state: directory
+        owner: "{{ ansible_user }}"
+        mode: "0700"
+
+    - name: Installer bare det offentlige CA-sertifikatet
+      become: true
+      ansible.builtin.copy:
+        dest: "{{ cluster_ca_file }}"
+        owner: "{{ ansible_user }}"
+        mode: "0644"
+        content: "{{ cluster_ca_certificate }}"
 
     - name: Opprett mappe for valgfri heartbeat-credential
       become: true
@@ -205,3 +225,11 @@
       loop:
         - cluster-worker.service
         - pi-display-node-agent.service
+
+    - name: Verifiser HTTPS, CA, vertsnavn og worker-identitet
+      ansible.builtin.command:
+        argv:
+          - "{{ ansible_user_dir }}/Pi-display-lab/.venv/bin/python"
+          - "{{ ansible_user_dir }}/Pi-display-lab/scripts/verify-worker.py"
+          - "{{ ansible_user_dir }}/Pi-display-lab/config.local.json"
+      changed_when: false

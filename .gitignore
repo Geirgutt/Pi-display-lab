@@ -25,12 +25,17 @@ credentials.*
 # Private nøkler og sertifikatpakker skal aldri inn i Git.
 *.key
 *.pem
+*.crt
+*.csr
+*.srl
 *.p12
 *.pfx
 id_rsa
 id_rsa.*
 id_ed25519
 id_ed25519.*
+pki/
+*.pki/
 
 # Raspberry Pi- og Wi-Fi-oppsett kan inneholde passord.
 wpa_supplicant.conf

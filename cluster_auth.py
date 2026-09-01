@@ -1,7 +1,7 @@
 """Små, lokale credentials for cluster-protokollen.
 
-Bearer-tokenene beskytter hvem som får hente arbeid og styre køen. De krypterer
-ikke HTTP-trafikken; clusteret er fortsatt laget for et betrodd labnett.
+Bearer-tokenene beskytter hvem som får hente arbeid og styre køen. TLS-laget
+krypterer transporten separat; clusteret er fortsatt laget for et betrodd LAN.
 """
 
 from __future__ import annotations
@@ -116,3 +116,45 @@ def bearer_token(authorization_header: str | None) -> str:
         return ""
     token = token.strip()
     return token if _valid_token(token) else ""
+
+
+def merge_controller_credentials(
+    existing: ClusterCredentials,
+    worker_ids: list[str],
+    *,
+    heartbeat_enabled: bool,
+) -> ClusterCredentials:
+    """Bevar gyldige credentials og lag bare det som mangler."""
+
+    normalized = [valid_worker_id(worker) for worker in worker_ids]
+    if any(not worker for worker in normalized) or len(set(normalized)) != len(normalized):
+        raise ValueError("Worker-identitetene må være gyldige og unike")
+    used = {
+        token
+        for token in (
+            existing.admin_token,
+            existing.node_heartbeat_token,
+            *existing.worker_tokens.values(),
+        )
+        if token
+    }
+
+    def new_unique_token() -> str:
+        while True:
+            token = secrets.token_urlsafe(32)
+            if token not in used:
+                used.add(token)
+                return token
+
+    return ClusterCredentials(
+        admin_token=existing.admin_token or new_unique_token(),
+        worker_tokens={
+            worker: existing.worker_tokens.get(worker) or new_unique_token()
+            for worker in normalized
+        },
+        node_heartbeat_token=(
+            existing.node_heartbeat_token or new_unique_token()
+            if heartbeat_enabled
+            else ""
+        ),
+    )

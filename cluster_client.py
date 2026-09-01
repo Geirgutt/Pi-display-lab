@@ -1,9 +1,10 @@
-"""HTTP-klient og lett statuscache for cluster coordinator-tjenesten."""
+"""HTTPS-klient og lett statuscache for cluster coordinator-tjenesten."""
 
 from __future__ import annotations
 
 import json
 import socket
+import ssl
 import threading
 import time
 from copy import deepcopy
@@ -12,6 +13,7 @@ from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
 from cluster_auth import load_cluster_credentials
+from cluster_tls import create_client_ssl_context
 from config import ClusterConfig
 
 
@@ -72,6 +74,7 @@ class ClusterCoordinatorClient:
             if bearer_token is None
             else bearer_token
         )
+        self._ssl_context: ssl.SSLContext | None = None
 
     def _request_json(
         self,
@@ -80,10 +83,11 @@ class ClusterCoordinatorClient:
         payload: dict[str, Any] | None = None,
         allow_empty: bool = False,
         worker_identity: str = "",
+        authenticated: bool = True,
     ) -> dict[str, Any] | None:
         data = None if payload is None else json.dumps(payload).encode("utf-8")
         headers = {"Accept": "application/json", "User-Agent": "Pi-display-lab/1"}
-        if self.bearer_token:
+        if authenticated and self.bearer_token:
             headers["Authorization"] = f"Bearer {self.bearer_token}"
         if worker_identity:
             headers["X-Worker-ID"] = worker_identity
@@ -96,7 +100,14 @@ class ClusterCoordinatorClient:
             method=method,
         )
         try:
-            with urlopen(request, timeout=self.timeout_seconds) as response:
+            context = self._ssl_context
+            if context is None:
+                context = create_client_ssl_context(self.config)
+                self._ssl_context = context
+            open_kwargs: dict[str, Any] = {"timeout": self.timeout_seconds}
+            if context is not None:
+                open_kwargs["context"] = context
+            with urlopen(request, **open_kwargs) as response:
                 raw = response.read()
                 if not raw and allow_empty:
                     return None
@@ -107,7 +118,14 @@ class ClusterCoordinatorClient:
                     "Coordinator avviste cluster-credential"
                 ) from error
             raise CoordinatorUnavailable("Coordinator svarte med HTTP-feil") from error
-        except (URLError, TimeoutError, socket.timeout, OSError, json.JSONDecodeError) as error:
+        except (
+            URLError,
+            TimeoutError,
+            socket.timeout,
+            OSError,
+            ValueError,
+            json.JSONDecodeError,
+        ) as error:
             raise CoordinatorUnavailable("Coordinator svarer ikke med gyldig JSON") from error
         if not isinstance(decoded, dict):
             raise CoordinatorUnavailable("Coordinator returnerte et ugyldig svar")
@@ -115,6 +133,9 @@ class ClusterCoordinatorClient:
 
     def fetch_status(self) -> dict[str, Any]:
         return self._request_json("/status") or {}
+
+    def fetch_health(self) -> dict[str, Any]:
+        return self._request_json("/health", authenticated=False) or {}
 
     def start_prime_job(self, payload: dict[str, Any]) -> dict[str, Any]:
         return self._request_json("/jobs", method="POST", payload=payload) or {}

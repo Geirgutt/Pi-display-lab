@@ -26,7 +26,7 @@ class ConfigTests(unittest.TestCase):
             "node_heartbeat_auth": True,
             "cluster": {
                 "enabled": True,
-                "coordinator_url": "http://127.0.0.1:5001",
+                "coordinator_url": "https://controller.example:5001",
                 "poll_interval_seconds": 2,
                 "credentials_file": "/etc/pi-display-lab/cluster-credentials.json",
             },
@@ -120,6 +120,24 @@ class ConfigTests(unittest.TestCase):
 
         self.assertIn("coordinator_url", str(context.exception))
         self.assertIn("/etc/pi-display-lab/", str(context.exception))
+
+    def test_install_config_requires_https_and_matching_controller_identity(self) -> None:
+        invalid = self.valid_controller_config()
+        invalid["cluster"]["coordinator_url"] = "http://controller.example:5001"
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "config.local.json"
+            path.write_text(json.dumps(invalid), encoding="utf-8")
+            with self.assertRaises(ConfigValidationError) as context:
+                validate_controller_config(path)
+        self.assertIn("bruke https", str(context.exception))
+
+        invalid["cluster"]["coordinator_url"] = "https://other.example:5001"
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "config.local.json"
+            path.write_text(json.dumps(invalid), encoding="utf-8")
+            with self.assertRaises(ConfigValidationError) as context:
+                validate_controller_config(path)
+        self.assertIn("samme adresse", str(context.exception))
 
 
 if __name__ == "__main__":
