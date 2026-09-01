@@ -123,10 +123,10 @@ def main() -> int:
                 settings.ssh_user,
                 host,
                 "getent",
-                "hosts",
+                "ahosts",
                 settings.controller_host,
             )
-            print("✓ Controller-adressen kan nås fra workeren", flush=True)
+            print("✓ Controller-adressen kan slås opp fra workeren", flush=True)
         except socket.gaierror as error:
             raise SystemExit(
                 f"Preflight stoppet før workerne ble endret: {host} kan ikke slås opp"
