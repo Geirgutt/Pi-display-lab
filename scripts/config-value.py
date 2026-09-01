@@ -4,25 +4,65 @@
 from __future__ import annotations
 
 import argparse
+import json
 import sys
 from pathlib import Path
 
 PROJECT_DIR = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(PROJECT_DIR))
 
-from config import load_config  # noqa: E402
+from config import ConfigValidationError, load_config, validate_controller_config  # noqa: E402
 
 
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument(
         "key",
-        choices=("app_port", "controller_host", "coordinator_port", "node_role", "ssh_user"),
+        choices=(
+            "app_port",
+            "cluster_enabled",
+            "cluster_credentials_file",
+            "controller_host",
+            "coordinator_port",
+            "node_heartbeat_auth",
+            "node_role",
+            "ssh_user",
+        ),
     )
     parser.add_argument("--config", default=str(PROJECT_DIR / "config.local.json"))
+    parser.add_argument(
+        "--validate",
+        action="store_true",
+        help="avvis ugyldig JSON og valider controller-config strengt når cluster er på",
+    )
     args = parser.parse_args()
-    settings = load_config(args.config)
-    print(getattr(settings, args.key))
+    if args.validate:
+        try:
+            raw = json.loads(Path(args.config).read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as error:
+            raise SystemExit("Lokal config mangler eller er ugyldig JSON") from error
+        if not isinstance(raw, dict):
+            raise SystemExit("Lokal config må inneholde et JSON-objekt")
+        try:
+            settings = (
+                validate_controller_config(args.config)
+                if isinstance(raw.get("cluster"), dict)
+                and raw["cluster"].get("enabled") is True
+                else load_config(args.config)
+            )
+        except ConfigValidationError as error:
+            raise SystemExit(str(error)) from error
+    else:
+        settings = load_config(args.config)
+    if args.key == "cluster_credentials_file":
+        value = settings.cluster.credentials_file
+    elif args.key == "cluster_enabled":
+        value = settings.cluster.enabled
+    else:
+        value = getattr(settings, args.key)
+    if isinstance(value, bool):
+        value = "true" if value else "false"
+    print(value)
     return 0
 
 

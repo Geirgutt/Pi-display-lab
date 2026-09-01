@@ -5,12 +5,14 @@
     "worker-01.local",
     "worker-02.local"
   ],
-  "ssh_user": "pi",
+  "ssh_user": "labuser",
   "coordinator_port": 5001,
   "app_port": 5000,
+  "node_heartbeat_auth": false,
   "cluster": {
     "enabled": false,
     "coordinator_url": "http://127.0.0.1:5001",
-    "poll_interval_seconds": 2
+    "poll_interval_seconds": 2,
+    "credentials_file": "/etc/pi-display-lab/cluster-credentials.json"
   }
 }

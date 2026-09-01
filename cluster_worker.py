@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 import argparse
+import secrets
 import socket
 import sys
 import time
 
+from cluster_auth import load_cluster_credentials
 from cluster_client import ClusterCoordinatorClient, CoordinatorUnavailable
 from cluster_jobs import count_primes
 from config import load_config
@@ -43,7 +45,20 @@ def main() -> int:
         return 2
 
     worker_name = socket.gethostname()
-    client = ClusterCoordinatorClient(settings.cluster)
+    credentials = load_cluster_credentials(settings.cluster.credentials_file)
+    if not credentials.worker_id or not credentials.worker_token:
+        print("Worker-credential mangler eller er ugyldig", file=sys.stderr)
+        return 2
+    if not secrets.compare_digest(credentials.worker_id, worker_name):
+        print(
+            "Worker-credential tilhører ikke denne maskinens hostname",
+            file=sys.stderr,
+        )
+        return 2
+    client = ClusterCoordinatorClient(
+        settings.cluster,
+        bearer_token=credentials.worker_token,
+    )
     interval = settings.cluster.poll_interval_seconds
     last_error = ""
     print(f"Worker {worker_name} henter jobber fra {settings.cluster.coordinator_url}")

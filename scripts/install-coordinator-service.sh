@@ -37,6 +37,9 @@ ExecStart=$PYTHON_BIN $PROJECT_DIR/cluster_coordinator.py
 Restart=always
 RestartSec=3
 Environment=PYTHONUNBUFFERED=1
+NoNewPrivileges=true
+PrivateTmp=true
+UMask=0077
 
 [Install]
 WantedBy=multi-user.target

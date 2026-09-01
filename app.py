@@ -9,7 +9,9 @@ from typing import Any
 
 from flask import Flask, jsonify, render_template, request
 
+from cluster_auth import load_cluster_credentials
 from cluster_client import (
+    CoordinatorAuthenticationError,
     ClusterCoordinatorClient,
     ClusterStatusCache,
     CoordinatorUnavailable,
@@ -41,7 +43,11 @@ def create_app(
     settings = settings or load_config()
     dashboard = DashboardState(mock_mode=mock_mode)
     updater = update_manager or UpdateManager()
-    cluster = coordinator_client or ClusterCoordinatorClient(settings.cluster)
+    cluster_credentials = load_cluster_credentials(settings.cluster.credentials_file)
+    cluster = coordinator_client or ClusterCoordinatorClient(
+        settings.cluster,
+        bearer_token=cluster_credentials.admin_token,
+    )
     cluster_status = cluster_status_cache or ClusterStatusCache(cluster)
     browser = BrowserTransport()
     esp32 = Esp32Transport(enabled=False)
@@ -136,6 +142,9 @@ def create_app(
             payload = cluster.fetch_status()
             cluster_status.store(payload)
             return jsonify(payload)
+        except CoordinatorAuthenticationError:
+            payload = cluster_status.mark_unavailable("authentication_failed")
+            return jsonify(payload), 502
         except CoordinatorUnavailable:
             payload = cluster_status.mark_unavailable()
             return (
@@ -159,6 +168,11 @@ def create_app(
             result = cluster.start_prime_job(
                 {"start": start, "end": end, "chunk_size": chunk_size}
             )
+        except CoordinatorAuthenticationError:
+            cluster_status.mark_unavailable("authentication_failed")
+            return jsonify(
+                {"ok": False, "error": "Coordinator avviste lokal admin-credential"}
+            ), 502
         except CoordinatorUnavailable:
             cluster_status.mark_unavailable()
             return jsonify({"ok": False, "error": "Cluster coordinator svarer ikke"}), 502

@@ -6,14 +6,20 @@ __pycache__/
 # Lokale innstillinger og hemmeligheter. Del bare ufarlige *.example-filer.
 .env
 .env.*
+*.env
 !.env.example
 *.local
 config.local.*
 config.local.json
 ansible/inventory.ini
 ansible/*.local.*
+ansible/*.retry
+.ansible/
 secrets.*
 credentials.*
+*credentials*.json
+*secrets*.json
+*.secret
 .secrets/
 
 # Private nøkler og sertifikatpakker skal aldri inn i Git.

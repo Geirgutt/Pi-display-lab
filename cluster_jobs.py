@@ -11,6 +11,11 @@ from typing import Any
 
 
 MAX_JOBS_PER_BATCH = 10_000
+MAX_PENDING_JOBS = 20_000
+MAX_RESULT_HISTORY = 10_000
+MAX_PRIME_END = 1_000_000_000
+MAX_PRIME_SPAN = 100_000_000
+MAX_CHUNK_SIZE = 100_000_000
 
 
 def _integer(value: Any, field: str, minimum: int = 0) -> int:
@@ -33,7 +38,14 @@ def validate_prime_range(payload: dict[str, Any]) -> tuple[int, int, int]:
     chunk_size = _integer(payload.get("chunk_size"), "chunk_size", minimum=1)
     if end < start:
         raise ValueError("end må være større enn eller lik start")
-    job_count = math.ceil((end - start + 1) / chunk_size)
+    if end > MAX_PRIME_END:
+        raise ValueError(f"end kan maksimalt være {MAX_PRIME_END}")
+    span = end - start + 1
+    if span > MAX_PRIME_SPAN:
+        raise ValueError(f"Ett intervall kan maksimalt inneholde {MAX_PRIME_SPAN} tall")
+    if chunk_size > MAX_CHUNK_SIZE:
+        raise ValueError(f"chunk_size kan maksimalt være {MAX_CHUNK_SIZE}")
+    job_count = math.ceil(span / chunk_size)
     if job_count > MAX_JOBS_PER_BATCH:
         raise ValueError(f"Jobben kan maksimalt deles i {MAX_JOBS_PER_BATCH} deler")
     return start, end, chunk_size
@@ -67,8 +79,13 @@ class ClusterJobQueue:
 
     def enqueue_prime_range(self, payload: dict[str, Any]) -> list[int]:
         start, end, chunk_size = validate_prime_range(payload)
+        job_count = math.ceil((end - start + 1) / chunk_size)
         created: list[int] = []
         with self._lock:
+            if len(self._queued) + len(self._running) + job_count > MAX_PENDING_JOBS:
+                raise ValueError(
+                    f"Køen kan maksimalt ha {MAX_PENDING_JOBS} ventende og aktive jobber"
+                )
             chunk_start = start
             while chunk_start <= end:
                 job_id = self._next_job_id
@@ -119,6 +136,8 @@ class ClusterJobQueue:
             for field in ("start", "end"):
                 if _integer(payload.get(field), field) != running[field]:
                     raise ValueError(f"{field} samsvarer ikke med jobben")
+            if prime_count > running["end"] - running["start"] + 1:
+                raise ValueError("prime_count kan ikke være større enn jobbintervallet")
 
             result = {
                 "job_id": job_id,
@@ -131,6 +150,8 @@ class ClusterJobQueue:
             }
             del self._running[job_id]
             self._results.append(result)
+            if len(self._results) > MAX_RESULT_HISTORY:
+                del self._results[: len(self._results) - MAX_RESULT_HISTORY]
             return deepcopy(result)
 
     def status(self) -> dict[str, Any]:

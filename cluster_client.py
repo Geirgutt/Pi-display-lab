@@ -9,14 +9,18 @@ import time
 from copy import deepcopy
 from typing import Any
 from urllib.error import HTTPError, URLError
-from urllib.parse import urlencode
 from urllib.request import Request, urlopen
 
+from cluster_auth import load_cluster_credentials
 from config import ClusterConfig
 
 
 class CoordinatorUnavailable(RuntimeError):
     """Coordinatoren kunne ikke levere et gyldig svar."""
+
+
+class CoordinatorAuthenticationError(CoordinatorUnavailable):
+    """Coordinatoren svarte, men avviste lokal credential."""
 
 
 def disabled_cluster_status() -> dict[str, Any]:
@@ -35,15 +39,16 @@ def disabled_cluster_status() -> dict[str, Any]:
 
 
 def unavailable_cluster_status(status: str = "unavailable") -> dict[str, Any]:
+    messages = {
+        "checking": "Kobler til cluster coordinator",
+        "authentication_failed": "Cluster-credential mangler eller ble avvist",
+        "unavailable": "Cluster coordinator svarer ikke",
+    }
     return {
         "enabled": True,
         "available": False,
         "status": status,
-        "message": (
-            "Kobler til cluster coordinator"
-            if status == "checking"
-            else "Cluster coordinator svarer ikke"
-        ),
+        "message": messages.get(status, "Cluster coordinator svarer ikke"),
         "queued": 0,
         "running": 0,
         "completed": 0,
@@ -54,9 +59,19 @@ def unavailable_cluster_status(status: str = "unavailable") -> dict[str, Any]:
 
 
 class ClusterCoordinatorClient:
-    def __init__(self, config: ClusterConfig, timeout_seconds: float = 2.0) -> None:
+    def __init__(
+        self,
+        config: ClusterConfig,
+        timeout_seconds: float = 2.0,
+        bearer_token: str | None = None,
+    ) -> None:
         self.config = config
         self.timeout_seconds = timeout_seconds
+        self.bearer_token = (
+            load_cluster_credentials(config.credentials_file).admin_token
+            if bearer_token is None
+            else bearer_token
+        )
 
     def _request_json(
         self,
@@ -64,9 +79,14 @@ class ClusterCoordinatorClient:
         method: str = "GET",
         payload: dict[str, Any] | None = None,
         allow_empty: bool = False,
+        worker_identity: str = "",
     ) -> dict[str, Any] | None:
         data = None if payload is None else json.dumps(payload).encode("utf-8")
         headers = {"Accept": "application/json", "User-Agent": "Pi-display-lab/1"}
+        if self.bearer_token:
+            headers["Authorization"] = f"Bearer {self.bearer_token}"
+        if worker_identity:
+            headers["X-Worker-ID"] = worker_identity
         if data is not None:
             headers["Content-Type"] = "application/json"
         request = Request(
@@ -81,7 +101,13 @@ class ClusterCoordinatorClient:
                 if not raw and allow_empty:
                     return None
                 decoded = json.loads(raw.decode("utf-8"))
-        except (HTTPError, URLError, TimeoutError, socket.timeout, OSError, json.JSONDecodeError) as error:
+        except HTTPError as error:
+            if error.code in {401, 403}:
+                raise CoordinatorAuthenticationError(
+                    "Coordinator avviste cluster-credential"
+                ) from error
+            raise CoordinatorUnavailable("Coordinator svarte med HTTP-feil") from error
+        except (URLError, TimeoutError, socket.timeout, OSError, json.JSONDecodeError) as error:
             raise CoordinatorUnavailable("Coordinator svarer ikke med gyldig JSON") from error
         if not isinstance(decoded, dict):
             raise CoordinatorUnavailable("Coordinator returnerte et ugyldig svar")
@@ -94,11 +120,20 @@ class ClusterCoordinatorClient:
         return self._request_json("/jobs", method="POST", payload=payload) or {}
 
     def claim_job(self, worker: str) -> dict[str, Any] | None:
-        query = urlencode({"worker": worker})
-        return self._request_json(f"/job?{query}", allow_empty=True)
+        return self._request_json(
+            "/job",
+            allow_empty=True,
+            worker_identity=worker,
+        )
 
     def submit_result(self, payload: dict[str, Any]) -> dict[str, Any]:
-        return self._request_json("/result", method="POST", payload=payload) or {}
+        worker = payload.get("worker")
+        return self._request_json(
+            "/result",
+            method="POST",
+            payload=payload,
+            worker_identity=worker if isinstance(worker, str) else "",
+        ) or {}
 
 
 class ClusterStatusCache:
@@ -145,8 +180,8 @@ class ClusterStatusCache:
             self._last_attempt = time.monotonic()
         return deepcopy(state)
 
-    def mark_unavailable(self) -> dict[str, Any]:
-        state = unavailable_cluster_status()
+    def mark_unavailable(self, status: str = "unavailable") -> dict[str, Any]:
+        state = unavailable_cluster_status(status)
         with self._lock:
             self._state = state
             self._last_attempt = time.monotonic()
@@ -159,6 +194,8 @@ class ClusterStatusCache:
     def _refresh(self) -> None:
         try:
             self.store(self.client.fetch_status())
+        except CoordinatorAuthenticationError:
+            self.mark_unavailable("authentication_failed")
         except CoordinatorUnavailable:
             self.mark_unavailable()
         finally:

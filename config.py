@@ -11,6 +11,11 @@ from urllib.parse import urlsplit
 
 
 DEFAULT_COORDINATOR_URL = "http://127.0.0.1:5001"
+DEFAULT_CLUSTER_CREDENTIALS_FILE = "/etc/pi-display-lab/cluster-credentials.json"
+
+
+class ConfigValidationError(ValueError):
+    """Lokal installasjonsconfig mangler eller er utrygg/ufullstendig."""
 
 
 @dataclass(frozen=True)
@@ -18,6 +23,7 @@ class ClusterConfig:
     enabled: bool = False
     coordinator_url: str = DEFAULT_COORDINATOR_URL
     poll_interval_seconds: float = 2.0
+    credentials_file: str = DEFAULT_CLUSTER_CREDENTIALS_FILE
 
 
 @dataclass(frozen=True)
@@ -29,6 +35,7 @@ class AppConfig:
     ssh_user: str = ""
     coordinator_port: int = 5001
     app_port: int = 5000
+    node_heartbeat_auth: bool = False
 
 
 def _valid_coordinator_url(value: Any) -> str | None:
@@ -36,7 +43,20 @@ def _valid_coordinator_url(value: Any) -> str | None:
         return None
     cleaned = value.strip().rstrip("/")
     parsed = urlsplit(cleaned)
-    if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+    try:
+        parsed_port = parsed.port
+    except ValueError:
+        return None
+    if (
+        parsed.scheme not in {"http", "https"}
+        or not parsed.hostname
+        or parsed.username is not None
+        or parsed.password is not None
+        or parsed.path not in {"", "/"}
+        or parsed.query
+        or parsed.fragment
+        or (parsed_port is not None and not 1 <= parsed_port <= 65535)
+    ):
         return None
     return cleaned
 
@@ -55,8 +75,26 @@ def _safe_host(value: Any, default: str = "") -> str:
     if not isinstance(value, str):
         return default
     cleaned = value.strip()
-    if not cleaned or len(cleaned) > 253 or re.fullmatch(r"[A-Za-z0-9._:-]+", cleaned) is None:
+    if (
+        not cleaned
+        or len(cleaned) > 253
+        or re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._:-]{0,252}", cleaned) is None
+    ):
         return default
+    return cleaned
+
+
+def _safe_credentials_file(value: Any) -> str:
+    if not isinstance(value, str):
+        return DEFAULT_CLUSTER_CREDENTIALS_FILE
+    cleaned = value.strip()
+    if (
+        not cleaned.startswith("/")
+        or len(cleaned) > 4096
+        or re.fullmatch(r"/[A-Za-z0-9_./-]+", cleaned) is None
+        or ".." in Path(cleaned).parts
+    ):
+        return DEFAULT_CLUSTER_CREDENTIALS_FILE
     return cleaned
 
 
@@ -98,6 +136,7 @@ def load_config(path: str | Path | None = None) -> AppConfig:
             enabled=cluster.get("enabled") is True and coordinator_url is not None,
             coordinator_url=coordinator_url or DEFAULT_COORDINATOR_URL,
             poll_interval_seconds=poll_interval,
+            credentials_file=_safe_credentials_file(cluster.get("credentials_file")),
         ),
         node_role=role,
         controller_host=_safe_host(raw.get("controller_host"), "127.0.0.1"),
@@ -105,4 +144,93 @@ def load_config(path: str | Path | None = None) -> AppConfig:
         ssh_user=ssh_user,
         coordinator_port=_safe_port(raw.get("coordinator_port"), 5001),
         app_port=_safe_port(raw.get("app_port"), 5000),
+        node_heartbeat_auth=raw.get("node_heartbeat_auth") is True,
     )
+
+
+def validate_controller_config(path: str | Path) -> AppConfig:
+    """Valider config strengt før installasjon gjør endringer på maskiner."""
+
+    config_path = Path(path)
+    try:
+        raw = json.loads(config_path.read_text(encoding="utf-8"))
+    except FileNotFoundError as error:
+        raise ConfigValidationError(f"Mangler lokal config: {config_path}") from error
+    except OSError as error:
+        raise ConfigValidationError(f"Kan ikke lese lokal config: {config_path}") from error
+    except json.JSONDecodeError as error:
+        raise ConfigValidationError(
+            f"config.local.json er ikke gyldig JSON (linje {error.lineno})"
+        ) from error
+
+    if not isinstance(raw, dict):
+        raise ConfigValidationError("config.local.json må inneholde et JSON-objekt")
+    cluster = raw.get("cluster")
+    errors: list[str] = []
+    if raw.get("node_role") != "controller":
+        errors.append("node_role må være 'controller'")
+
+    controller_host = _safe_host(raw.get("controller_host"))
+    if not controller_host:
+        errors.append("controller_host mangler eller er ugyldig")
+    elif ":" in controller_host:
+        errors.append("controller_host støtter foreløpig hostname eller IPv4, ikke IPv6")
+    elif controller_host.casefold() in {"localhost", "localhost.localdomain", "127.0.0.1", "::1"}:
+        errors.append("controller_host må være en adresse workerne kan nå, ikke loopback")
+
+    workers = raw.get("worker_hosts")
+    if not isinstance(workers, list) or not workers:
+        errors.append("worker_hosts må inneholde minst én worker")
+    else:
+        cleaned_workers = [_safe_host(worker) for worker in workers]
+        if any(not worker for worker in cleaned_workers):
+            errors.append("worker_hosts inneholder et ugyldig vertsnavn eller adresse")
+        elif any(":" in worker for worker in cleaned_workers):
+            errors.append("worker_hosts støtter foreløpig hostname eller IPv4, ikke IPv6")
+        elif len(set(cleaned_workers)) != len(cleaned_workers):
+            errors.append("worker_hosts kan ikke inneholde duplikater")
+
+    ssh_user = raw.get("ssh_user")
+    if not isinstance(ssh_user, str) or re.fullmatch(r"[A-Za-z0-9._-]{1,32}", ssh_user) is None:
+        errors.append("ssh_user mangler eller er ugyldig")
+    if ssh_user == "root":
+        errors.append("ssh_user kan ikke være root")
+
+    for key in ("coordinator_port", "app_port"):
+        value = raw.get(key)
+        if isinstance(value, bool) or not isinstance(value, int) or not 1 <= value <= 65535:
+            errors.append(f"{key} må være et heltall mellom 1 og 65535")
+    if raw.get("coordinator_port") == raw.get("app_port"):
+        errors.append("coordinator_port og app_port må være forskjellige")
+
+    if not isinstance(cluster, dict):
+        errors.append("cluster må være et JSON-objekt")
+    else:
+        if cluster.get("enabled") is not True:
+            errors.append("cluster.enabled må være true")
+        if _valid_coordinator_url(cluster.get("coordinator_url")) is None:
+            errors.append("cluster.coordinator_url mangler eller er ugyldig")
+        poll = cluster.get("poll_interval_seconds", 2)
+        if (
+            isinstance(poll, bool)
+            or not isinstance(poll, (int, float))
+            or not 0.5 <= float(poll) <= 60
+        ):
+            errors.append("cluster.poll_interval_seconds må være mellom 0.5 og 60")
+        credentials_file = cluster.get(
+            "credentials_file", DEFAULT_CLUSTER_CREDENTIALS_FILE
+        )
+        if (
+            _safe_credentials_file(credentials_file) != credentials_file
+            or not credentials_file.startswith("/etc/pi-display-lab/")
+        ):
+            errors.append(
+                "cluster.credentials_file må ligge under /etc/pi-display-lab/"
+            )
+
+    if not isinstance(raw.get("node_heartbeat_auth", False), bool):
+        errors.append("node_heartbeat_auth må være true eller false")
+
+    if errors:
+        raise ConfigValidationError("Ugyldig config.local.json:\n- " + "\n- ".join(errors))
+    return load_config(config_path)

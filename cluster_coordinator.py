@@ -7,14 +7,40 @@ from typing import Any
 
 from flask import Flask, jsonify, request
 
+from cluster_auth import ClusterCredentials, bearer_token, load_cluster_credentials
 from cluster_jobs import ClusterJobQueue
-from config import load_config
+from config import AppConfig, load_config
 
 
-def create_coordinator_app(job_queue: ClusterJobQueue | None = None) -> Flask:
+def create_coordinator_app(
+    job_queue: ClusterJobQueue | None = None,
+    credentials: ClusterCredentials | None = None,
+    settings: AppConfig | None = None,
+) -> Flask:
     app = Flask(__name__)
     queue = job_queue or ClusterJobQueue()
+    settings = settings or load_config()
+    credentials = credentials or load_cluster_credentials(
+        settings.cluster.credentials_file
+    )
     app.extensions["cluster_job_queue"] = queue
+
+    def unauthorized() -> tuple[Any, int, dict[str, str]]:
+        return (
+            jsonify({"ok": False, "error": "Ugyldig eller manglende credential"}),
+            401,
+            {"WWW-Authenticate": "Bearer"},
+        )
+
+    def admin_is_authenticated() -> bool:
+        return credentials.authenticate_admin(
+            bearer_token(request.headers.get("Authorization"))
+        )
+
+    def authenticated_worker() -> str:
+        worker = request.headers.get("X-Worker-ID", "")
+        token = bearer_token(request.headers.get("Authorization"))
+        return worker if credentials.authenticate_worker(worker, token) else ""
 
     @app.get("/health")
     def health() -> Any:
@@ -22,7 +48,9 @@ def create_coordinator_app(job_queue: ClusterJobQueue | None = None) -> Flask:
 
     @app.get("/job")
     def get_job() -> Any:
-        worker = request.args.get("worker") or request.remote_addr or "unknown"
+        worker = authenticated_worker()
+        if not worker:
+            return unauthorized()
         try:
             job = queue.claim(worker)
         except ValueError as error:
@@ -33,9 +61,14 @@ def create_coordinator_app(job_queue: ClusterJobQueue | None = None) -> Flask:
 
     @app.post("/result")
     def post_result() -> Any:
+        worker = authenticated_worker()
+        if not worker:
+            return unauthorized()
         body = request.get_json(silent=True)
         if not isinstance(body, dict):
             return jsonify({"ok": False, "error": "Forventet et JSON-objekt"}), 400
+        if body.get("worker") != worker:
+            return jsonify({"ok": False, "error": "Worker-identiteten samsvarer ikke"}), 403
         try:
             result = queue.record_result(body)
         except ValueError as error:
@@ -44,10 +77,14 @@ def create_coordinator_app(job_queue: ClusterJobQueue | None = None) -> Flask:
 
     @app.get("/status")
     def status() -> Any:
+        if not admin_is_authenticated():
+            return unauthorized()
         return jsonify(queue.status())
 
     @app.post("/jobs")
     def create_jobs() -> Any:
+        if not admin_is_authenticated():
+            return unauthorized()
         body = request.get_json(silent=True)
         if not isinstance(body, dict):
             return jsonify({"ok": False, "error": "Forventet et JSON-objekt"}), 400

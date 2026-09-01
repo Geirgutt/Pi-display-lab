@@ -51,6 +51,10 @@ Restart=always
 RestartSec=5
 Environment=PYTHONUNBUFFERED=1
 EnvironmentFile=-/etc/default/pi-display-lab-agent
+EnvironmentFile=-/etc/pi-display-lab/node-heartbeat.env
+NoNewPrivileges=true
+PrivateTmp=true
+UMask=0077
 
 [Install]
 WantedBy=multi-user.target

@@ -3,6 +3,29 @@
   hosts: cluster_workers
   gather_facts: true
 
+  pre_tasks:
+    - name: Avvis root som vanlig tjenestebruker
+      ansible.builtin.assert:
+        that:
+          - ansible_user_uid | int != 0
+        fail_msg: "Workerne må installeres med en vanlig SSH-bruker, ikke root."
+
+    # Dette kjøres på alle hosts før første endrende oppgave. Feil sudo-passord
+    # stopper dermed utrullingen før apt, Git eller systemd blir endret.
+    - name: Kontroller sudo/become før endringer
+      become: true
+      ansible.builtin.command:
+        argv:
+          - /usr/bin/true
+      changed_when: false
+
+    - name: Kontroller at credential tilhører workerens hostname
+      ansible.builtin.assert:
+        that:
+          - worker_credentials[inventory_hostname]['worker_id'] == ansible_hostname
+        fail_msg: "Worker-hostname endret seg etter preflight; installasjonen stoppes."
+      no_log: true
+
   tasks:
     - name: Installer systempakker
       become: true
@@ -14,12 +37,29 @@
         state: present
         update_cache: true
 
-    - name: Hent Pi-display-lab
+    - name: Hent eksakt controller-revisjon av Pi-display-lab
       ansible.builtin.git:
         repo: "{{ project_repository }}"
         dest: "{{ ansible_user_dir }}/Pi-display-lab"
         version: "{{ project_version }}"
         update: true
+
+    - name: Les installert worker-revisjon
+      ansible.builtin.command:
+        argv:
+          - git
+          - -C
+          - "{{ ansible_user_dir }}/Pi-display-lab"
+          - rev-parse
+          - HEAD
+      register: worker_revision
+      changed_when: false
+
+    - name: Kontroller at worker og controller er identiske
+      ansible.builtin.assert:
+        that:
+          - worker_revision.stdout == project_version
+        fail_msg: "Workeren fikk ikke controllerens eksakte Git-revisjon."
 
     - name: Opprett virtuelt Python-miljø
       ansible.builtin.command:
@@ -47,12 +87,55 @@
             "ssh_user": "",
             "coordinator_port": {{ coordinator_port }},
             "app_port": {{ app_port }},
+            "node_heartbeat_auth": {{ 'true' if node_heartbeat_enabled else 'false' }},
             "cluster": {
               "enabled": true,
               "coordinator_url": "http://{{ controller_host }}:{{ coordinator_port }}",
-              "poll_interval_seconds": {{ worker_poll_interval }}
+              "poll_interval_seconds": {{ worker_poll_interval }},
+              "credentials_file": "{{ cluster_credentials_file }}"
             }
           }
+
+    - name: Opprett privat credential-mappe
+      become: true
+      ansible.builtin.file:
+        path: "{{ cluster_credentials_file | dirname }}"
+        state: directory
+        owner: "{{ ansible_user }}"
+        mode: "0700"
+
+    - name: Gi workeren bare sin egen cluster-credential
+      become: true
+      ansible.builtin.copy:
+        dest: "{{ cluster_credentials_file }}"
+        owner: "{{ ansible_user }}"
+        mode: "0600"
+        content: |
+          {
+            "version": 1,
+            "worker_id": {{ worker_credentials[inventory_hostname]['worker_id'] | to_json }},
+            "worker_token": {{ worker_credentials[inventory_hostname]['worker_token'] | to_json }}
+          }
+      no_log: true
+
+    - name: Opprett mappe for valgfri heartbeat-credential
+      become: true
+      ansible.builtin.file:
+        path: /etc/pi-display-lab
+        state: directory
+        owner: "{{ ansible_user }}"
+        mode: "0700"
+      when: node_heartbeat_enabled | bool
+
+    - name: Installer valgfri heartbeat-credential
+      become: true
+      ansible.builtin.copy:
+        dest: /etc/pi-display-lab/node-heartbeat.env
+        owner: "{{ ansible_user }}"
+        mode: "0600"
+        content: "PI_DISPLAY_NODE_TOKEN={{ node_heartbeat_token }}\n"
+      when: node_heartbeat_enabled | bool
+      no_log: true
 
     - name: Installer cluster-worker.service
       become: true
@@ -73,6 +156,9 @@
           Restart=always
           RestartSec=3
           Environment=PYTHONUNBUFFERED=1
+          NoNewPrivileges=true
+          PrivateTmp=true
+          UMask=0077
 
           [Install]
           WantedBy=multi-user.target
@@ -96,6 +182,11 @@
           Restart=always
           RestartSec=5
           Environment=PYTHONUNBUFFERED=1
+          EnvironmentFile=-/etc/default/pi-display-lab-agent
+          EnvironmentFile=-/etc/pi-display-lab/node-heartbeat.env
+          NoNewPrivileges=true
+          PrivateTmp=true
+          UMask=0077
 
           [Install]
           WantedBy=multi-user.target
