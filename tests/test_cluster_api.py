@@ -126,6 +126,22 @@ class ClusterApiTests(unittest.TestCase):
         self.assertEqual(response.status_code, 400)
 
     @patch("cluster_client.urlopen")
+    def test_cluster_batch_can_be_cancelled(self, mocked_urlopen) -> None:
+        mocked_urlopen.side_effect = [
+            FakeResponse({"ok": True, "batch": {"batch_id": 7, "status": "cancelled"}}),
+            FakeResponse({"queued": 0, "running": 0, "completed": 0, "batches": []}),
+        ]
+        settings = AppConfig(ClusterConfig(True, "http://127.0.0.1:5001", tls_enabled=False))
+        client = create_app(mock_mode=True, settings=settings).test_client()
+
+        response = client.post("/api/cluster/cancel/7")
+
+        self.assertEqual(response.status_code, 202)
+        request = mocked_urlopen.call_args_list[0].args[0]
+        self.assertEqual(request.full_url, "http://127.0.0.1:5001/batches/7/cancel")
+        self.assertEqual(request.method, "POST")
+
+    @patch("cluster_client.urlopen")
     def test_app_uses_admin_token_without_exposing_secret_file(self, mocked_urlopen) -> None:
         mocked_urlopen.return_value = FakeResponse(
             {"queued": 0, "running": 0, "completed": 0, "results": []}

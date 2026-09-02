@@ -120,6 +120,32 @@ class ClusterJobQueueTests(unittest.TestCase):
         queue.record_result({**first, "worker": "worker-01", "prime_count": 25})
         self.assertIsNotNone(queue.claim("worker-03"))
 
+    def test_cancel_batch_removes_queued_jobs_and_accepts_late_result(self) -> None:
+        queue = ClusterJobQueue()
+        queue.enqueue_prime_range(
+            {"start": 1, "end": 300, "chunk_size": 100, "slot_limit": 1}
+        )
+        running = queue.claim("worker-01")
+
+        batch = queue.cancel_batch(running["batch_id"])
+
+        self.assertEqual(batch["status"], "cancelled")
+        self.assertEqual(batch["cancelled_jobs"], 2)
+        self.assertEqual(queue.status()["queued"], 0)
+        result = queue.record_result(
+            {**running, "worker": "worker-01", "prime_count": 25}
+        )
+        self.assertEqual(result["status"], "cancelled")
+        self.assertEqual(queue.status()["running"], 0)
+
+    def test_finished_batch_cannot_be_cancelled(self) -> None:
+        queue = ClusterJobQueue()
+        queue.enqueue_prime_range({"start": 1, "end": 10, "chunk_size": 10})
+        job = queue.claim("worker-01")
+        queue.record_result({**job, "worker": "worker-01", "prime_count": 4})
+        with self.assertRaisesRegex(ValueError, "allerede avsluttet"):
+            queue.cancel_batch(job["batch_id"])
+
     def test_result_from_another_worker_is_rejected(self) -> None:
         queue = ClusterJobQueue()
         queue.enqueue_prime_range({"start": 1, "end": 10, "chunk_size": 10})

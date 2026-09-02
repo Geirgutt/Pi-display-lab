@@ -132,6 +132,12 @@
               <span id="start-cluster-label">Start cluster-jobb</span>
               <span aria-hidden="true">→</span>
             </button>
+            <label for="cluster-active-batch">Aktiv jobb</label>
+            <select id="cluster-active-batch" disabled><option>Ingen aktive jobber</option></select>
+            <button class="danger-button" id="cancel-cluster-job" type="button" disabled>
+              <span id="cancel-cluster-label">Avbryt valgt jobb</span>
+              <span aria-hidden="true">×</span>
+            </button>
             <p class="helper-text" id="cluster-helper">Aktiver clusteret i config.local.json først.</p>
           </section>
 

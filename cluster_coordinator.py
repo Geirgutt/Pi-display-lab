@@ -108,6 +108,16 @@ def create_coordinator_app(
             "job_ids": job_ids,
         }), 201
 
+    @app.post("/batches/<int:batch_id>/cancel")
+    def cancel_batch(batch_id: int) -> Any:
+        if not admin_is_authenticated():
+            return unauthorized()
+        try:
+            batch = queue.cancel_batch(batch_id)
+        except ValueError as error:
+            return jsonify({"ok": False, "error": str(error)}), 409
+        return jsonify({"ok": True, "batch": batch}), 202
+
     return app
 
 

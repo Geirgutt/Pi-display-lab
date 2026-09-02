@@ -151,6 +151,11 @@ class ClusterCoordinatorClient:
             "/jobs", method="POST", payload={**payload, "job_type": "monte_carlo"}
         ) or {}
 
+    def cancel_batch(self, batch_id: int) -> dict[str, Any]:
+        return self._request_json(
+            f"/batches/{int(batch_id)}/cancel", method="POST"
+        ) or {}
+
     def claim_job(self, worker: str) -> dict[str, Any] | None:
         return self._request_json(
             "/job",

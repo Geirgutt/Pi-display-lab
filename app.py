@@ -217,6 +217,21 @@ def create_app(
         dashboard.set_screen("cluster")
         return jsonify(result), 202
 
+    @app.post("/api/cluster/cancel/<int:batch_id>")
+    def cancel_cluster_batch(batch_id: int) -> Any:
+        if not cluster.config.enabled:
+            return jsonify({"ok": False, "error": "Cluster-integrasjonen er deaktivert"}), 409
+        try:
+            result = cluster.cancel_batch(batch_id)
+            cluster_status.store(cluster.fetch_status())
+        except CoordinatorAuthenticationError:
+            cluster_status.mark_unavailable("authentication_failed")
+            return jsonify({"ok": False, "error": "Coordinator avviste lokal admin-credential"}), 502
+        except CoordinatorUnavailable:
+            cluster_status.mark_unavailable()
+            return jsonify({"ok": False, "error": "Cluster coordinator svarer ikke"}), 502
+        return jsonify(result), 202
+
     @app.post("/api/update/check")
     def update_check() -> Any:
         if not updater.check_async():

@@ -32,6 +32,9 @@ const ui = {
   clusterReserveOne: document.querySelector("#cluster-reserve-one"),
   startClusterJob: document.querySelector("#start-cluster-job"),
   startClusterLabel: document.querySelector("#start-cluster-label"),
+  clusterActiveBatch: document.querySelector("#cluster-active-batch"),
+  cancelClusterJob: document.querySelector("#cancel-cluster-job"),
+  cancelClusterLabel: document.querySelector("#cancel-cluster-label"),
   clusterHelper: document.querySelector("#cluster-helper"),
   nodeStatusList: document.querySelector("#node-status-list"),
   nodeCapacityLabel: document.querySelector("#node-capacity-label"),
@@ -348,7 +351,10 @@ function renderCluster(payload) {
   const running = (cluster.running_jobs || []).map((job) => ({ ...job, viewStatus: "running" }));
   const completed = [...(cluster.results || [])]
     .reverse()
-    .map((job) => ({ ...job, viewStatus: "completed" }));
+    .map((job) => ({
+      ...job,
+      viewStatus: job.status === "cancelled" ? "cancelled" : job.status === "failed" ? "failed" : "completed",
+    }));
   const queued = (cluster.queued_jobs || []).map((job) => ({ ...job, viewStatus: "queued" }));
   const jobs = [...running, ...completed, ...queued].slice(0, 3);
 
@@ -478,6 +484,21 @@ function updateClusterControls(payload) {
     ? Number(capacity.reserved_slots || 0)
     : Number(capacity.total_slots || 0);
   ui.startClusterJob.disabled = !ready || available === 0;
+  const activeBatches = (cluster.batches || []).filter((batch) =>
+    ["queued", "running"].includes(batch.status));
+  const previousBatch = Number(ui.clusterActiveBatch.value || 0);
+  ui.clusterActiveBatch.replaceChildren(...(activeBatches.length
+    ? activeBatches.map((batch) => {
+      const option = element("option", "", `Batch ${batch.batch_id} · ${batch.job_type === "monte_carlo" ? "Monte Carlo" : "Primtall"}`);
+      option.value = String(batch.batch_id);
+      return option;
+    })
+    : [element("option", "", "Ingen aktive jobber")]));
+  if (activeBatches.some((batch) => batch.batch_id === previousBatch)) {
+    ui.clusterActiveBatch.value = String(previousBatch);
+  }
+  ui.clusterActiveBatch.disabled = !ready || activeBatches.length === 0;
+  ui.cancelClusterJob.disabled = !ready || activeBatches.length === 0;
   ui.clusterStateLabel.textContent = !cluster.enabled ? "AV" : cluster.available ? "ONLINE" : "OFFLINE";
   ui.clusterStateLabel.classList.toggle("online", ready);
   ui.clusterHelper.textContent = !cluster.enabled
@@ -618,6 +639,22 @@ ui.startClusterJob.addEventListener("click", async () => {
   }
 });
 
+ui.cancelClusterJob.addEventListener("click", async () => {
+  const batchId = Number(ui.clusterActiveBatch.value);
+  if (!batchId) return;
+  ui.cancelClusterJob.disabled = true;
+  ui.cancelClusterLabel.textContent = "Avbryter …";
+  try {
+    await postJson(`/api/cluster/cancel/${batchId}`, {});
+    ui.clusterHelper.textContent = `Batch ${batchId} er avbrutt.`;
+    await fetchState();
+  } catch (error) {
+    ui.clusterHelper.textContent = error.message;
+  } finally {
+    ui.cancelClusterLabel.textContent = "Avbryt valgt jobb";
+  }
+});
+
 ui.checkUpdate.addEventListener("click", checkForUpdate);
 ui.cores.addEventListener("change", () => fetchState());
 ui.reserveOne.addEventListener("change", () => fetchState());
@@ -625,19 +662,22 @@ ui.clusterSlots.addEventListener("change", () => fetchState());
 ui.clusterReserveOne.addEventListener("change", () => fetchState());
 
 function fitDevice() {
+  const compact = window.matchMedia("(max-width: 600px)").matches;
+  const deviceWidth = compact ? 480 : DEVICE_WIDTH;
+  const deviceHeight = compact ? 320 : DEVICE_HEIGHT;
   const availableWidth = ui.deviceFit.clientWidth;
   const deviceTop = ui.deviceFit.getBoundingClientRect().top;
   const availableHeight = Math.max(
-    DEVICE_HEIGHT,
+    deviceHeight,
     window.innerHeight - deviceTop - DEVICE_BOTTOM_RESERVE,
   );
   const scale = Math.min(
     MAX_DEVICE_SCALE,
-    availableWidth / DEVICE_WIDTH,
-    availableHeight / DEVICE_HEIGHT,
+    availableWidth / deviceWidth,
+    availableHeight / deviceHeight,
   );
   ui.deviceScale.style.transform = `scale(${scale})`;
-  ui.deviceFit.style.height = `${DEVICE_HEIGHT * scale}px`;
+  ui.deviceFit.style.height = `${deviceHeight * scale}px`;
 }
 
 if ("ResizeObserver" in window) {

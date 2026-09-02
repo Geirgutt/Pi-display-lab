@@ -149,7 +149,7 @@ class ClusterJobQueue:
                 (
                     batch_id
                     for batch_id, batch in self._batches.items()
-                    if batch["status"] in {"finished", "error"}
+                    if batch["status"] in {"finished", "error", "cancelled"}
                 ),
                 None,
             )
@@ -168,6 +168,7 @@ class ClusterJobQueue:
             "running_jobs": 0,
             "completed_jobs": 0,
             "failed_jobs": 0,
+            "cancelled_jobs": 0,
             "created_at": self._now(),
             "runtime_seconds": 0.0,
             "_started_clock": time.monotonic(),
@@ -251,6 +252,32 @@ class ClusterJobQueue:
                     return int(result["batch_id"])
         return None
 
+    def cancel_batch(self, batch_id: int) -> dict[str, Any]:
+        """Avbryt en batch og fjern alle deljobber som ennå ikke er startet."""
+
+        batch_id = _integer(batch_id, "batch_id", minimum=1)
+        with self._lock:
+            batch = self._batches.get(batch_id)
+            if batch is None:
+                raise ValueError("batch_id finnes ikke")
+            if batch["status"] not in {"queued", "running"}:
+                raise ValueError("Batchen er allerede avsluttet")
+
+            queued_before = len(self._queued)
+            self._queued = deque(
+                job for job in self._queued if job["batch_id"] != batch_id
+            )
+            removed = queued_before - len(self._queued)
+            batch["queued_jobs"] = 0
+            batch["cancelled_jobs"] += removed
+            batch["status"] = "cancelled"
+            batch["cancelled_at"] = self._now()
+            batch["completed_at"] = batch["cancelled_at"]
+            batch["runtime_seconds"] = round(
+                time.monotonic() - batch["_started_clock"], 2
+            )
+            return self._public_batch(batch)
+
     def claim(self, worker: str) -> dict[str, Any] | None:
         worker = worker.strip() if isinstance(worker, str) else ""
         if not worker or len(worker) > 64 or not worker.isprintable():
@@ -308,6 +335,22 @@ class ClusterJobQueue:
             if worker != running["worker"]:
                 raise ValueError("resultatet kommer fra feil worker")
             batch = self._batches[running["batch_id"]]
+            if batch["status"] == "cancelled":
+                result = {
+                    "job_id": job_id,
+                    "batch_id": running["batch_id"],
+                    "job_type": running["job_type"],
+                    "worker": worker,
+                    "status": "cancelled",
+                    "completed_at": self._now(),
+                }
+                del self._running[job_id]
+                batch["running_jobs"] -= 1
+                batch["cancelled_jobs"] += 1
+                self._results.append(result)
+                if len(self._results) > MAX_RESULT_HISTORY:
+                    del self._results[: len(self._results) - MAX_RESULT_HISTORY]
+                return deepcopy(result)
             error_message = payload.get("error")
             if error_message is not None:
                 if not isinstance(error_message, str) or not error_message.strip():
@@ -382,11 +425,15 @@ class ClusterJobQueue:
     def status(self) -> dict[str, Any]:
         with self._lock:
             failed = sum(1 for result in self._results if result["status"] == "failed")
+            cancelled = sum(
+                1 for result in self._results if result["status"] == "cancelled"
+            )
             return {
                 "queued": len(self._queued),
                 "running": len(self._running),
-                "completed": len(self._results) - failed,
+                "completed": len(self._results) - failed - cancelled,
                 "failed": failed,
+                "cancelled": cancelled,
                 "queued_jobs": [deepcopy(job) for job in list(self._queued)[:20]],
                 "running_jobs": [deepcopy(job) for job in self._running.values()],
                 "results": deepcopy(self._results[-MAX_STATUS_RESULTS:]),

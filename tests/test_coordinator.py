@@ -105,6 +105,24 @@ class CoordinatorApiTests(unittest.TestCase):
         self.assertEqual(status.status_code, 200)
         self.assertEqual(status.get_json()["queued"], 1)
 
+    def test_admin_can_cancel_batch_but_worker_cannot(self) -> None:
+        self.create_one_job()
+        batch_id = self.client.get(
+            "/status", headers=self.admin_headers()
+        ).get_json()["batches"][0]["batch_id"]
+        path = f"/batches/{batch_id}/cancel"
+
+        self.assertEqual(
+            self.client.post(path, headers=self.worker_headers()).status_code, 401
+        )
+        cancelled = self.client.post(path, headers=self.admin_headers())
+        self.assertEqual(cancelled.status_code, 202)
+        self.assertEqual(cancelled.get_json()["batch"]["status"], "cancelled")
+        self.assertEqual(
+            self.client.get("/status", headers=self.admin_headers()).get_json()["queued"],
+            0,
+        )
+
     def test_valid_job_result_and_status_flow(self) -> None:
         self.create_one_job()
         job = self.client.get("/job", headers=self.worker_headers()).get_json()

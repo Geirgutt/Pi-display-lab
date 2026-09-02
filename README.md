@@ -469,6 +469,7 @@ Nyttige adresser:
 | `POST` | `/api/nodes/heartbeat` | Registrerer status fra en ekstern Pi-agent |
 | `GET` | `/api/cluster-jobs` | Henter jobbstatus fra konfigurert cluster coordinator |
 | `POST` | `/api/cluster/start` | Deler et primtallsintervall i cluster-jobber |
+| `POST` | `/api/cluster/cancel/<batch_id>` | Avbryter en aktiv clusterbatch |
 | `GET` | `/api/update/status` | Viser lokal og eventuell tilgjengelig versjon |
 | `POST` | `/api/update/check` | Henter oppdatert status fra `origin/main` |
 | `GET` | `/api/protocol/example` | Gir en kort eksempelmelding for ESP32-testing |
@@ -484,6 +485,11 @@ aldri admin-tokenet:
 | `POST` | `/result` | worker | Registrerer jobbresultat for samme worker-identitet |
 | `GET` | `/status` | admin | Viser kø, aktive jobber og resultathistorikk |
 | `POST` | `/jobs` | admin | Oppretter chunks for ett primtallsintervall |
+| `POST` | `/batches/<batch_id>/cancel` | admin | Fjerner ventende chunks og avbryter batchen |
+
+Når en batch avbrytes, fjernes alle chunks som fortsatt venter i køen med én
+gang. Chunks som allerede beregnes får fullføre lokalt; resultatene deres
+registreres som avbrutt, og workeren går videre uten å prøve resultatet på nytt.
 
 Ett startkall kan lage maksimalt 10 000 chunks. Det kan være maksimalt 20 000
 ventende/aktive chunks samtidig. Et intervall kan dekke opptil 100 000 000 tall,
