@@ -17,6 +17,9 @@ if [[ ! -x "$PYTHON_BIN" || ! -f "$CONFIG_FILE" ]]; then
 fi
 
 cd "$PROJECT_DIR"
+if [[ -x "$PROJECT_DIR/.ansible-venv/bin/ansible-playbook" ]]; then
+  export PATH="$PROJECT_DIR/.ansible-venv/bin:$PATH"
+fi
 REVISION="$(git rev-parse HEAD)"
 "$PYTHON_BIN" scripts/prepare-ansible.py \
   "$CONFIG_FILE" \

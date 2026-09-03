@@ -24,8 +24,11 @@ sudo() { command sudo -n "$@"; }
 export -f sudo
 
 echo "Installerer controller-avhengigheter ..."
-sudo env DEBIAN_FRONTEND=noninteractive apt-get update
-sudo env DEBIAN_FRONTEND=noninteractive apt-get install -y -o Dpkg::Options::=--force-confold ansible curl git openssl python3 python3-venv
+source "$PROJECT_DIR/scripts/platform.sh"
+platform_detect
+platform_missing_packages
+platform_install_packages
+platform_setup_ansible
 
 if [[ ! -x "$VENV_DIR/bin/python" ]]; then
   python3 -m venv "$VENV_DIR"

@@ -16,6 +16,15 @@ from cluster_install import PasswordBroker, check_sudo, collect_passwords, insta
 
 
 class WorkerPasswordTests(unittest.TestCase):
+    @patch("cluster_install.read_password")
+    @patch("cluster_install.check_sudo")
+    def test_approved_login_passwords_can_be_reused_for_sudo(self, check, prompt):
+        check.side_effect = lambda user, host, value=None: value == "test-login"
+        result = collect_passwords("labuser", ["one.example", "two.example"],
+                                   initial_passwords={"one.example": "test-login", "two.example": "test-login"})
+        self.assertEqual(result, {"one.example": "test-login", "two.example": "test-login"})
+        prompt.assert_not_called()
+
     @patch("cluster_install.read_password", return_value="test-shared")
     @patch("builtins.input", return_value="")
     @patch("cluster_install.check_sudo")
@@ -103,6 +112,15 @@ class InstallOrchestrationTests(unittest.TestCase):
         self.assertEqual(select_workers(workers, [], True), [])
         with self.assertRaisesRegex(RuntimeError, "Ukjent worker"):
             select_workers(workers, ["missing.example"], False)
+
+    @patch("cluster_install.subprocess.run", return_value=subprocess.CompletedProcess([], 0))
+    @patch("cluster_install.broker_passwords", return_value={"one.example": "test-session"})
+    @patch("cluster_install.collect_passwords")
+    def test_wizard_credentials_are_reused_without_prompting_again(self, collect, broker, run):
+        self.assertEqual(install("config", "temp", "a" * 40, ["one.example"], "labuser", False,
+                                 sudo_socket="/tmp/test-session.sock"), 0)
+        collect.assert_not_called()
+        broker.assert_called_once_with("/tmp/test-session.sock", ["one.example"])
 
     @patch("cluster_install.subprocess.run", return_value=subprocess.CompletedProcess([], 0))
     @patch("cluster_install.collect_passwords", return_value={"one.example": "test-private"})

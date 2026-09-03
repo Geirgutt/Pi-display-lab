@@ -49,6 +49,9 @@ def main() -> int:
         "cluster_credentials_file": settings.cluster.credentials_file,
         "cluster_ca_file": settings.cluster.ca_certificate_file,
     }
+    if settings.ssh_identity_file:
+        variables["ansible_ssh_private_key_file"] = settings.ssh_identity_file
+        variables["ansible_ssh_common_args"] = "-o IdentitiesOnly=yes -o StrictHostKeyChecking=yes"
     (output_dir / "vars.json").write_text(
         json.dumps(variables, indent=2) + "\n",
         encoding="utf-8",

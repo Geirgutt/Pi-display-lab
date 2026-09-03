@@ -145,104 +145,111 @@ trygg Git-oppdatering og ber deg kjøre `python3 scripts/setup-cluster.py`.
 
 ## Fra blank Raspberry Pi til fungerende cluster
 
-Oppsettet har tre enkle roller:
+Oppsettet har tre roller: **controlleren** er maskinen du starter veiviseren på,
+**coordinatoren** er tjenesten som fordeler jobber, og **workerne** utfører dem.
+Controlleren kjører dashboard og coordinator, men blir ikke selv compute-worker.
 
-- **Controller** er Raspberry Pi-en du arbeider på. Den kjører dashboardet på
-  port 5000 og coordinatoren på port 5001. Den regner ikke clusterjobber i denne
-  versjonen.
-- **Coordinator** er den lille Flask-tjenesten på controlleren som holder køen,
-  deler ut neste deljobb og tar imot resultater.
-- **Worker** er en annen Raspberry Pi som spør coordinatoren etter arbeid,
-  regner primtall og sender resultatet tilbake. Den sender også maskinstatus via
-  node-agenten.
+Clusteret kan ha **1–100 workers**. Antallet oppgis ved klargjøring; IP-adresser
+eller vertsnavn kan skrives enkeltvis eller limes inn som en liste. Antall og
+unikhet kontrolleres før nodene kontaktes. Inntil ti noder klargjøres eller
+installeres samtidig, uavhengig av clusterets totale størrelse.
 
-Alle maskinene bør kjøre Raspberry Pi OS og være på samme betrodde lokalnett.
-Installasjonen bruker **SSH-nøkler** for administrasjon og Ansible. Clusterets
-**API-tokens er separate credentials** som tjenestene bruker mens clusteret
-kjører. HTTPS krypterer tokenene på port 5001; SSH-nøklene erstatter ikke
-API-tokenene og omvendt.
+### Operativsystem og første tilgang
 
-Lag og kopier SSH-nøkkelen til hver worker først:
+Controller og workers kan blande Raspberry Pi OS/Debian, Ubuntu og Fedora,
+på ARM (aarch64/armv7l) og x86-64. De trenger systemd og henholdsvis apt eller
+dnf. Controlleren trenger Python 3.11–3.14; workerne trenger Python 3.10–3.14
+etter pakkeoppsettet. Workers med Python 3.14 krever Python 3.12–3.14 på
+controlleren, slik at den kan kjøre Ansible 2.20/2.21. Kombinasjonen kontrolleres
+før utrulling. Se også [Ansible sin støttematrise](https://docs.ansible.com/projects/ansible/latest/reference_appendices/release_and_maintenance.html#ansible-core-support-matrix).
+Bruk for eksempel Debian 13, Ubuntu 24.04 eller Fedora som controller for et
+blandet cluster med nyere Fedora-workers. Eldre systemer kan kreve OS-oppgradering.
 
-```bash
-ssh-copy-id labuser@worker-01.example
-ssh labuser@worker-01.example
-```
+Hver node må ha nettverk, SSH aktivert og en vanlig bruker med sudo-tilgang.
+Brukernavnet skal være det samme på workerne; passordene kan være forskjellige.
+For helt nye workers må enten passordinnlogging over SSH være tillatt eller
+koordinatorens SSH-nøkkel allerede være installert. Worker-adressene må være
+stabile, for eksempel med DHCP-reservasjoner. Ingen grafisk skjerm kreves.
 
-Kontroller fingerprint og svar `yes` første gang. Gjenta for hver worker.
-Veiviseren skrur aldri av host-key-kontrollen.
+Alt skal være på et betrodd labnett. SSH-nøkler brukes til administrasjon;
+separate API-tokens og HTTPS brukes mellom tjenestene.
 
 ### Normal installasjon: én norsk veiviser
 
-På controlleren:
+Hent repoet på controlleren. Installer Git først hvis det mangler (`sudo apt
+install git` på Debian/Ubuntu/Pi OS eller `sudo dnf install git` på Fedora):
 
 ```bash
-sudo apt update
-sudo apt install -y git
 cd ~
 git clone https://github.com/Geirgutt/Pi-display-lab.git
 cd Pi-display-lab
-python3 scripts/setup-cluster.py
+bash scripts/setup-cluster.sh
 ```
 
-Veiviseren oppdager og viser bruker, hostname, sannsynlig LAN-adresse,
-prosjektmappe, Git-branch/commit, eksisterende config/tjenester og brukte porter.
-Den spør bare om:
+Startskriptet oppdager operativsystem og arkitektur, viser manglende verktøy og
+tilbyr å installere dem. Ansible får et eget `.ansible-venv` slik at oppsettet
+ikke avhenger av versjonen som følger med operativsystemet. Den tidligere
+kommandoen `python3 scripts/setup-cluster.py` starter også denne flyten.
 
-- controller-adressen workerne faktisk kan nå
-- SSH-brukeren på workerne
-- worker-adresse/hostname, én om gangen
-- om heartbeat-token skal aktiveres (standard: ja)
-- om et gammelt serversertifikat skal fornyes når adressen har endret seg
-- en endelig bekreftelse før noe installeres eller endres
+Veiviseren hjelper deretter med:
 
-Før bekreftelsen utføres bare lesende kontroller av DNS/IP, godkjent SSH host
-key, SSH-nøkkel, remote hostname, Python, sudo, apt-get og controller-oppslag.
-Hvis host key mangler, ber veiviseren deg kjøre `ssh user@worker`. Hvis
-nøkkelinnlogging mangler, bruker du `ssh-copy-id user@worker`.
+1. Controller-adresse, SSH-bruker, antall workers og adresseliste.
+2. Godkjenning av nye SSH-nøkkelavtrykk. Kjente endrede nøkler overskrives aldri.
+3. Gjenbruk/opprettelse av SSH-nøkkel og installasjon av den offentlige nøkkelen
+   på workerne. Eksisterende private nøkler og andre autoriserte nøkler beholdes.
+   Automatisk opprettede clusternøkler har ingen passfrase og beskyttes med 0600.
+4. Samlet innsamling av innloggingspassord og sudo-passord. Felles passord kan
+   brukes, og veiviseren spør om innloggingspassordene også skal prøves til sudo.
+5. Kontroll av OS, arkitektur og nodeidentitet, og installasjon av manglende
+   worker-pakker over SSH, også når Python ennå ikke finnes på workeren.
+6. Forslag til unike vertsnavn ved kollisjoner. Bruk IPv4-adresser for noder som
+   skal få nytt vertsnavn, slik at SSH-adressen overlever navnebyttet.
+7. Oppsummering og installasjon av tjenester, tokens og TLS-sertifikater.
+   Aktiv firewalld/UFW på controlleren får et eget spørsmål om konkrete porter.
+8. Kontroll av versjon, tjenester, TLS og kontakt med alle registrerte workers.
 
-Veiviseren lager den Git-ignorerte `config.local.json`, installerer avhengigheter,
-lager/bevarer credentials og privat CA, installerer systemd-tjenestene og ruller
-ut nøyaktig controllerens Git-commit til hver worker. Controlleren kjører bare
-Pi Display Lab og coordinatoren; den blir ikke compute-worker.
+Klargjøring av verktøy, SSH og worker-pakker har egne bekreftelser før den
+avsluttende tjenesteinstallasjonen. Ved avbrudd beholdes ferdige pakker og
+SSH-nøkler, så veiviseren kan kjøres igjen. Eksisterende tokens og gyldig CA
+bevares. Konfigurasjonen ligger i Git-ignorert `config.local.json`.
 
-Controllerens sudo-passord oppgis i starten. Tilgangen holdes ved like mens
-installasjonen kjører. Deretter kontrolleres sudo på de valgte workerne:
+Controllerens sudo-tilgang holdes aktiv under oppsett og oppdatering. Passord
+beholdes bare i minnet; SSH mottar dem via private pipes, og Ansible henter
+sudo-passord fra en privat lokal socket som fjernes etter kjøringen. Passord
+skrives ikke til config, miljøvariabler eller kommandolinjeargumenter.
 
-- Workers med passordfri sudo trenger ingen inntasting.
-- Du kan velge ett felles sudo-passord for workerne, eller oppgi ulike passord.
-- Hvis fellespassordet avvises på én worker, spørres det separat for denne.
-- Alle passord samles inn og kontrolleres før pakkeinstallasjon og tjenesteendringer.
+### Legge til worker nummer tre – eller flere senere
 
-Controlleren installeres først, deretter inntil ti workers samtidig. Workerne
-kjører samme installasjonstrinn parallelt; neste trinn venter på det tregeste.
-Etter passordkontrollen kreves ingen flere planlagte passordspørsmål. Hvis
-sudo-tilgangen likevel bortfaller, stopper installasjonen med en feil.
-
-Sudo-passord beholdes bare i minnet under kjøringen. SSH mottar dem via en pipe,
-og Ansible henter dem fra en privat lokal socket som fjernes etter kjøringen.
-De lagres aldri i filer, miljø, kommandolinjevariabler eller logger.
-Dette endrer ikke sudo-reglene eller passordene på nodene.
-
-### Eksisterende installasjon og trygg migrering
+Kjør samme veiviser på controlleren:
 
 ```bash
 cd ~/Pi-display-lab
-bash scripts/update.sh
-python3 scripts/setup-cluster.py
+bash scripts/setup-cluster.sh
 ```
 
-Når lokal config allerede finnes, tilbyr veiviseren å verifisere, reinstallere,
-endre workers, endre controller/nettverk eller avbryte. Gyldige tokens og CA
-bevares. En ny worker får bare sitt eget nye token. Fjerning vises og må
-bekreftes før worker-tokenet trekkes tilbake.
-Den fjernede maskinen slettes eller ryddes ikke automatisk; dens gamle worker-
-tjeneste vil bare bli avvist av coordinatoren til du stopper den manuelt.
+Velg **3. Legg til workers**, oppgi antall **nye** workers og adressene deres.
+Med to eksisterende workers og én ny oppgir du `1` og bare den nye adressen.
+De eksisterende nodene og innstillingene beholdes; du skal ikke registrere dem
+på nytt. SSH og pakker klargjøres på de valgte nodene, og normalt installeres
+bare de nye workerne. Hvis en eksisterende worker har en eldre kodeversjon,
+spør veiviseren om også den skal oppdateres til controllerens versjon.
+Etterpå kontrolleres hele clusteret. Samlet grense er fortsatt 100 workers.
 
-Gamle `~/coordinator.py` og `~/worker.py` slettes aldri automatisk. Hvis port
-5001 er opptatt, vises PID, program og kommandolinje. Bare en prosess som tydelig
-ser ut som den gamle manuelle `coordinator.py`, tilbys stoppet, og det krever en
-egen bekreftelse. En ukjent prosess blir ikke drept.
+Andre valg er verifisering, reinstallasjon, nettverksendringer og **6. Fjern
+workers**. Velg nodene fra den nummererte listen og bekreft fjerningen. Minst
+én worker må beholdes. Tilgangen til jobbkøen tilbakekalles, og statusmeldinger
+fra de fjernede nodeidentitetene avvises. Du kan også velge å stoppe og deaktivere
+worker- og node-agent-tjenestene på de fjernede maskinene. Utilgjengelige noder
+kan fortsatt fjernes fra clusteret; tjenestene deres må da stoppes senere.
+Prosjektfiler og andre tjenester slettes ikke. En node som legges til på nytt,
+får nytt worker-token, og nodeidentiteten tillates igjen.
+Ved mislykket tjenesteinstallasjon beholdes configen. Kjør veiviseren igjen og
+velg reinstallasjon; eksisterende nøkler, pakker og sikkerhetsmateriale gjenbrukes.
+
+Vanlige oppdateringer gjøres fortsatt med `bash scripts/update.sh`, som henter
+siste Git-versjon selv. Gamle prototypefiler slettes aldri automatisk. En kjent
+gammel coordinator på opptatt port tilbys stoppet etter egen bekreftelse;
+ukjente prosesser stoppes ikke.
 
 ### TLS og lokale hemmeligheter
 

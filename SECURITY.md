@@ -13,7 +13,8 @@ Pi Display Lab er laget for et **betrodd hjemmenett eller labnett**:
 - port **5001** er cluster coordinator over HTTPS. `/health` er åpen, mens
   worker- og admin-endepunktene krever Bearer-token
 - port 5000 og 5001 skal aldri videresendes direkte fra ruteren til Internett
-- firewall- og routerregler endres ikke automatisk av installasjonen
+- routerregler endres aldri; endring av lokale firewalld-/UFW-regler krever
+  egen godkjenning av porter og eventuell firewalld-sone i veiviseren
 
 Workerne har hvert sitt tilfeldige token. Det tokenet gir bare adgang til å
 hente jobb og sende resultat for workerens eget hostname. Pi Display Lab bruker

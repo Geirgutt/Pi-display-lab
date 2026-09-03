@@ -41,6 +41,7 @@ class AppConfig:
     controller_host: str = "127.0.0.1"
     worker_hosts: tuple[str, ...] = ()
     ssh_user: str = ""
+    ssh_identity_file: str = ""
     coordinator_port: int = 5001
     app_port: int = 5000
     node_heartbeat_auth: bool = False
@@ -173,6 +174,7 @@ def load_config(path: str | Path | None = None) -> AppConfig:
         controller_host=_safe_host(raw.get("controller_host"), "127.0.0.1"),
         worker_hosts=worker_hosts,
         ssh_user=ssh_user,
+        ssh_identity_file=_safe_private_file(raw.get("ssh_identity_file"), ""),
         coordinator_port=_safe_port(raw.get("coordinator_port"), 5001),
         app_port=_safe_port(raw.get("app_port"), 5000),
         node_heartbeat_auth=raw.get("node_heartbeat_auth") is True,
@@ -213,19 +215,25 @@ def validate_controller_config(path: str | Path) -> AppConfig:
     if not isinstance(workers, list) or not workers:
         errors.append("worker_hosts må inneholde minst én worker")
     else:
+        if len(workers) > 100:
+            errors.append("worker_hosts kan inneholde høyst 100 workers")
         cleaned_workers = [_safe_host(worker) for worker in workers]
         if any(not worker for worker in cleaned_workers):
             errors.append("worker_hosts inneholder et ugyldig vertsnavn eller adresse")
         elif any(":" in worker for worker in cleaned_workers):
             errors.append("worker_hosts støtter foreløpig hostname eller IPv4, ikke IPv6")
-        elif len(set(cleaned_workers)) != len(cleaned_workers):
+        elif len({host.casefold() for host in cleaned_workers}) != len(cleaned_workers):
             errors.append("worker_hosts kan ikke inneholde duplikater")
+        elif controller_host.casefold() in {host.casefold() for host in cleaned_workers}:
+            errors.append("controller_host kan ikke også være worker")
 
     ssh_user = raw.get("ssh_user")
     if not isinstance(ssh_user, str) or re.fullmatch(r"[A-Za-z0-9._-]{1,32}", ssh_user) is None:
         errors.append("ssh_user mangler eller er ugyldig")
     if ssh_user == "root":
         errors.append("ssh_user kan ikke være root")
+    if raw.get("ssh_identity_file") and not _safe_private_file(raw["ssh_identity_file"], ""):
+        errors.append("ssh_identity_file må være en absolutt Linux-filbane uten mellomrom")
 
     for key in ("coordinator_port", "app_port"):
         value = raw.get(key)

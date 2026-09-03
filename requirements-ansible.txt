@@ -1,0 +1,2 @@
+# Ansible with dnf5 support; pip selects a version compatible with controller Python.
+ansible-core>=2.19,<2.22

@@ -75,6 +75,16 @@ class ClusterAuthenticationTests(unittest.TestCase):
             heartbeat_enabled=True,
         )
         self.assertNotIn("worker-01", removed.worker_tokens)
+        self.assertIn("worker-01", removed.retired_worker_ids)
+        readded = merge_controller_credentials(removed, ["worker-01", "worker-02"], heartbeat_enabled=True)
+        self.assertNotIn("worker-01", readded.retired_worker_ids)
+        self.assertNotEqual(readded.worker_tokens["worker-01"], existing.worker_tokens["worker-01"])
+
+    def test_retired_worker_ids_survive_credential_reload(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "credentials.json"
+            path.write_text(json.dumps({"retired_workers": ["old-worker", None, "invalid id"]}))
+            self.assertEqual(load_cluster_credentials(path).retired_worker_ids, ("old-worker",))
 
 
 if __name__ == "__main__":

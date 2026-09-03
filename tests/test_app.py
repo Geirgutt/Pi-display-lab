@@ -1,8 +1,10 @@
 """Små tester som sjekker at de viktigste API-delene henger sammen."""
 
 import unittest
+from unittest.mock import patch
 
 from app import create_app
+from cluster_auth import ClusterCredentials
 from config import ClusterConfig
 
 
@@ -47,6 +49,17 @@ class FakeClusterCoordinator:
 
 
 class AppSmokeTests(unittest.TestCase):
+    def test_removed_worker_cannot_reappear_via_legacy_heartbeat(self):
+        with patch("app.load_cluster_credentials", return_value=ClusterCredentials(retired_worker_ids=("old-worker",))):
+            app = create_app(mock_mode=True)
+        app.config["NODE_TOKEN"] = "test-shared-node-token"
+        client = app.test_client()
+        body = {"node_id": "old-worker", "cpu": 10, "temp": 40, "ram": 30}
+        headers = {"X-Node-Token": "test-shared-node-token"}
+        self.assertEqual(client.post("/api/nodes/heartbeat", json=body, headers=headers).status_code, 403)
+        body["node_id"] = "remaining-worker"
+        self.assertEqual(client.post("/api/nodes/heartbeat", json=body, headers=headers).status_code, 202)
+
     def setUp(self) -> None:
         self.app = create_app(mock_mode=True)
         self.client = self.app.test_client()

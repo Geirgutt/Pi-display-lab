@@ -9,7 +9,7 @@ from typing import Any
 
 from flask import Flask, jsonify, render_template, request
 
-from cluster_auth import load_cluster_credentials
+from cluster_auth import load_cluster_credentials, valid_worker_id
 from cluster_client import (
     CoordinatorAuthenticationError,
     ClusterCoordinatorClient,
@@ -142,6 +142,8 @@ def create_app(
         body = request.get_json(silent=True)
         if not isinstance(body, dict):
             return jsonify({"ok": False, "error": "Forventet et JSON-objekt"}), 400
+        if valid_worker_id(body.get("node_id")) in cluster_credentials.retired_worker_ids:
+            return jsonify({"ok": False, "error": "Denne workeren er fjernet fra clusteret"}), 403
         try:
             node = dashboard.register_node(body, request.remote_addr)
         except ValueError as error:

@@ -14,8 +14,14 @@ trap 'sudo_session_stop; rm -rf "$TEMP_DIR"' EXIT
 REGENERATE_SERVER_CERT=false
 CONTROLLER_ONLY=false
 LIMIT_WORKERS=()
+SUDO_SOCKET=""
 while [[ $# -gt 0 ]]; do
   case "$1" in
+    --sudo-socket)
+      [[ $# -ge 2 ]] || { echo "--sudo-socket mangler verdi"; exit 2; }
+      SUDO_SOCKET="$2"
+      shift 2
+      ;;
     --regenerate-server-cert)
       REGENERATE_SERVER_CERT=true
       shift
@@ -63,6 +69,7 @@ echo "Kontrollerer lokal sudo-tilgang ..."
 sudo_session_start
 
 INSTALL_ARGS=()
+[[ -z "$SUDO_SOCKET" ]] || INSTALL_ARGS+=(--sudo-socket "$SUDO_SOCKET")
 [[ "$REGENERATE_SERVER_CERT" != "true" ]] || INSTALL_ARGS+=(--regenerate-server-cert)
 [[ "$CONTROLLER_ONLY" != "true" ]] || INSTALL_ARGS+=(--controller-only)
 for WORKER in "${LIMIT_WORKERS[@]}"; do

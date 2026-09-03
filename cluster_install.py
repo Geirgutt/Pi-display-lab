@@ -6,6 +6,7 @@ import argparse
 import getpass
 import json
 import os
+import socket
 import socketserver
 import subprocess
 import sys
@@ -15,6 +16,7 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 from config import ConfigValidationError, validate_controller_config
+from cluster_ssh import ssh_options
 
 PROJECT_DIR = Path(__file__).resolve().parent
 MAX_FORKS = 10
@@ -29,13 +31,10 @@ def select_workers(configured: tuple[str, ...], limits: list[str], controller_on
     return [host for host in configured if not limits or host in limits]
 
 
-def check_sudo(user: str, host: str, password: str | None = None) -> bool:
+def check_sudo(user: str, host: str, password: str | None = None, *, identity_file: str = "") -> bool:
     # -k prevents an old SSH sudo timestamp from hiding a required password.
     remote = "sudo -k -n /usr/bin/true" if password is None else "sudo -k -S -p '' /usr/bin/true"
-    command = [
-        "ssh", "-T", "-o", "BatchMode=yes", "-o", "StrictHostKeyChecking=yes",
-        "-o", "ConnectTimeout=8", "-o", "LogLevel=ERROR", f"{user}@{host}", remote,
-    ]
+    command = ssh_options(identity_file) + [f"{user}@{host}", remote]
     try:
         result = subprocess.run(
             command, input="" if password is None else password + "\n",
@@ -62,14 +61,26 @@ def read_password(prompt: str) -> str:
     return password
 
 
-def collect_passwords(user: str, workers: list[str]) -> dict[str, str]:
+def collect_passwords(user: str, workers: list[str], *, identity_file: str = "",
+                      initial_passwords: dict[str, str] | None = None, input_fn=None) -> dict[str, str]:
     if not workers:
         return {}
+    input_fn = input if input_fn is None else input_fn
+    def check(host, password=None):
+        kwargs = {"identity_file": identity_file} if identity_file else {}
+        return check_sudo(user, host, password, **kwargs) if password is not None else check_sudo(user, host, **kwargs)
+
     print("Kontrollerer sudo på valgte workers ...", flush=True)
     with ThreadPoolExecutor(max_workers=min(MAX_FORKS, len(workers))) as pool:
-        passwordless = list(pool.map(lambda host: check_sudo(user, host), workers))
+        passwordless = list(pool.map(check, workers))
     needed = [host for host, ready in zip(workers, passwordless) if not ready]
     passwords = {host: "" for host, ready in zip(workers, passwordless) if ready}
+    candidates = [host for host in needed if initial_passwords and host in initial_passwords]
+    if candidates:
+        with ThreadPoolExecutor(max_workers=min(MAX_FORKS, len(candidates))) as pool:
+            accepted = list(pool.map(lambda host: check(host, initial_passwords[host]), candidates))
+        passwords.update({host: initial_passwords[host] for host, valid in zip(candidates, accepted) if valid})
+        needed = [host for host in needed if host not in passwords]
     if not needed:
         return passwords
 
@@ -77,14 +88,14 @@ def collect_passwords(user: str, workers: list[str]) -> dict[str, str]:
     shared = False
     if len(needed) > 1:
         while True:
-            answer = input("Bruke samme sudo-passord på alle workers som trenger passord? [J/n]: ").strip().lower()
+            answer = input_fn("Bruke samme sudo-passord på alle workers som trenger passord? [J/n]: ").strip().lower()
             if answer in ("", "j", "ja", "y", "yes", "n", "nei", "no"):
                 shared = answer not in ("n", "nei", "no")
                 break
     if shared:
         password = read_password("Felles sudo-passord for workerne: ")
         with ThreadPoolExecutor(max_workers=min(MAX_FORKS, len(needed))) as pool:
-            accepted = list(pool.map(lambda host: check_sudo(user, host, password), needed))
+            accepted = list(pool.map(lambda host: check(host, password), needed))
         for host, valid in zip(needed, accepted):
             if valid:
                 passwords[host] = password
@@ -96,7 +107,7 @@ def collect_passwords(user: str, workers: list[str]) -> dict[str, str]:
             continue
         for attempt in range(3):
             password = read_password(f"Sudo-passord for {host}: ")
-            if check_sudo(user, host, password):
+            if check(host, password):
                 passwords[host] = password
                 break
             print(f"{host}: sudo avvist ({attempt + 1}/3).", flush=True)
@@ -142,8 +153,28 @@ class PasswordBroker:
         self.path.unlink(missing_ok=True)
 
 
-def install(config: str, temp_dir: str, revision: str, workers: list[str], user: str, regenerate: bool) -> int:
-    passwords = collect_passwords(user, workers)
+def broker_passwords(path: str, workers: list[str]) -> dict[str, str]:
+    passwords = {}
+    for host in workers:
+        try:
+            with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as connection:
+                connection.settimeout(10)
+                connection.connect(path)
+                connection.sendall(json.dumps(host).encode() + b"\n")
+                with connection.makefile("rb") as response:
+                    password = json.loads(response.readline(1024 * 1024)).get("password")
+            if not isinstance(password, str):
+                raise ValueError("Missing password")
+            passwords[host] = password
+        except (OSError, ValueError, AttributeError):
+            raise RuntimeError(f"{host}: passordøkten er avsluttet. Kjør veiviseren på nytt.") from None
+    return passwords
+
+
+def install(config: str, temp_dir: str, revision: str, workers: list[str], user: str,
+            regenerate: bool, *, identity_file: str = "", sudo_socket: str = "") -> int:
+    passwords = broker_passwords(sudo_socket, workers) if sudo_socket else collect_passwords(
+        user, workers, **({"identity_file": identity_file} if identity_file else {}))
     print("Passordkontrollen er ferdig. Installerer controlleren ...", flush=True)
     controller = ["bash", "scripts/install-cluster-controller.sh", config, temp_dir, revision]
     if regenerate:
@@ -157,7 +188,9 @@ def install(config: str, temp_dir: str, revision: str, workers: list[str], user:
     forks = min(MAX_FORKS, len(workers))
     print(f"Installerer {len(workers)} workers, inntil {forks} samtidig, til commit {revision} ...", flush=True)
     command = [
-        "ansible-playbook", "-i", str(Path(temp_dir) / "inventory.ini"),
+        str(PROJECT_DIR / ".ansible-venv/bin/ansible-playbook")
+        if (PROJECT_DIR / ".ansible-venv/bin/ansible-playbook").is_file() else "ansible-playbook",
+        "-i", str(Path(temp_dir) / "inventory.ini"),
         "ansible/install-workers.yml", "--limit", ",".join(workers), "--forks", str(forks),
         "--extra-vars", "@" + str(Path(temp_dir) / "vars.json"),
         "--extra-vars", "@" + str(Path(temp_dir) / "worker-secrets.json"),
@@ -179,11 +212,14 @@ def main() -> int:
     parser.add_argument("--controller-only", action="store_true")
     parser.add_argument("--limit-worker", action="append", default=[])
     parser.add_argument("--regenerate-server-cert", action="store_true")
+    parser.add_argument("--sudo-socket", default="")
     args = parser.parse_args()
     try:
         settings = validate_controller_config(args.config)
         workers = select_workers(settings.worker_hosts, args.limit_worker, args.controller_only)
-        return install(args.config, args.temp_dir, args.revision, workers, settings.ssh_user, args.regenerate_server_cert)
+        return install(args.config, args.temp_dir, args.revision, workers, settings.ssh_user,
+                       args.regenerate_server_cert, identity_file=settings.ssh_identity_file,
+                       sudo_socket=args.sudo_socket)
     except (ConfigValidationError, RuntimeError, OSError, EOFError) as error:
         print(f"Installasjonen stoppet: {error}", file=sys.stderr)
         return 1

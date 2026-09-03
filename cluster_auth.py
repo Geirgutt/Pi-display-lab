@@ -51,6 +51,7 @@ class ClusterCredentials:
     worker_id: str = ""
     worker_token: str = ""
     node_heartbeat_token: str = ""
+    retired_worker_ids: tuple[str, ...] = ()
 
     def authenticate_admin(self, supplied_token: str) -> bool:
         return bool(
@@ -103,6 +104,10 @@ def load_cluster_credentials(path: str | Path) -> ClusterCredentials:
         worker_id=valid_worker_id(raw.get("worker_id")),
         worker_token=_valid_token(raw.get("worker_token")),
         node_heartbeat_token=_valid_token(raw.get("node_heartbeat_token")),
+        retired_worker_ids=tuple(
+            identity for value in (raw.get("retired_workers") if isinstance(raw.get("retired_workers"), list) else [])
+            if (identity := valid_worker_id(value)) and identity not in worker_tokens
+        ),
     )
 
 
@@ -152,6 +157,9 @@ def merge_controller_credentials(
             worker: existing.worker_tokens.get(worker) or new_unique_token()
             for worker in normalized
         },
+        retired_worker_ids=tuple(sorted(
+            (set(existing.retired_worker_ids) | set(existing.worker_tokens)) - set(normalized)
+        )),
         node_heartbeat_token=(
             existing.node_heartbeat_token or new_unique_token()
             if heartbeat_enabled
