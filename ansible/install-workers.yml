@@ -65,7 +65,7 @@
     - name: Opprett virtuelt Python-miljø
       ansible.builtin.command:
         argv:
-          - python3
+          - /usr/bin/python3
           - -m
           - venv
           - "{{ ansible_facts['user_dir'] }}/Pi-display-lab/.venv"

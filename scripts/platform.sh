@@ -56,5 +56,6 @@ platform_setup_ansible() {
     python3 -m venv --system-site-packages "$PROJECT_DIR/.ansible-venv"
   fi
   "$PROJECT_DIR/.ansible-venv/bin/python" -m pip install --upgrade --disable-pip-version-check -r "$PROJECT_DIR/requirements-ansible.txt"
+  "$PROJECT_DIR/.ansible-venv/bin/python" "$PROJECT_DIR/ansible_environment.py"
   export PATH="$PROJECT_DIR/.ansible-venv/bin:$PATH"
 }

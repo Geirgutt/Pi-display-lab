@@ -240,7 +240,7 @@ def ansible_target_python_limit(project):
 
 def check_worker_python(user, host, identity, highest_minor):
     code = 'import sys; print(".".join(map(str, sys.version_info[:2])))'
-    result = ssh_run(user, host, "python3 -c " + shlex.quote(code), identity_file=identity)
+    result = ssh_run(user, host, "/usr/bin/python3 -c " + shlex.quote(code), identity_file=identity)
     require_ssh(result, host)
     if not re.fullmatch(r"3\.\d+", result.stdout.strip()):
         raise RuntimeError("Kunne ikke lese workerens Python-versjon.")
@@ -294,7 +294,7 @@ if [ -n "$missing" ]; then dnf --refresh -y install $missing; fi
 '''
     else:
         raise RuntimeError(f"Ustøttet operativsystem: {family}")
-    script += "python3 -c 'import sys; sys.exit(0 if sys.version_info >= (3, 10) else 1)'\n"
+    script += "/usr/bin/python3 -c 'import sys; sys.exit(0 if sys.version_info >= (3, 10) else 1)'\n"
     if hostname:
         if re.fullmatch(r"[a-z0-9][a-z0-9-]{0,62}", hostname) is None:
             raise RuntimeError("Ugyldig nytt hostname")

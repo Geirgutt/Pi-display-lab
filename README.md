@@ -192,6 +192,21 @@ oppdateres som et kompatibelt par, mens ferdigbygde systembiblioteker gjenbrukes
 for å unngå tung kompilering på Raspberry Pi. Den tidligere
 kommandoen `python3 scripts/setup-cluster.py` starter også denne flyten.
 
+Oppsett og oppdatering kontrollerer at Ansible-modulene kan lastes. Hvis en
+lokal Python-cache gir `bad marshal data`, bygges den identifiserte cachefilen
+i `.ansible-venv` på nytt og importen prøves igjen. Kildekode og systempakker
+endres ikke av denne reparasjonen. Ved andre importfeil eller vedvarende feil
+stopper kontrollen med detaljer. Kontrollen kan også kjøres separat etter at
+en pågående installasjon er ferdig:
+
+```bash
+.ansible-venv/bin/python ansible_environment.py
+```
+
+Ansible bruker eksplisitt `/usr/bin/python3` på workerne, samme Python som
+klargjøringen kontrollerer, slik at automatisk interpreter discovery ikke
+velger en annen Python-installasjon senere.
+
 Veiviseren hjelper deretter med:
 
 1. Controller-adresse, SSH-bruker, antall workers og adresseliste.
