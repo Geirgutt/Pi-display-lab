@@ -40,6 +40,7 @@ def main() -> int:
     os.chmod(output_dir / "inventory.ini", 0o600)
 
     variables = {
+        "ansible_connection": "ansible.builtin.ssh",
         # Use the same system Python that worker bootstrap and preflight validate.
         "ansible_python_interpreter": "/usr/bin/python3",
         "project_repository": "https://github.com/Geirgutt/Pi-display-lab.git",

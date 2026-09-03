@@ -58,6 +58,16 @@ class AnsibleEnvironmentTests(unittest.TestCase):
                     check_environment(root, (source.stem,))
             self.assertEqual(cache.read_bytes(), before)
 
+    def test_explicit_py_compile_command_repairs_the_identified_file(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source, _ = self.corrupt(root)
+            before = source.read_bytes()
+            subprocess.run([sys.executable, "-m", "py_compile", str(source)], check=True, capture_output=True)
+            with patch.dict(os.environ, {"PYTHONPATH": str(root)}):
+                self.assertEqual(check_environment(root, (source.stem,)), 0)
+            self.assertEqual(source.read_bytes(), before)
+
     def test_stops_if_repair_does_not_resolve_the_corruption(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -66,6 +76,25 @@ class AnsibleEnvironmentTests(unittest.TestCase):
                 with self.assertRaisesRegex(RuntimeError, "vedvarer"):
                     check_environment(root, (source.stem,))
                 compile_cache.assert_called_once()
+
+    def test_linux_setup_does_not_require_a_broken_winrm_system_dependency(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            environment = root / "venv"
+            package = environment
+            for name in ("ansible", "plugins", "connection"):
+                package /= name
+                package.mkdir(parents=True)
+                (package / "__init__.py").write_text("", encoding="utf-8")
+            (package / "ssh.py").write_text("TRANSPORT = 'ssh'\n", encoding="utf-8")
+            (package / "winrm.py").write_text("import cache_test_module\n", encoding="utf-8")
+            system_site = root / "system-site"
+            system_site.mkdir()
+            _, cache = self.corrupt(system_site)
+            before = cache.read_bytes()
+            with patch.dict(os.environ, {"PYTHONPATH": os.pathsep.join((str(environment), str(system_site)))}):
+                self.assertEqual(check_environment(environment), 0)
+            self.assertEqual(cache.read_bytes(), before)
 
     def test_inventory_pins_the_python_used_by_preflight(self):
         project = Path(__file__).resolve().parent.parent
@@ -77,6 +106,7 @@ class AnsibleEnvironmentTests(unittest.TestCase):
                             "--revision", "a" * 40], check=True, capture_output=True)
             variables = json.loads((root / "vars.json").read_text())
             self.assertEqual(variables["ansible_python_interpreter"], "/usr/bin/python3")
+            self.assertEqual(variables["ansible_connection"], "ansible.builtin.ssh")
 
 
 if __name__ == "__main__":

@@ -192,16 +192,32 @@ oppdateres som et kompatibelt par, mens ferdigbygde systembiblioteker gjenbrukes
 for å unngå tung kompilering på Raspberry Pi. Den tidligere
 kommandoen `python3 scripts/setup-cluster.py` starter også denne flyten.
 
-Oppsett og oppdatering kontrollerer at Ansible-modulene kan lastes. Hvis en
+Oppsett og oppdatering kontrollerer at Ansible sin SSH-modul kan lastes.
+Linux-workerne bruker eksplisitt `ansible.builtin.ssh`; valgfrie Windows-moduler
+som WinRM er ikke et krav i denne kontrollen. Hvis en
 lokal Python-cache gir `bad marshal data`, bygges den identifiserte cachefilen
 i `.ansible-venv` på nytt og importen prøves igjen. Kildekode og systempakker
-endres ikke av denne reparasjonen. Ved andre importfeil eller vedvarende feil
+endres ikke av denne reparasjonen. Ved andre SSH-importfeil eller vedvarende feil
 stopper kontrollen med detaljer. Kontrollen kan også kjøres separat etter at
 en pågående installasjon er ferdig:
 
 ```bash
 .ansible-venv/bin/python ansible_environment.py
 ```
+
+Hvis en WinRM-advarsel peker på `bad marshal data` under systemets `chardet`,
+kan Linux-installasjonen fortsatt bruke SSH. Systemfeilen bør repareres separat.
+For akkurat en feil ved import av `chardet.jpcntx` på Raspberry Pi OS/Debian,
+bygg bare den aktuelle cachefilen på nytt og kontroller importen:
+
+```bash
+sudo /usr/bin/python3 -m py_compile /usr/lib/python3/dist-packages/chardet/jpcntx.py
+.ansible-venv/bin/python -c "import chardet; print('chardet OK')"
+```
+
+Dette endrer cachefilen, ikke kildekoden. Bruk filbanen i den faktiske feilen;
+andre distribusjoner kan ha en annen plassering. Hvis importen fortsatt feiler,
+må den nye feilmeldingen undersøkes før videre systemreparasjon.
 
 Ansible bruker eksplisitt `/usr/bin/python3` på workerne, samme Python som
 klargjøringen kontrollerer, slik at automatisk interpreter discovery ikke

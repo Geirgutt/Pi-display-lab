@@ -28,14 +28,15 @@ except (ValueError, EOFError) as error:
 '''
 
 
-def check_environment(environment: Path, modules=("ansible.plugins.connection.ssh", "ansible.plugins.connection.winrm")):
+def check_environment(environment: Path, modules=("ansible.plugins.connection.ssh",)):
+    # Linux workers require SSH. Optional Windows plugins must not gate rollout.
     environment = environment.resolve()
     repaired = set()
     while True:
         result = subprocess.run([sys.executable, "-c", PROBE, json.dumps(modules)],
                                 capture_output=True, text=True, timeout=60)
         if result.returncode == 0:
-            print("Ansible: SSH- og WinRM-modulene kan lastes.", flush=True)
+            print("Ansible: påkrevde moduler kan lastes.", flush=True)
             return len(repaired)
         if result.returncode != 10:
             raise RuntimeError("Ansible-kontrollen feilet:\n" + result.stderr)
