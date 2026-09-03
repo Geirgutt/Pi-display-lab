@@ -206,10 +206,23 @@ lager/bevarer credentials og privat CA, installerer systemd-tjenestene og ruller
 ut nøyaktig controllerens Git-commit til hver worker. Controlleren kjører bare
 Pi Display Lab og coordinatoren; den blir ikke compute-worker.
 
-Controllerens `sudo -v` spør normalt én gang. Workerne behandles sekvensielt.
-Har de forskjellige sudo-passord, får hver worker sitt eget interaktive
-Ansible `--ask-become-pass`-spørsmål. Passord lagres aldri i filer, miljø,
-kommandolinjevariabler eller logger.
+Controllerens sudo-passord oppgis i starten. Tilgangen holdes ved like mens
+installasjonen kjører. Deretter kontrolleres sudo på de valgte workerne:
+
+- Workers med passordfri sudo trenger ingen inntasting.
+- Du kan velge ett felles sudo-passord for workerne, eller oppgi ulike passord.
+- Hvis fellespassordet avvises på én worker, spørres det separat for denne.
+- Alle passord samles inn og kontrolleres før pakkeinstallasjon og tjenesteendringer.
+
+Controlleren installeres først, deretter inntil ti workers samtidig. Workerne
+kjører samme installasjonstrinn parallelt; neste trinn venter på det tregeste.
+Etter passordkontrollen kreves ingen flere planlagte passordspørsmål. Hvis
+sudo-tilgangen likevel bortfaller, stopper installasjonen med en feil.
+
+Sudo-passord beholdes bare i minnet under kjøringen. SSH mottar dem via en pipe,
+og Ansible henter dem fra en privat lokal socket som fjernes etter kjøringen.
+De lagres aldri i filer, miljø, kommandolinjevariabler eller logger.
+Dette endrer ikke sudo-reglene eller passordene på nodene.
 
 ### Eksisterende installasjon og trygg migrering
 

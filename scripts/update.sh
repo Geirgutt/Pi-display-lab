@@ -33,8 +33,11 @@ if [[ -f "$CONFIG_FILE" ]]; then
   CLUSTER_ENABLED="$(python3 scripts/config-value.py cluster_enabled --config "$CONFIG_FILE")"
 fi
 
+source "$PROJECT_DIR/scripts/sudo-session.sh"
+trap 'sudo_session_stop' EXIT
+
 echo "Kontrollerer lokal sudo-tilgang før Git endres ..."
-if ! sudo -v; then
+if ! sudo_session_start; then
   echo "Oppdateringen trenger vanlig sudo-tilgang for å restarte tjenester."
   exit 1
 fi

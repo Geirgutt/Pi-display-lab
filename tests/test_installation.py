@@ -14,13 +14,17 @@ class InstallationWorkflowTests(unittest.TestCase):
     def test_installer_handles_local_and_worker_sudo_without_weakening_ssh(self) -> None:
         installer = self.read("scripts/install-cluster.sh")
         preflight = self.read("scripts/preflight-cluster.py")
-        self.assertIn("sudo -v", installer)
-        self.assertIn("--ask-become-pass", installer)
-        self.assertIn('for WORKER in "${WORKERS[@]}"', installer)
-        self.assertIn('--limit "$WORKER"', installer)
+        session = self.read("scripts/sudo-session.sh")
+        runner = self.read("cluster_install.py")
+        self.assertIn("sudo_session_start", installer)
+        self.assertIn("sudo -v", session)
+        self.assertIn("sudo -n -v", session)
+        self.assertIn("cluster_install.py", installer)
+        self.assertIn('"--forks"', runner)
         self.assertIn("StrictHostKeyChecking=yes", preflight)
-        self.assertNotIn("StrictHostKeyChecking=no", installer + preflight)
-        self.assertNotIn("ANSIBLE_HOST_KEY_CHECKING", installer + preflight)
+        self.assertIn("StrictHostKeyChecking=yes", runner)
+        self.assertNotIn("StrictHostKeyChecking=no", installer + preflight + runner)
+        self.assertNotIn("ANSIBLE_HOST_KEY_CHECKING", installer + preflight + runner)
 
     def test_workers_are_pinned_and_receive_no_admin_token(self) -> None:
         installer = self.read("scripts/install-cluster.sh")

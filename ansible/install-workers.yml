@@ -2,6 +2,10 @@
 - name: Installer Pi Display Lab cluster-workers
   hosts: cluster_workers
   gather_facts: true
+  strategy: linear
+  any_errors_fatal: true
+  vars:
+    ansible_become_password: "{{ lookup('worker_sudo', inventory_hostname, socket_path=worker_sudo_socket) if worker_sudo_socket is defined else '' }}"
 
   pre_tasks:
     - name: Avvis root som vanlig tjenestebruker
