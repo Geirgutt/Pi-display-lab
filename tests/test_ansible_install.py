@@ -32,7 +32,8 @@ class AnsibleInstallTests(unittest.TestCase):
             play.setdefault("vars", {})["test_marker"] = str(marker)
             playbook = root / "play.yml"
             playbook.write_text(yaml.safe_dump([play]), encoding="utf-8")
-            environment = dict(os.environ, ANSIBLE_LOOKUP_PLUGINS=str(PROJECT_DIR / "ansible/lookup_plugins"))
+            environment = dict(os.environ, ANSIBLE_LOOKUP_PLUGINS=str(PROJECT_DIR / "ansible/lookup_plugins"),
+                               ANSIBLE_INJECT_FACT_VARS="false")
             with PasswordBroker(root / "sudo.sock", passwords) as broker:
                 result = subprocess.run(
                     [ANSIBLE, "-i", str(inventory), str(playbook), "--forks", "2",
@@ -79,6 +80,39 @@ class AnsibleInstallTests(unittest.TestCase):
             text=True, capture_output=True, timeout=60,
         )
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+    def test_production_templates_work_without_injected_fact_variables(self):
+        import yaml
+
+        def templates(value):
+            if isinstance(value, dict):
+                return [item for child in value.values() for item in templates(child)]
+            if isinstance(value, list):
+                return [item for child in value for item in templates(child)]
+            if isinstance(value, str) and "{{" in value and ("ansible_facts" in value or "ansible_" in value):
+                return [value]
+            return []
+
+        values = []
+        for name in ("install-workers.yml", "verify-workers.yml"):
+            production = yaml.safe_load((PROJECT_DIR / "ansible" / name).read_text(encoding="utf-8"))[0]
+            values.extend(templates(production["tasks"]))
+        self.assertGreater(len(values), 10)
+        play = self.production_play_settings()
+        play["gather_facts"] = True
+        play["vars"].update({
+            "template_values": values, "ansible_user": "labuser", "controller_host": "controller.example",
+            "coordinator_port": 5001, "app_port": 5000, "node_heartbeat_enabled": False,
+            "worker_poll_interval": 2, "cluster_credentials_file": "/etc/pi-display-lab/cluster-credentials.json",
+            "cluster_ca_file": "/etc/pi-display-lab/pki/ca.crt",
+        })
+        play["tasks"] = [
+            {"ansible.builtin.assert": {"that": ["ansible_user_dir is not defined", "ansible_facts['user_dir'] | length > 0"]}},
+            {"ansible.builtin.debug": {"msg": "{{ item }}"}, "loop": "{{ template_values }}"},
+        ]
+        result, _ = self.run_play(play, {"one.example": "", "two.example": ""})
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertNotIn("INJECT_FACTS_AS_VARS", result.stdout + result.stderr)
 
 
 if __name__ == "__main__":

@@ -1,2 +1,4 @@
-# Ansible with dnf5 support; pip selects a version compatible with controller Python.
+# Resolve Ansible and Core together: the inherited distro Ansible package pins Core.
+# Native dependencies still come from system-site-packages on Raspberry Pi.
+ansible>=12,<15
 ansible-core>=2.19,<2.22

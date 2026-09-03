@@ -187,8 +187,9 @@ bash scripts/setup-cluster.sh
 ```
 
 Startskriptet oppdager operativsystem og arkitektur, viser manglende verktøy og
-tilbyr å installere dem. Ansible får et eget `.ansible-venv` slik at oppsettet
-ikke avhenger av versjonen som følger med operativsystemet. Den tidligere
+tilbyr å installere dem. Ansible får et eget `.ansible-venv`. Ansible og Core
+oppdateres som et kompatibelt par, mens ferdigbygde systembiblioteker gjenbrukes
+for å unngå tung kompilering på Raspberry Pi. Den tidligere
 kommandoen `python3 scripts/setup-cluster.py` starter også denne flyten.
 
 Veiviseren hjelper deretter med:

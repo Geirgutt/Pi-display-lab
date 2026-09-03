@@ -35,7 +35,7 @@ class InstallationWorkflowTests(unittest.TestCase):
         self.assertNotIn("admin_token", playbook)
         self.assertIn("no_log: true", playbook)
         self.assertIn('"https://{{ controller_host }}:{{ coordinator_port }}"', playbook)
-        self.assertIn('"worker_slots": {{ ansible_processor_vcpus', playbook)
+        self.assertIn('"worker_slots": {{ ansible_facts[\'processor_vcpus\']', playbook)
         self.assertNotIn("ca.key", playbook)
 
     def test_services_are_non_root_and_have_low_risk_hardening(self) -> None:
@@ -47,7 +47,7 @@ class InstallationWorkflowTests(unittest.TestCase):
                 "scripts/install-coordinator-service.sh",
             )
         )
-        self.assertIn("ansible_user_uid | int != 0", playbook)
+        self.assertIn("ansible_facts['user_uid'] | int != 0", playbook)
         self.assertIn("NoNewPrivileges=true", playbook)
         self.assertIn("User=$RUN_USER", controller_units)
         self.assertIn("NoNewPrivileges=true", controller_units)
