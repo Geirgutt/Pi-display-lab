@@ -1,5 +1,27 @@
 # Foundation milestone — 2026-09-05
 
+## Physical verification update — 2026-09-06
+
+Following foundation commit `3b09aac`, the user reported these hardware results:
+
+| Area | Status |
+|---|---|
+| Display | Physically verified |
+| Backlight | Verified |
+| GT911 touch | Physically verified |
+| Orientation | Physically verified |
+| Drag/release | Physically verified |
+| Heap stability | Physically verified |
+| PSRAM stability | Physically verified |
+| Wi-Fi | Not tested yet |
+| BLE | Intentionally disabled |
+
+This establishes the tested display/touch foundation without changing hardware
+configuration. Numeric runtime heap/PSRAM readings, raw corner coordinates and
+test duration were not supplied; no values or calibration changes are inferred.
+The build measurements below remain unchanged. The original display-only
+baseline remains `b7cf625`; Wi-Fi behavior is not covered by this verification.
+
 ## Evidence and preserved hardware
 
 No previous Codex conversation was available or used. The source baseline is
@@ -157,8 +179,10 @@ Permanent buffers/resources:
   environment, but ELF inspection confirms its initialization/class methods are
   not linked there. BLE remains unused in both variants.
 
-Runtime internal heap, PSRAM consumption, CPU load and network performance are
-**not measured**: no device was opened, flashed or monitored. Startup diagnostics
+During implementation, runtime internal heap, PSRAM consumption, CPU load and
+network performance were **not measured by Codex**: no device was opened, flashed
+or monitored. The subsequent user verification above confirms heap/PSRAM
+stability, but numeric readings remain unrecorded. Startup diagnostics
 provide snapshots before display init, after display init and after touch init.
 `d` provides uptime, internal free/minimum/largest heap, PSRAM total/free/used,
 flash size/speed/sketch size, chip revision/cores/frequency, SDK and reset reason.
@@ -172,8 +196,9 @@ step built before proceeding. One missing I2C header was corrected before moving
 past the touch step. Final clean builds have no compiler warnings/errors.
 Source comparison confirms every original PlatformIO setting and all of
 `display.h` are unchanged. ELF symbol checks confirm expected Wi-Fi exclusion
-and absent BLE initialization. `git diff --check` passes. No radio, persistence,
-touch, failure-injection or long-running runtime test has been executed.
+and absent BLE initialization. `git diff --check` passes. Codex executed no radio,
+persistence, touch, failure-injection or long-running runtime tests; subsequent
+user hardware results are recorded at the top of this report.
 
 Hardware tests for the user (no upload was performed by Codex):
 
@@ -210,12 +235,16 @@ Hardware tests for the user (no upload was performed by Codex):
    `d` command still working. Confirm LF and CRLF submissions work.
 
 Any touch init failure, stuck contact, mismatch in orientation or display
-regression requires physical investigation before committing this milestone.
+regression in subsequent testing requires physical investigation before accepting
+further firmware changes.
 If touch fails, verify the actual board revision/schematic rather than trying
 arbitrary reset/interrupt pins. Upstream GT911 initialization does not validate a
 product ID, so its success message alone is not proof of correct touch behavior.
 
-Recommended next milestone: accept a physically tested foundation, record runtime
-memory and touch mapping, pin those tested package versions, then add one small
-touch-driven page using existing LovyanGFX. Measure before choosing LVGL or a
-network telemetry protocol; the web management system remains a later milestone.
+Recommended next milestone after the 2026-09-06 verification: test the optional
+Wi-Fi build using steps 5–8 above, checking display/touch stability during network
+activity and recording numeric memory readings before connection, while connected
+and after stopping. Keep the verified hardware configuration unchanged and BLE
+disabled. Then pin tested package versions and add one small touch-driven page
+using existing LovyanGFX. Measure before choosing LVGL or a network telemetry
+protocol; the web management system remains a later milestone.

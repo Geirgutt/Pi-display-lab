@@ -1,8 +1,10 @@
 # DeskDisplay
 
 Small firmware foundation for the Guition ESP32-S3-4848S040.
-The physically verified display baseline is commit `b7cf625`.
-The current foundation changes still require hardware testing.
+The original physically verified display baseline is commit `b7cf625`.
+On 2026-09-06, the user confirmed the foundation at `3b09aac`: display,
+backlight, GT911 touch, orientation, drag/release, and stable heap/PSRAM.
+Wi-Fi has not been tested yet. BLE is intentionally disabled.
 
 Build the default display/touch/diagnostics firmware:
 
