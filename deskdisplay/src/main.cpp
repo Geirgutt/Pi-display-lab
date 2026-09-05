@@ -1,12 +1,9 @@
 #include <Arduino.h>
-#include "display.h"
-
-LGFX display_instance;
-
-namespace
-{
-constexpr uint8_t BACKLIGHT_PIN = 38;
-}
+#include "hardware.h"
+#include "diagnostics.h"
+#include "touch.h"
+#include "console.h"
+#include "network.h"
 
 void setup()
 {
@@ -14,47 +11,50 @@ void setup()
     delay(2000);
 
     Serial.println("=== Pi Display Lab ===");
+    console::help();
+    diagnostics::print(Serial);
 
     // Keep the backlight dark until the framebuffer contains the test image.
-    pinMode(BACKLIGHT_PIN, OUTPUT);
-    digitalWrite(BACKLIGHT_PIN, LOW);
-
     Serial.println("Initializing display...");
-    if (!display_instance.init())
+    if (!hardware::beginDisplay())
     {
         Serial.println("Display initialization failed.");
         return;
     }
 
+    auto& display_instance = hardware::display();
     display_instance.fillScreen(TFT_BLACK);
     display_instance.setTextColor(TFT_WHITE, TFT_BLACK);
     display_instance.setTextSize(2);
     display_instance.drawString("Pi Display Lab", 40, 190);
     display_instance.drawString("Hallo Milana!", 40, 230);
 
-    digitalWrite(BACKLIGHT_PIN, HIGH);
+    hardware::setBacklight(true);
     Serial.println("Display initialized.");
+    diagnostics::print(Serial);
+    Serial.println(touch::begin() ? "Touch initialized (raw coordinates)." : "Touch initialization failed; display remains available.");
+    diagnostics::print(Serial);
 }
 
 void loop()
 {
-    Serial.println("--- Status ---");
+    static bool pressed = false;
+    static touch::Point previous = {-1, -1};
+    touch::Point point;
+    const bool down = touch::read(point);
+    if (down && (!pressed || point.x != previous.x || point.y != previous.y))
+    {
+        Serial.printf("Touch %s raw x=%d y=%d\n", pressed ? "move" : "down", point.x, point.y);
+        previous = point;
+    }
+    if (!down && pressed) Serial.println("Touch up");
+    pressed = down;
 
-    Serial.printf(
-        "Flash: %u MB\n",
-        ESP.getFlashChipSize() / 1024 / 1024
-    );
-
-    Serial.printf(
-        "PSRAM: %.2f MB\n",
-        ESP.getPsramSize() / 1024.0 / 1024.0
-    );
-
-    Serial.printf(
-        "Ledig PSRAM: %u bytes\n",
-        ESP.getFreePsram()
-    );
-
-    Serial.println();
-    delay(3000);
+    console::service();
+#if DESKDISPLAY_WIFI
+    network::service();
+#endif
+    // Board references expose no IRQ. 50 Hz polling, yielding the Arduino task;
+    // no extra task, framebuffer redraw, or periodic diagnostics output.
+    delay(20);
 }
