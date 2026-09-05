@@ -2,25 +2,79 @@
 
 ## Physical verification update — 2026-09-06
 
-Following foundation commit `3b09aac`, the user reported these hardware results:
+The user tested the current foundation firmware (`3b09aac`; documentation-only
+rollback checkpoint `d670515`) and reported these results. These are user-run
+physical tests, not tests executed by Codex.
 
 | Area | Status |
 |---|---|
-| Display | Physically verified |
-| Backlight | Verified |
-| GT911 touch | Physically verified |
-| Orientation | Physically verified |
-| Drag/release | Physically verified |
-| Heap stability | Physically verified |
-| PSRAM stability | Physically verified |
-| Wi-Fi | Not tested yet |
+| Display output | Physically verified; no obvious instability |
+| Backlight | `0` + Enter off / `1` + Enter on physically verified |
+| GT911 touch and orientation | Physically verified |
+| Touch down/move/up and drag | Physically verified; smooth coordinate updates |
+| Default heap/PSRAM stability | Unchanged across repeated diagnostics over several minutes and extensive touch/drag testing |
+| Wi-Fi connection via serial credentials | Physically verified |
+| Stored credentials | Retained across reboot; no re-entry needed |
+| Wi-Fi disabled at startup | Physically verified after reboot |
+| Explicit reconnect after reboot (`w`) | Physically verified |
+| Display/touch with active Wi-Fi | Physically verified |
 | BLE | Intentionally disabled |
 
-This establishes the tested display/touch foundation without changing hardware
-configuration. Numeric runtime heap/PSRAM readings, raw corner coordinates and
-test duration were not supplied; no values or calibration changes are inferred.
-The build measurements below remain unchanged. The original display-only
-baseline remains `b7cf625`; Wi-Fi behavior is not covered by this verification.
+No obvious short-term memory leak was observed. This does not establish long-term
+stability, automatic AP-outage recovery, or repeated Wi-Fi stop/start behavior.
+No hardware configuration or calibration change is justified by these results.
+The original display-only baseline remains `b7cf625`.
+
+Approximate raw touch samples with the display upright:
+
+| Position | x | y |
+|---|---:|---:|
+| Top-left | 38 | 41 |
+| Top-right | 446 | 51 |
+| Bottom-left | 43 | 470 |
+| Bottom-right | 445 | 452 |
+| Center | 231 | 238 |
+
+These are manually sampled positions, not measured controller extrema or
+calibration targets. Orientation is confirmed; no scaling, offset, inversion or
+axis swap is inferred from the samples.
+
+### User-reported runtime measurements
+
+All memory values are bytes, copied from the supplied diagnostics.
+
+| Metric | Default build | Wi-Fi build, before start | First connection | Reboot + stored reconnect |
+|---|---:|---:|---:|---:|
+| Internal heap free | 362212 | 328804 | 289992 | 290024 |
+| Internal heap minimum | 356884 | 323456 | 284444 | 284372 |
+| Internal heap largest block | 327668 | 286708 | 278516 | 278516 |
+| PSRAM total (reported) | 8386167 | 8386167 | 8385815 | 8385847 |
+| PSRAM free | 7924871 | 7924871 | 7909931 | 7910067 |
+| PSRAM used | 461296 | 461296 | 475884 | 475780 |
+
+The default readings remained unchanged throughout the reported test. First
+connection returned status 3, IP `192.168.2.49`, RSSI approximately -50 to -51 dBm.
+After reboot, Wi-Fi remained disabled until `w`; stored reconnect returned status
+3, the same IP and RSSI -51 dBm. The IP is a test observation, not firmware config.
+
+Measured differences:
+
+- Wi-Fi build before radio start versus default: 33408 fewer free internal heap
+  bytes; identical reported PSRAM readings. This runtime difference is distinct
+  from the static build RAM difference below.
+- First connection versus Wi-Fi build before start: free internal heap decreased
+  by 38812 bytes; free PSRAM by 14940 bytes; reported used PSRAM increased by
+  14588 bytes.
+- Reboot + stored reconnect versus first connection: free internal heap +32 bytes,
+  minimum -72 bytes, largest block unchanged; free PSRAM +136 bytes and reported
+  used PSRAM -104 bytes. These samples are effectively consistent, not a trend.
+
+Reported PSRAM total varies slightly between samples (by hundreds of bytes).
+The table preserves the diagnostic values exactly; it does not imply physical
+PSRAM capacity changed. The cause has not been investigated. Because the reported
+total changes, the free-PSRAM delta and used-PSRAM delta are not identical.
+CPU load, throughput, numeric memory after Wi-Fi stop and long-term behavior
+remain unmeasured. The exact test duration was described as several minutes.
 
 ## Evidence and preserved hardware
 
@@ -87,8 +141,9 @@ This polling is necessary with the selected no-IRQ configuration. The driver
 retains its last contact on a transient I2C read failure, so this is not a
 bus-health monitor; a stuck touch must be reported during testing. The driver can
 also spend up to roughly 24 ms refreshing stale data after a polling gap.
-Multi-touch gesture handling and calibrated screen coordinates are deferred
-until corner/orientation tests establish the mapping on this unit.
+Orientation and smooth primary-contact tracking are now physically verified.
+Multi-touch gesture handling and precise screen calibration remain deferred; the
+reported manual samples do not establish calibration extrema.
 
 ## Structure and Wi-Fi behavior
 
@@ -182,7 +237,7 @@ Permanent buffers/resources:
 During implementation, runtime internal heap, PSRAM consumption, CPU load and
 network performance were **not measured by Codex**: no device was opened, flashed
 or monitored. The subsequent user verification above confirms heap/PSRAM
-stability, but numeric readings remain unrecorded. Startup diagnostics
+stability and supplies the numeric readings recorded above. Startup diagnostics
 provide snapshots before display init, after display init and after touch init.
 `d` provides uptime, internal free/minimum/largest heap, PSRAM total/free/used,
 flash size/speed/sketch size, chip revision/cores/frequency, SDK and reset reason.
@@ -200,7 +255,20 @@ and absent BLE initialization. `git diff --check` passes. Codex executed no radi
 persistence, touch, failure-injection or long-running runtime tests; subsequent
 user hardware results are recorded at the top of this report.
 
-Hardware tests for the user (no upload was performed by Codex):
+Original hardware test procedure (retained for regression testing; no upload was
+performed by Codex). Display/touch, initial Wi-Fi connection and the reboot/stored
+credential portions have passed as reported above; this does not imply every
+repetition or exact duration below was performed.
+
+**Smallest next milestone: Wi-Fi lifecycle validation, without firmware changes.**
+Test AP outage/recovery and initial AP absence from step 6, then repeated `x`/`w`
+stop/start cycles from step 7. Capture `s` and `d` while connected, after stop,
+and after reconnect; exercise touch throughout. Compare repeated cycles at the
+same lifecycle stage rather than expecting all startup allocations to disappear.
+Credential erasure, wrong-password handling and console boundary tests also remain
+pending. Record the results before adding the next feature.
+
+Regression procedure:
 
 1. Build/upload **guition-4848s040** using your established hardware workflow.
    Open serial at **115200**, then cold boot. Confirm exactly the original two
@@ -241,10 +309,8 @@ If touch fails, verify the actual board revision/schematic rather than trying
 arbitrary reset/interrupt pins. Upstream GT911 initialization does not validate a
 product ID, so its success message alone is not proof of correct touch behavior.
 
-Recommended next milestone after the 2026-09-06 verification: test the optional
-Wi-Fi build using steps 5–8 above, checking display/touch stability during network
-activity and recording numeric memory readings before connection, while connected
-and after stopping. Keep the verified hardware configuration unchanged and BLE
-disabled. Then pin tested package versions and add one small touch-driven page
-using existing LovyanGFX. Measure before choosing LVGL or a network telemetry
-protocol; the web management system remains a later milestone.
+After lifecycle validation, the smallest implementation milestone is to pin the
+already-tested dependency versions for reproducible builds, verifying unchanged
+hardware configuration and build sizes. Then consider one small touch-driven
+page using existing LovyanGFX. Keep BLE disabled; LVGL, web management and a
+telemetry protocol remain separate measured milestones.

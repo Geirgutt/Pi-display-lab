@@ -3,8 +3,11 @@
 Small firmware foundation for the Guition ESP32-S3-4848S040.
 The original physically verified display baseline is commit `b7cf625`.
 On 2026-09-06, the user confirmed the foundation at `3b09aac`: display,
-backlight, GT911 touch, orientation, drag/release, and stable heap/PSRAM.
-Wi-Fi has not been tested yet. BLE is intentionally disabled.
+backlight, GT911 touch, orientation, drag/release, and short-test heap/PSRAM
+stability. Subsequent tests verified Wi-Fi connection, stored credentials,
+explicit reconnect after reboot, and display/touch operation with active Wi-Fi.
+AP-outage recovery and repeated stop/start testing remain pending. BLE is
+intentionally disabled. See the measured results in the foundation report.
 
 Build the default display/touch/diagnostics firmware:
 
