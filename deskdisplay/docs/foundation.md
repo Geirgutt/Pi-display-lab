@@ -182,17 +182,22 @@ Forget clears only native station configuration then stops the radio.
 
 ESP32-S3 supports BLE, not Bluetooth Classic/SPP/A2DP:
 [Espressif ESP32-S3 Bluetooth overview](https://docs.espressif.com/projects/esp-idf/en/v5.2/esp32s3/api-guides/bluetooth.html).
-The installed Arduino SDK selects Bluedroid/BLE. No BLE library is referenced,
-controller started, service advertised or custom Bluetooth wrapper added.
+The installed Arduino SDK selects Bluedroid/BLE. In the normal default/Wi-Fi
+builds, no BLE test code is included, controller started or service advertised.
 
-The installed core calls `esp_bt_controller_mem_release(ESP_BT_MODE_BTDM)` when
-its weak `btInUse()` returns false. Both built ELFs retain that unused-BT path
-and contain no `esp_bt_controller_init` or `BLEDevice::init` definition.
-A future BLE-enabled build must retain controller memory at boot through the
-framework's BLE linkage before lazy initialization can work. Releasing that memory
-is not a reversible runtime enable switch. Measure BLE-enabled-but-idle versus
-active operation separately; select a host stack at that milestone rather than
-installing an unused dependency now.
+Correction from subsequent BLE test ELF inspection: the core calls
+`esp_bt_controller_mem_release(ESP_BT_MODE_BTDM)` only when `btInUse()` returns
+false. The installed **ESP32-S3** implementation returns true even in the normal
+default/Wi-Fi builds, so that release branch is not taken. The false weak default
+in `esp32-hal-misc.c` belongs to the original ESP32 conditional, not this S3.
+The normal builds contain no `esp_bt_controller_init` or `BLEDevice::init`
+definition: BLE remains uninitialized/inactive, but memory release must not be
+claimed. This existing behavior is preserved.
+
+The separate [optional BLE test milestone](ble-test.md) now implements native GAP
+advertising and explicit stack shutdown. Its builds retain controller memory
+explicitly for later startup. Memory release is irreversible within a boot;
+runtime savings must be measured, not inferred from the radio state.
 
 ## Resource measurements
 

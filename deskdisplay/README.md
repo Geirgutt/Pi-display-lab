@@ -24,3 +24,10 @@ pio run -e guition-4848s040-wifi
 See [foundation and hardware tests](docs/foundation.md) and the
 [pre-change resource baseline](docs/baseline.md). No web server, LVGL, OTA,
 dashboard engine, telemetry protocol or BLE service is included.
+
+Optional advertising-only [BLE and Wi-Fi + BLE test builds](docs/ble-test.md)
+have been physically tested: BLE discovery and repeated start/stop, plus basic
+Wi-Fi coexistence including BLE-first startup. Normal default/Wi-Fi builds keep
+BLE inactive and exclude the test implementation. See the
+[Wi-Fi shutdown investigation](docs/wifi-shutdown-investigation.md) for the late
+timer log and retained first-use memory findings.

@@ -4,6 +4,7 @@
 #include "touch.h"
 #include "console.h"
 #include "network.h"
+#include "ble_test.h"
 
 void setup()
 {
@@ -51,6 +52,9 @@ void loop()
     pressed = down;
 
     console::service();
+#if DESKDISPLAY_BLE
+    ble_test::service();
+#endif
 #if DESKDISPLAY_WIFI
     network::service();
 #endif
