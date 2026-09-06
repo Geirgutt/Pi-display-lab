@@ -99,4 +99,18 @@ void network::printStatus(Print& out)
     }
     out.println();
 }
+
+void network::info(Info& value)
+{
+    value.active = active;
+    value.status = static_cast<uint8_t>(WiFi.status());
+    value.connected = value.status == WL_CONNECTED;
+    value.rssi = value.connected ? WiFi.RSSI() : 0;
+    if (value.connected)
+    {
+        const IPAddress address = WiFi.localIP();
+        snprintf(value.ip, sizeof(value.ip), "%u.%u.%u.%u", address[0], address[1], address[2], address[3]);
+    }
+    else strcpy(value.ip, "-");
+}
 #endif

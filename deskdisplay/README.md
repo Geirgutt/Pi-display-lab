@@ -25,6 +25,10 @@ See [foundation and hardware tests](docs/foundation.md) and the
 [pre-change resource baseline](docs/baseline.md). No web server, LVGL, OTA,
 dashboard engine, telemetry protocol or BLE service is included.
 
+The first LovyanGFX-only application dashboard is documented in
+[docs/ui-milestone.md](docs/ui-milestone.md). It is built into all four
+environments; Wi-Fi and BLE remain compile-time optional.
+
 Optional advertising-only [BLE and Wi-Fi + BLE test builds](docs/ble-test.md)
 have been physically tested: BLE discovery and repeated start/stop, plus basic
 Wi-Fi coexistence including BLE-first startup. Normal default/Wi-Fi builds keep
