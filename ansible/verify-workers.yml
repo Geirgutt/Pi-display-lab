@@ -9,7 +9,7 @@
         argv:
           - git
           - -C
-          - "{{ ansible_user_dir }}/Pi-display-lab"
+          - "{{ ansible_facts['user_dir'] }}/Pi-display-lab"
           - rev-parse
           - HEAD
       register: worker_revision
@@ -35,7 +35,7 @@
     - name: Verifiser HTTPS/CA og worker-identitet
       ansible.builtin.command:
         argv:
-          - "{{ ansible_user_dir }}/Pi-display-lab/.venv/bin/python"
-          - "{{ ansible_user_dir }}/Pi-display-lab/scripts/verify-worker.py"
-          - "{{ ansible_user_dir }}/Pi-display-lab/config.local.json"
+          - "{{ ansible_facts['user_dir'] }}/Pi-display-lab/.venv/bin/python"
+          - "{{ ansible_facts['user_dir'] }}/Pi-display-lab/scripts/verify-worker.py"
+          - "{{ ansible_facts['user_dir'] }}/Pi-display-lab/config.local.json"
       changed_when: false

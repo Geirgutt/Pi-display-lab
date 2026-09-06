@@ -2,12 +2,16 @@
 - name: Installer Pi Display Lab cluster-workers
   hosts: cluster_workers
   gather_facts: true
+  strategy: linear
+  any_errors_fatal: true
+  vars:
+    ansible_become_password: "{{ lookup('worker_sudo', inventory_hostname, socket_path=worker_sudo_socket) if worker_sudo_socket is defined else '' }}"
 
   pre_tasks:
     - name: Avvis root som vanlig tjenestebruker
       ansible.builtin.assert:
         that:
-          - ansible_user_uid | int != 0
+          - ansible_facts['user_uid'] | int != 0
         fail_msg: "Workerne må installeres med en vanlig SSH-bruker, ikke root."
 
     # Dette kjøres på alle hosts før første endrende oppgave. Feil sudo-passord
@@ -22,26 +26,22 @@
     - name: Kontroller at credential tilhører workerens hostname
       ansible.builtin.assert:
         that:
-          - worker_credentials[inventory_hostname]['worker_id'] == ansible_hostname
+          - worker_credentials[inventory_hostname]['worker_id'] == ansible_facts['hostname']
         fail_msg: "Worker-hostname endret seg etter preflight; installasjonen stoppes."
       no_log: true
 
   tasks:
     - name: Installer systempakker
       become: true
-      ansible.builtin.apt:
-        name:
-          - git
-          - python3
-          - python3-venv
-          - python3-packaging
+      ansible.builtin.package:
+        name: "{{ ['git', 'python3', 'python3-packaging'] + (['python3-venv'] if ansible_facts['os_family'] == 'Debian' else ['python3-pip']) }}"
         state: present
         update_cache: true
 
     - name: Hent eksakt controller-revisjon av Pi-display-lab
       ansible.builtin.git:
         repo: "{{ project_repository }}"
-        dest: "{{ ansible_user_dir }}/Pi-display-lab"
+        dest: "{{ ansible_facts['user_dir'] }}/Pi-display-lab"
         version: "{{ project_version }}"
         update: true
 
@@ -50,7 +50,7 @@
         argv:
           - git
           - -C
-          - "{{ ansible_user_dir }}/Pi-display-lab"
+          - "{{ ansible_facts['user_dir'] }}/Pi-display-lab"
           - rev-parse
           - HEAD
       register: worker_revision
@@ -65,20 +65,20 @@
     - name: Opprett virtuelt Python-miljø
       ansible.builtin.command:
         argv:
-          - python3
+          - /usr/bin/python3
           - -m
           - venv
-          - "{{ ansible_user_dir }}/Pi-display-lab/.venv"
-        creates: "{{ ansible_user_dir }}/Pi-display-lab/.venv/bin/python"
+          - "{{ ansible_facts['user_dir'] }}/Pi-display-lab/.venv"
+        creates: "{{ ansible_facts['user_dir'] }}/Pi-display-lab/.venv/bin/python"
 
     - name: Installer Python-avhengigheter
       ansible.builtin.pip:
-        requirements: "{{ ansible_user_dir }}/Pi-display-lab/requirements.txt"
-        virtualenv: "{{ ansible_user_dir }}/Pi-display-lab/.venv"
+        requirements: "{{ ansible_facts['user_dir'] }}/Pi-display-lab/requirements.txt"
+        virtualenv: "{{ ansible_facts['user_dir'] }}/Pi-display-lab/.venv"
 
     - name: Skriv lokal worker-konfigurasjon
       ansible.builtin.copy:
-        dest: "{{ ansible_user_dir }}/Pi-display-lab/config.local.json"
+        dest: "{{ ansible_facts['user_dir'] }}/Pi-display-lab/config.local.json"
         mode: "0600"
         content: |
           {
@@ -93,7 +93,7 @@
               "enabled": true,
               "coordinator_url": "https://{{ controller_host }}:{{ coordinator_port }}",
               "poll_interval_seconds": {{ worker_poll_interval }},
-              "worker_slots": {{ ansible_processor_vcpus | default(ansible_processor_count | default(0)) }},
+              "worker_slots": {{ ansible_facts['processor_vcpus'] | default(ansible_facts['processor_count'] | default(0)) }},
               "credentials_file": "{{ cluster_credentials_file }}",
               "tls_enabled": true,
               "ca_certificate_file": "{{ cluster_ca_file }}",
@@ -173,8 +173,8 @@
           [Service]
           Type=simple
           User={{ ansible_user }}
-          WorkingDirectory={{ ansible_user_dir }}/Pi-display-lab
-          ExecStart={{ ansible_user_dir }}/Pi-display-lab/.venv/bin/python {{ ansible_user_dir }}/Pi-display-lab/cluster_worker.py
+          WorkingDirectory={{ ansible_facts['user_dir'] }}/Pi-display-lab
+          ExecStart={{ ansible_facts['user_dir'] }}/Pi-display-lab/.venv/bin/python {{ ansible_facts['user_dir'] }}/Pi-display-lab/cluster_worker.py
           Restart=always
           RestartSec=3
           Environment=PYTHONUNBUFFERED=1
@@ -199,8 +199,8 @@
           [Service]
           Type=simple
           User={{ ansible_user }}
-          WorkingDirectory={{ ansible_user_dir }}/Pi-display-lab
-          ExecStart={{ ansible_user_dir }}/Pi-display-lab/.venv/bin/python {{ ansible_user_dir }}/Pi-display-lab/node_agent.py --server http://{{ controller_host }}:{{ app_port }}
+          WorkingDirectory={{ ansible_facts['user_dir'] }}/Pi-display-lab
+          ExecStart={{ ansible_facts['user_dir'] }}/Pi-display-lab/.venv/bin/python {{ ansible_facts['user_dir'] }}/Pi-display-lab/node_agent.py --server http://{{ controller_host }}:{{ app_port }}
           Restart=always
           RestartSec=5
           Environment=PYTHONUNBUFFERED=1
@@ -231,7 +231,7 @@
     - name: Verifiser HTTPS, CA, vertsnavn og worker-identitet
       ansible.builtin.command:
         argv:
-          - "{{ ansible_user_dir }}/Pi-display-lab/.venv/bin/python"
-          - "{{ ansible_user_dir }}/Pi-display-lab/scripts/verify-worker.py"
-          - "{{ ansible_user_dir }}/Pi-display-lab/config.local.json"
+          - "{{ ansible_facts['user_dir'] }}/Pi-display-lab/.venv/bin/python"
+          - "{{ ansible_facts['user_dir'] }}/Pi-display-lab/scripts/verify-worker.py"
+          - "{{ ansible_facts['user_dir'] }}/Pi-display-lab/config.local.json"
       changed_when: false

@@ -6,6 +6,7 @@ import getpass
 import json
 import os
 import re
+import shutil
 import socket
 import subprocess
 import sys
@@ -16,6 +17,8 @@ from pathlib import Path
 from typing import Any, Callable
 
 from cluster_pki import inspect_pki
+from cluster_bootstrap import inspect_worker, parallel, prepare_workers, prepare_removal, stop_removed_workers
+from cluster_install import PasswordBroker
 from config import (
     DEFAULT_CLUSTER_CA_FILE,
     DEFAULT_CLUSTER_CREDENTIALS_FILE,
@@ -24,6 +27,7 @@ from config import (
     ConfigValidationError,
     load_config,
     validate_controller_config,
+    _safe_host,
 )
 
 
@@ -148,6 +152,10 @@ def normalize_workers(workers: list[str]) -> list[str]:
     folded = [worker.casefold() for worker in cleaned]
     if len(set(folded)) != len(folded):
         raise ValueError("Samme worker kan ikke legges til flere ganger")
+    if len(cleaned) > 100:
+        raise ValueError("Clusteret kan ha høyst 100 workers")
+    if any(not _safe_host(host) or ":" in host for host in cleaned):
+        raise ValueError("Oppgi gyldige IPv4-adresser eller vertsnavn uten mellomrom")
     return cleaned
 
 
@@ -250,22 +258,55 @@ def ask_value(prompt: str, default: str, input_fn: InputFunction = input) -> str
     return input_fn(f"{prompt}{suffix}: ").strip() or default
 
 
-def ask_workers(input_fn: InputFunction = input) -> list[str]:
-    workers: list[str] = []
+def ask_workers(input_fn: InputFunction = input, *, maximum: int = 100,
+                existing: list[str] | None = None) -> list[str]:
+    if maximum < 1:
+        raise ValueError("Clusteret har allerede 100 workers")
     while True:
-        worker = input_fn(f"Adresse/hostname til worker {len(workers) + 1}:\n> ").strip()
-        if not worker:
-            if workers:
-                return workers
-            print("Minst én worker må legges til.")
-            continue
+        answer = input_fn(f"Hvor mange {'nye ' if existing else ''}workers vil du registrere (1–{maximum})? ").strip()
+        if answer.isdigit() and 1 <= int(answer) <= maximum:
+            count = int(answer)
+            break
+        print(f"Oppgi et heltall mellom 1 og {maximum}.")
+    print("Skriv eller lim inn adresser. Bruk mellomrom, komma, semikolon eller én adresse per linje.")
+    workers: list[str] = []
+    while len(workers) < count:
+        entered = input_fn(f"Workers {len(workers)}/{count}:\n> ").strip()
+        batch = [item for item in re.split(r"[\s,;]+", entered) if item]
         try:
-            workers = add_worker(workers, worker)
+            if not batch:
+                raise ValueError(f"Det mangler {count - len(workers)} adresser")
+            if len(workers) + len(batch) > count:
+                raise ValueError(f"Du oppga flere adresser enn de {count} som skal registreres")
+            normalize_workers([*(existing or []), *workers, *batch])
         except ValueError as error:
             print(f"! {error}")
             continue
-        if not yes_no("Legge til en worker til?", default=True, input_fn=input_fn):
+        workers.extend(batch)
+    return workers
+
+
+def ask_removals(workers: list[str], input_fn: InputFunction) -> list[str]:
+    for number, host in enumerate(workers, 1):
+        print(f"  {number}. {host}")
+    while True:
+        answer = input_fn("Numrene til workers som skal fjernes (tomt avbryter): ").strip()
+        if not answer:
             return workers
+        try:
+            selected = {int(item) for item in re.split(r"[\s,;]+", answer)}
+            if not selected or min(selected) < 1 or max(selected) > len(workers):
+                raise ValueError
+            remaining = [host for i, host in enumerate(workers, 1) if i not in selected]
+            if not remaining:
+                raise ValueError
+        except ValueError:
+            print("Velg gyldige nummer. Minst én worker må beholdes.")
+            continue
+        removed = [host for i, host in enumerate(workers, 1) if i in selected]
+        if yes_no("Fjerne og tilbakekalle tilgang for " + ", ".join(removed) + "?", default=False, input_fn=input_fn):
+            return remaining
+        return workers
 
 
 def _load_raw_config(path: Path) -> dict[str, Any]:
@@ -325,10 +366,45 @@ def _existing_config_choice(input_fn: InputFunction) -> str:
     print("\nEksisterende config.local.json ble funnet:")
     print("  1. Verifiser nåværende cluster")
     print("  2. Reinstaller/oppdater nåværende konfigurasjon")
-    print("  3. Endre workers")
+    print("  3. Legg til workers")
     print("  4. Endre controller/nettverksinnstillinger")
     print("  5. Avbryt")
+    print("  6. Fjern workers")
     return input_fn("> ").strip()
+
+
+def setup_firewall(raw: dict[str, Any], input_fn: InputFunction) -> None:
+    """Offer concrete rules when a supported local firewall is active."""
+    ports = [f"{raw['app_port']}/tcp", f"{raw['coordinator_port']}/tcp"]
+    if shutil.which("firewall-cmd"):
+        state = run_text(["sudo", "-n", "firewall-cmd", "--state"])
+        if state == "running":
+            active = run_text(["sudo", "-n", "firewall-cmd", "--get-active-zones"])
+            zones = [line.split()[0] for line in active.splitlines() if line and not line[0].isspace()]
+            if not zones:
+                raise RuntimeError("firewalld er aktiv uten kjent aktiv sone. Konfigurer lab-nettet før installasjon.")
+            print("\nAktive firewalld-soner:\n" + active)
+            while True:
+                zone = ask_value("Sonen som inneholder lab-nettet", zones[0], input_fn)
+                if zone in zones:
+                    break
+                print("Velg en av de aktive sonene over.")
+            if yes_no(f"Åpne {', '.join(ports)} i firewalld-sonen {zone}, også etter omstart?",
+                      default=False, input_fn=input_fn):
+                for port in ports:
+                    for persistence in ([], ["--permanent"]):
+                        subprocess.run(["sudo", "-n", "firewall-cmd", *persistence,
+                                        f"--zone={zone}", f"--add-port={port}"], check=True)
+            else:
+                print("Brannmuren beholdes. Sørg for at lab-nettet allerede har tilgang til disse portene.")
+            return
+    if shutil.which("ufw"):
+        status = run_text(["sudo", "-n", "env", "LC_ALL=C", "ufw", "status"])
+        if status.startswith("Status: active"):
+            if yes_no(f"UFW er aktiv. Tillate innkommende TCP til portene {', '.join(ports)} på koordinatoren?",
+                      default=False, input_fn=input_fn):
+                for port in ports:
+                    subprocess.run(["sudo", "-n", "ufw", "allow", port], check=True)
 
 
 def run_wizard(project_dir: str | Path, input_fn: InputFunction = input) -> int:
@@ -346,6 +422,9 @@ def run_wizard(project_dir: str | Path, input_fn: InputFunction = input) -> int:
     print("Denne maskinen blir CONTROLLER.")
     detected = detect_values(project)
     _print_detected(detected)
+    if run_text(["git", "status", "--porcelain"], project):
+        print("Prosjektet har lokale Git-endringer. Kontroller git status før klargjøring av noder.")
+        return 2
     config_path = project / "config.local.json"
     raw: dict[str, Any] | None = None
     mode = "fresh"
@@ -361,10 +440,10 @@ def run_wizard(project_dir: str | Path, input_fn: InputFunction = input) -> int:
         choice = _existing_config_choice(input_fn)
         if choice == "1":
             return subprocess.run(["bash", "scripts/verify-cluster.sh"], cwd=project).returncode
-        if choice == "5" or choice not in {"2", "3", "4"}:
-            print("Ingen endringer ble gjort.")
+        if choice == "5" or choice not in {"2", "3", "4", "6"}:
+            print("Ingen cluster-installasjon ble startet. Eventuell klargjøring er bevart.")
             return 0
-        mode = {"2": "reinstall", "3": "workers", "4": "network"}[choice]
+        mode = {"2": "reinstall", "3": "add", "4": "network", "6": "remove"}[choice]
 
     if raw is None:
         candidate = detected.lan_address
@@ -380,19 +459,19 @@ def run_wizard(project_dir: str | Path, input_fn: InputFunction = input) -> int:
         workers = ask_workers(input_fn)
         raw = build_controller_config(controller_host, ssh_user, workers)
     else:
-        if mode == "workers":
+        if mode == "add":
             current_workers = list(raw.get("worker_hosts") or [])
             print(f"Nåværende workers: {', '.join(current_workers)}")
-            requested = ask_workers(input_fn)
-            removed = [item for item in current_workers if item not in requested]
-            for worker in removed:
-                if not yes_no(
-                    f"Fjerne {worker} og tilbakekalle worker-tokenet?",
-                    default=False,
-                    input_fn=input_fn,
-                ):
-                    requested.append(worker)
-            raw["worker_hosts"] = normalize_workers(requested)
+            if len(current_workers) >= 100:
+                print("Clusteret har allerede 100 workers. Fjern en worker før du legger til flere.")
+                return 2
+            added = ask_workers(input_fn, maximum=100 - len(current_workers), existing=current_workers)
+            raw["worker_hosts"] = normalize_workers([*current_workers, *added])
+        elif mode == "remove":
+            raw["worker_hosts"] = ask_removals(list(raw.get("worker_hosts") or []), input_fn)
+            if raw["worker_hosts"] == original_workers:
+                print("Ingen workers ble fjernet.")
+                return 0
         elif mode == "network":
             raw["controller_host"] = ask_value(
                 "Controller-adresse/hostname", str(raw.get("controller_host", "")), input_fn
@@ -402,12 +481,34 @@ def run_wizard(project_dir: str | Path, input_fn: InputFunction = input) -> int:
             )
         raw = migrate_config(raw)
 
-    if yes_no("Aktivere tokenbeskyttelse for node-heartbeats?", default=True, input_fn=input_fn):
+    if mode not in {"add", "remove"} and yes_no("Aktivere tokenbeskyttelse for node-heartbeats?", default=True, input_fn=input_fn):
         raw["node_heartbeat_auth"] = True
     try:
+        load_config_from_payload(raw)
+        selected_workers = ([host for host in raw["worker_hosts"] if host not in original_workers]
+                            if mode == "add" else [] if mode == "remove" else list(raw["worker_hosts"]))
+        existing_nodes = {}
+        removed_passwords = {}
+        if mode in {"add", "remove"}:
+            remaining_original = [host for host in original_workers if host in raw["worker_hosts"]]
+            existing_nodes = parallel(remaining_original, lambda host: inspect_worker(
+                raw["ssh_user"], host, raw.get("ssh_identity_file", "")), "Kontrollerer eksisterende workers")
+            revision = run_text(["git", "rev-parse", "HEAD"], project)
+            outdated = [host for host in remaining_original if existing_nodes[host]["revision"] != revision]
+            if outdated:
+                print("Disse eksisterende workerne trenger samme versjon som koordinatoren: " + ", ".join(outdated))
+                if not yes_no("Oppdatere også disse under installasjonen?", default=True, input_fn=input_fn):
+                    print("Kjør update.sh for å oppdatere eksisterende cluster før du endrer workers.")
+                    return 0
+                selected_workers = [*outdated, *selected_workers]
+                existing_nodes = {host: node for host, node in existing_nodes.items() if host not in outdated}
+        if mode == "remove":
+            removed = [host for host in original_workers if host not in raw["worker_hosts"]]
+            removed_passwords = prepare_removal(raw, removed, input_fn)
+        sudo_passwords = prepare_workers(raw, selected_workers, existing_nodes=existing_nodes, input_fn=input_fn)
         workers_by_address = _preflight(project, raw)
-    except (ConfigValidationError, subprocess.CalledProcessError, OSError) as error:
-        print(f"\nPreflight stoppet før noen maskiner ble endret: {error}")
+    except (ConfigValidationError, subprocess.SubprocessError, OSError, RuntimeError) as error:
+        print(f"\nKlargjøringen stoppet: {error}\nSSH-nøkler og ferdige pakker er bevart for neste forsøk.")
         return 2
 
     settings = load_config_from_payload(raw)
@@ -444,7 +545,7 @@ def run_wizard(project_dir: str | Path, input_fn: InputFunction = input) -> int:
             input_fn=input_fn,
         )
         if not regenerate_server:
-            print("Ingen endringer ble gjort.")
+            print("Ingen cluster-installasjon ble startet. Eventuell klargjøring er bevart.")
             return 0
 
     app_listener = detect_port_listener(int(raw["app_port"]))
@@ -496,7 +597,7 @@ def run_wizard(project_dir: str | Path, input_fn: InputFunction = input) -> int:
     print(f"\nHeartbeat authentication:\n  {heartbeat_text}")
     print("\nController som compute-worker:\n  NEI")
     if not yes_no("\nFortsette installasjonen?", default=True, input_fn=input_fn):
-        print("Ingen endringer ble gjort.")
+        print("Ingen cluster-installasjon ble startet. Eventuell klargjøring er bevart.")
         return 0
 
     if listener and looks_like_old_coordinator(listener):
@@ -511,22 +612,33 @@ def run_wizard(project_dir: str | Path, input_fn: InputFunction = input) -> int:
             return 2
 
     write_local_config(config_path, raw)
+    try:
+        setup_firewall(raw, input_fn)
+    except (RuntimeError, subprocess.CalledProcessError) as error:
+        print(f"Brannmuroppsettet stoppet: {error}. Lokal config er bevart.")
+        return 2
     command = ["bash", "scripts/install-cluster.sh"]
     if regenerate_server:
         command.append("--regenerate-server-cert")
-    if mode == "workers":
-        added_workers = [
-            worker for worker in raw["worker_hosts"] if worker not in original_workers
-        ]
-        if added_workers:
-            for worker in added_workers:
+    if mode in {"add", "remove"}:
+        if selected_workers:
+            for worker in selected_workers:
                 command.extend(("--limit-worker", worker))
         else:
             command.append("--controller-only")
-    result = subprocess.run(command, cwd=project)
+    with tempfile.TemporaryDirectory(prefix="pi-display-setup-") as directory:
+        with PasswordBroker(Path(directory) / "sudo.sock", sudo_passwords) as broker:
+            command.extend(("--sudo-socket", str(broker.path)))
+            result = subprocess.run(command, cwd=project)
     if result.returncode:
         print("\nInstallasjonen ble ikke fullført. config.local.json er bevart for nytt forsøk.")
         return result.returncode
+    if mode == "remove":
+        stop_removed_workers(raw, removed_passwords)
+        print("\nFjernet fra clusteret og tilbakekalt tilgang: " + ", ".join(removed))
+        not_stopped = [host for host in removed if host not in removed_passwords]
+        if not_stopped:
+            print("Tjenestene ble ikke stoppet på: " + ", ".join(not_stopped) + ". Stopp dem lokalt når nodene er tilgjengelige.")
 
     commit = run_text(["git", "rev-parse", "--short", "HEAD"], project)
     print("\n" + "=" * 48)

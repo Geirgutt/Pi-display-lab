@@ -14,13 +14,17 @@ class InstallationWorkflowTests(unittest.TestCase):
     def test_installer_handles_local_and_worker_sudo_without_weakening_ssh(self) -> None:
         installer = self.read("scripts/install-cluster.sh")
         preflight = self.read("scripts/preflight-cluster.py")
-        self.assertIn("sudo -v", installer)
-        self.assertIn("--ask-become-pass", installer)
-        self.assertIn('for WORKER in "${WORKERS[@]}"', installer)
-        self.assertIn('--limit "$WORKER"', installer)
-        self.assertIn("StrictHostKeyChecking=yes", preflight)
-        self.assertNotIn("StrictHostKeyChecking=no", installer + preflight)
-        self.assertNotIn("ANSIBLE_HOST_KEY_CHECKING", installer + preflight)
+        session = self.read("scripts/sudo-session.sh")
+        runner = self.read("cluster_install.py")
+        transport = self.read("cluster_ssh.py")
+        self.assertIn("sudo_session_start", installer)
+        self.assertIn("sudo -v", session)
+        self.assertIn("sudo -n -v", session)
+        self.assertIn("cluster_install.py", installer)
+        self.assertIn('"--forks"', runner)
+        self.assertIn("StrictHostKeyChecking=yes", transport)
+        self.assertNotIn("StrictHostKeyChecking=no", installer + preflight + runner + transport)
+        self.assertNotIn("ANSIBLE_HOST_KEY_CHECKING", installer + preflight + runner + transport)
 
     def test_workers_are_pinned_and_receive_no_admin_token(self) -> None:
         installer = self.read("scripts/install-cluster.sh")
@@ -31,7 +35,7 @@ class InstallationWorkflowTests(unittest.TestCase):
         self.assertNotIn("admin_token", playbook)
         self.assertIn("no_log: true", playbook)
         self.assertIn('"https://{{ controller_host }}:{{ coordinator_port }}"', playbook)
-        self.assertIn('"worker_slots": {{ ansible_processor_vcpus', playbook)
+        self.assertIn('"worker_slots": {{ ansible_facts[\'processor_vcpus\']', playbook)
         self.assertNotIn("ca.key", playbook)
 
     def test_services_are_non_root_and_have_low_risk_hardening(self) -> None:
@@ -43,7 +47,7 @@ class InstallationWorkflowTests(unittest.TestCase):
                 "scripts/install-coordinator-service.sh",
             )
         )
-        self.assertIn("ansible_user_uid | int != 0", playbook)
+        self.assertIn("ansible_facts['user_uid'] | int != 0", playbook)
         self.assertIn("NoNewPrivileges=true", playbook)
         self.assertIn("User=$RUN_USER", controller_units)
         self.assertIn("NoNewPrivileges=true", controller_units)

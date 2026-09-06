@@ -74,6 +74,7 @@ def main() -> int:
         "version": 1,
         "admin_token": admin_token,
         "workers": worker_tokens,
+        "retired_workers": list(merged.retired_worker_ids),
     }
     if node_token:
         controller_payload["node_heartbeat_token"] = node_token

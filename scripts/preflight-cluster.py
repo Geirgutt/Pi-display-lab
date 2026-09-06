@@ -7,75 +7,17 @@ import argparse
 import json
 import os
 import socket
-import subprocess
+import shlex
 import sys
 from pathlib import Path
 
 PROJECT_DIR = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(PROJECT_DIR))
 
+from cluster_bootstrap import inspect_worker, known_host, parallel, ansible_target_python_limit, check_worker_python
+from cluster_ssh import ssh_run, require_ssh
 from cluster_auth import valid_worker_id  # noqa: E402
 from config import ConfigValidationError, validate_controller_config  # noqa: E402
-
-
-def _ssh_target(user: str, host: str) -> str:
-    return f"{user}@[{host}]" if ":" in host else f"{user}@{host}"
-
-
-def _ssh(user: str, host: str, *remote_command: str) -> str:
-    command = [
-        "ssh",
-        "-o",
-        "BatchMode=yes",
-        "-o",
-        "StrictHostKeyChecking=yes",
-        "-o",
-        "ConnectTimeout=8",
-        "-o",
-        "LogLevel=ERROR",
-        _ssh_target(user, host),
-        *remote_command,
-    ]
-    try:
-        result = subprocess.run(
-            command,
-            check=True,
-            capture_output=True,
-            text=True,
-            timeout=15,
-        )
-    except FileNotFoundError as error:
-        raise RuntimeError("Fant ikke ssh-klienten på controlleren") from error
-    except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as error:
-        stderr = getattr(error, "stderr", "") or ""
-        if "Host key verification failed" in stderr or "IDENTIFICATION HAS CHANGED" in stderr:
-            detail = (
-                "SSH host key er ikke godkjent. Koble manuelt til workeren, "
-                "kontroller fingerprint og godkjenn riktig nøkkel før du prøver igjen."
-            )
-        elif "Permission denied" in stderr:
-            detail = (
-                "SSH-nøkkelen ble avvist. Installer controller-brukerens offentlige "
-                f"SSH-nøkkel på workeren først med: ssh-copy-id {user}@{host}"
-            )
-        else:
-            detail = "SSH-kommandoen feilet eller brukte for lang tid."
-        raise RuntimeError(f"{host}: {detail}") from error
-    return result.stdout.strip()
-
-
-def _known_host(host: str) -> bool:
-    try:
-        result = subprocess.run(
-            ["ssh-keygen", "-F", host],
-            check=False,
-            capture_output=True,
-            text=True,
-            timeout=5,
-        )
-    except (FileNotFoundError, subprocess.TimeoutExpired):
-        return False
-    return result.returncode == 0 and bool(result.stdout.strip())
 
 
 def main() -> int:
@@ -95,45 +37,26 @@ def main() -> int:
             f"controller_host kan ikke slås opp lokalt: {settings.controller_host}"
         ) from error
 
-    identities: dict[str, str] = {}
-    for host in settings.worker_hosts:
-        print(f"\nTester {host} ...", flush=True)
-        try:
-            socket.getaddrinfo(host, 22)
-            print("✓ DNS/IP kan nås", flush=True)
-            if not _known_host(host):
-                raise RuntimeError(
-                    f"{host}: SSH host key er ikke godkjent. Kjør først:\n\n"
-                    f"ssh {settings.ssh_user}@{host}\n\n"
-                    "Kontroller fingerprint og svar yes hvis den er riktig."
-                )
-            print("✓ SSH host key er godkjent", flush=True)
-            identity = valid_worker_id(_ssh(settings.ssh_user, host, "hostname"))
-            if not identity:
-                raise RuntimeError(f"{host}: hostname er tomt eller ugyldig")
-            print("✓ SSH-nøkkel fungerer", flush=True)
-            print(f"✓ Hostname: {identity}", flush=True)
-            _ssh(settings.ssh_user, host, "command", "-v", "python3")
-            print("✓ Python finnes", flush=True)
-            _ssh(settings.ssh_user, host, "command", "-v", "sudo")
-            print("✓ sudo finnes", flush=True)
-            _ssh(settings.ssh_user, host, "command", "-v", "apt-get")
-            print("✓ apt-get finnes", flush=True)
-            _ssh(
-                settings.ssh_user,
-                host,
-                "getent",
-                "ahosts",
-                settings.controller_host,
-            )
-            print("✓ Controller-adressen kan slås opp fra workeren", flush=True)
-        except socket.gaierror as error:
-            raise SystemExit(
-                f"Preflight stoppet før workerne ble endret: {host} kan ikke slås opp"
-            ) from error
-        except RuntimeError as error:
-            raise SystemExit(f"Preflight stoppet før workerne ble endret: {error}") from error
-        identities[host] = identity
+    highest_python_minor = ansible_target_python_limit(PROJECT_DIR)
+
+    def check(host):
+        if not known_host(host):
+            raise RuntimeError("SSH-vertsnøkkel er ikke godkjent. Kjør bash scripts/setup-cluster.sh.")
+        node = inspect_worker(settings.ssh_user, host, settings.ssh_identity_file)
+        identity = valid_worker_id(node["hostname"])
+        if not identity:
+            raise RuntimeError("Worker-hostname er ugyldig")
+        check_worker_python(settings.ssh_user, host, settings.ssh_identity_file, highest_python_minor)
+        result = ssh_run(settings.ssh_user, host, "getent ahosts "
+                         + shlex.quote(settings.controller_host), identity_file=settings.ssh_identity_file)
+        require_ssh(result, host)
+        return identity
+
+    try:
+        checked = parallel(list(settings.worker_hosts), check, "Kontrollerer SSH, Python og controller-oppslag")
+    except RuntimeError as error:
+        raise SystemExit(f"Preflight stoppet: {error}") from None
+    identities = {host: checked[host] for host in settings.worker_hosts}
 
     if len(set(identities.values())) != len(identities):
         raise SystemExit("Preflight stoppet: flere workers rapporterer samme hostname")

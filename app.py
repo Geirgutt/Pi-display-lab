@@ -9,7 +9,7 @@ from typing import Any
 
 from flask import Flask, jsonify, render_template, request
 
-from cluster_auth import load_cluster_credentials
+from cluster_auth import load_cluster_credentials, valid_worker_id
 from cluster_client import (
     CoordinatorAuthenticationError,
     ClusterCoordinatorClient,
@@ -142,6 +142,8 @@ def create_app(
         body = request.get_json(silent=True)
         if not isinstance(body, dict):
             return jsonify({"ok": False, "error": "Forventet et JSON-objekt"}), 400
+        if valid_worker_id(body.get("node_id")) in cluster_credentials.retired_worker_ids:
+            return jsonify({"ok": False, "error": "Denne workeren er fjernet fra clusteret"}), 403
         try:
             node = dashboard.register_node(body, request.remote_addr)
         except ValueError as error:
@@ -215,6 +217,21 @@ def create_app(
         except CoordinatorUnavailable:
             cluster_status.invalidate()
         dashboard.set_screen("cluster")
+        return jsonify(result), 202
+
+    @app.post("/api/cluster/cancel/<int:batch_id>")
+    def cancel_cluster_batch(batch_id: int) -> Any:
+        if not cluster.config.enabled:
+            return jsonify({"ok": False, "error": "Cluster-integrasjonen er deaktivert"}), 409
+        try:
+            result = cluster.cancel_batch(batch_id)
+            cluster_status.store(cluster.fetch_status())
+        except CoordinatorAuthenticationError:
+            cluster_status.mark_unavailable("authentication_failed")
+            return jsonify({"ok": False, "error": "Coordinator avviste lokal admin-credential"}), 502
+        except CoordinatorUnavailable:
+            cluster_status.mark_unavailable()
+            return jsonify({"ok": False, "error": "Cluster coordinator svarer ikke"}), 502
         return jsonify(result), 202
 
     @app.post("/api/update/check")

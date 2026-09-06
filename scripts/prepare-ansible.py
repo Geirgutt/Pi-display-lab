@@ -40,6 +40,9 @@ def main() -> int:
     os.chmod(output_dir / "inventory.ini", 0o600)
 
     variables = {
+        "ansible_connection": "ansible.builtin.ssh",
+        # Use the same system Python that worker bootstrap and preflight validate.
+        "ansible_python_interpreter": "/usr/bin/python3",
         "project_repository": "https://github.com/Geirgutt/Pi-display-lab.git",
         "project_version": args.revision,
         "controller_host": settings.controller_host,
@@ -49,6 +52,9 @@ def main() -> int:
         "cluster_credentials_file": settings.cluster.credentials_file,
         "cluster_ca_file": settings.cluster.ca_certificate_file,
     }
+    if settings.ssh_identity_file:
+        variables["ansible_ssh_private_key_file"] = settings.ssh_identity_file
+        variables["ansible_ssh_common_args"] = "-o IdentitiesOnly=yes -o StrictHostKeyChecking=yes"
     (output_dir / "vars.json").write_text(
         json.dumps(variables, indent=2) + "\n",
         encoding="utf-8",
