@@ -27,6 +27,9 @@ dashboard engine or control/RPC service is included. The optional secure
 telemetry foundation and its measured trade-offs are documented in
 [docs/security-milestone.md](docs/security-milestone.md).
 
+The first Linux/Raspberry Pi telemetry sender and the one-node Cluster page are
+documented in [docs/telemetry-milestone.md](docs/telemetry-milestone.md).
+
 The first LovyanGFX-only application dashboard is documented in
 [docs/ui-milestone.md](docs/ui-milestone.md). It is built into all four
 environments; Wi-Fi and BLE remain compile-time optional.

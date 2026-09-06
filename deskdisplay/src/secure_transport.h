@@ -13,6 +13,7 @@ struct Counters
     uint32_t malformed = 0;
     uint32_t unauthorized = 0;
     uint32_t reconnects = 0;
+    uint32_t transportFailures = 0;
 };
 
 void begin();
@@ -25,5 +26,6 @@ bool enabled();
 bool connected();
 void printStatus(Print& out);
 const secure_protocol::Telemetry& lastTelemetry();
+uint32_t lastTelemetryAt();
 const Counters& counters();
 }

@@ -28,6 +28,16 @@ void refreshState()
     model.wifiRssi = wifi.rssi;
     strncpy(model.ip, wifi.ip, sizeof(model.ip));
     model.ip[sizeof(model.ip) - 1] = 0;
+    const secure_transport::Counters& secureStats = secure_transport::counters();
+    if (secureStats.accepted != model.nodeAccepted)
+    {
+        model.nodeTelemetry = secure_transport::lastTelemetry();
+        model.nodeAccepted = secureStats.accepted;
+    }
+    model.nodeLastUpdate = secure_transport::lastTelemetryAt();
+    model.nodeOnline = model.nodeLastUpdate != 0
+                    && uint32_t(millis() - model.nodeLastUpdate) < 5000
+                    && model.nodeTelemetry.online;
 }
 
 uint8_t hit(int16_t x, int16_t y)
@@ -37,7 +47,13 @@ uint8_t hit(int16_t x, int16_t y)
         if (y >= 325 && y < 379) return x < 240 ? 1 : 2;
         if (y >= 397 && y < 451) return x < 240 ? 3 : 4;
     }
-    else if (y >= 380 && y < 434 && x >= 145 && x < 335) return model.page == app_state::Page::System ? 5 : 6;
+    else if (model.page == app_state::Page::System && y >= 325 && y < 379 && x >= 35 && x < 225)
+        return 5;
+    else if (model.page == app_state::Page::System && y >= 380 && y < 434 && x >= 145 && x < 335)
+        return 6;
+    else if ((model.page == app_state::Page::Cluster || model.page == app_state::Page::TouchTest)
+             && y >= 380 && y < 434 && x >= 145 && x < 335)
+        return 7;
     return 0;
 }
 
@@ -56,8 +72,9 @@ void action(uint8_t button)
     case 2: model.page = app_state::Page::System; model.pressedButton = 0; ui::page(model); break;
     case 3: model.backlightOn = !model.backlightOn; hardware::setBacklight(model.backlightOn); break;
     case 4: model.page = app_state::Page::TouchTest; model.pressedButton = 0; ui::page(model); break;
-    case 5:
-    case 6: model.page = app_state::Page::Dashboard; model.pressedButton = 0; ui::page(model); break;
+    case 5: model.page = app_state::Page::Cluster; model.pressedButton = 0; ui::page(model); break;
+    case 6:
+    case 7: model.page = app_state::Page::Dashboard; model.pressedButton = 0; ui::page(model); break;
     default: break;
     }
 }
@@ -141,7 +158,10 @@ void app::service()
     {
         nextTelemetry = now + 1000;
         refreshState();
-        if (model.page == app_state::Page::Dashboard || model.page == app_state::Page::System) ui::telemetry(model);
+        if (model.page == app_state::Page::Dashboard
+            || model.page == app_state::Page::System
+            || model.page == app_state::Page::Cluster)
+            ui::telemetry(model);
     }
     delay(20);
 }

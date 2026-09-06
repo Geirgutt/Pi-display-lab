@@ -11,6 +11,7 @@
 #include <Preferences.h>
 #include <IPAddress.h>
 #include <esp_system.h>
+#include <mbedtls/net_sockets.h>
 
 namespace
 {
@@ -31,6 +32,7 @@ bool requested = false;
 bool sessionActive = false;
 uint32_t nextConnect = 0;
 uint32_t lastRx = 0;
+uint32_t lastValidTelemetry = 0;
 uint64_t lastSequence = 0;
 uint8_t frame[secure_protocol::maxFrameSize] = {};
 size_t frameLength = 0;
@@ -96,6 +98,35 @@ void loadConfiguration()
     preferences.end();
 }
 
+bool isTransportError(int errorCode)
+{
+    switch (errorCode)
+    {
+    case 0:
+    case -1:
+    case MBEDTLS_ERR_NET_SOCKET_FAILED:
+    case MBEDTLS_ERR_NET_CONNECT_FAILED:
+    case MBEDTLS_ERR_NET_RECV_FAILED:
+    case MBEDTLS_ERR_NET_SEND_FAILED:
+    case MBEDTLS_ERR_NET_CONN_RESET:
+    case MBEDTLS_ERR_NET_UNKNOWN_HOST:
+    case MBEDTLS_ERR_NET_POLL_FAILED:
+    case MBEDTLS_ERR_NET_INVALID_CONTEXT:
+    case MBEDTLS_ERR_NET_BAD_INPUT_DATA:
+        return true;
+    default:
+        return false;
+    }
+}
+
+void formatTemperature(int16_t temperatureTenths, char* output, size_t capacity)
+{
+    if (temperatureTenths == secure_protocol::temperatureUnavailable)
+        snprintf(output, capacity, "N/A");
+    else
+        snprintf(output, capacity, "%.1fC", temperatureTenths / 10.0f);
+}
+
 bool processFrame()
 {
     if (frameLength < secure_protocol::frameSize) return true;
@@ -127,10 +158,13 @@ bool processFrame()
     }
     lastSequence = sequence;
     latest = value;
+    lastValidTelemetry = millis();
     ++stats.accepted;
-    Serial.printf("Secure telemetry seq=%llu host=%s cpu=%.1f%% temp=%.1fC ram=%.1f%% up=%us online=%u\n",
+    char temperature[16];
+    formatTemperature(latest.temperatureTenths, temperature, sizeof(temperature));
+    Serial.printf("Secure telemetry seq=%llu host=%s cpu=%.1f%% temp=%s ram=%.1f%% up=%us online=%u\n",
                   static_cast<unsigned long long>(sequence), latest.hostname,
-                  latest.cpuTenths / 10.0f, latest.temperatureTenths / 10.0f,
+                  latest.cpuTenths / 10.0f, temperature,
                   latest.ramTenths / 10.0f, latest.uptimeSeconds, latest.online ? 1 : 0);
     clearFrame();
     return true;
@@ -156,7 +190,7 @@ void serviceSession()
         const int amount = client.read(frame + frameLength, room);
         if (amount < 0)
         {
-            ++stats.authFailures;
+            ++stats.transportFailures;
             closeSession(true);
             return;
         }
@@ -212,9 +246,16 @@ void secure_transport::service()
     Serial.printf("Secure TLS connection to %s:%u...\n", peerAddress, peerPort);
     if (!client.connect(address, peerPort))
     {
-        ++stats.authFailures;
+        char errorText[64] = {};
+        const int errorCode = client.lastError(errorText, sizeof(errorText));
+        // The wrapper returns -1 for socket setup/connect/timeout failures and
+        // can return the mbedTLS network errors below. Other negative values
+        // are TLS setup/handshake failures.
+        if (isTransportError(errorCode)) ++stats.transportFailures;
+        else ++stats.authFailures;
         nextConnect = millis() + reconnectMs;
-        Serial.println("Secure TLS connection failed; retrying.");
+        Serial.printf("Secure TLS connection failed (%d%s%s); retrying.\n",
+                      errorCode, errorText[0] ? ": " : "", errorText);
         return;
     }
     sessionActive = true;
@@ -274,22 +315,26 @@ bool secure_transport::setPeer(const char* address, uint16_t port)
 bool secure_transport::enabled() { return requested; }
 bool secure_transport::connected() { return sessionActive && client.connected(); }
 const secure_protocol::Telemetry& secure_transport::lastTelemetry() { return latest; }
+uint32_t secure_transport::lastTelemetryAt() { return lastValidTelemetry; }
 const secure_transport::Counters& secure_transport::counters() { return stats; }
 
 void secure_transport::printStatus(Print& out)
 {
-    out.printf("Secure: %s, key=%u peer=%u, peer=%s:%u, accepted=%lu auth-fail=%lu replay=%lu malformed=%lu unauthorized=%lu reconnects=%lu\n",
+    out.printf("Secure: %s, key=%u peer=%u, peer=%s:%u, accepted=%lu auth-fail=%lu transport-fail=%lu replay=%lu malformed=%lu unauthorized=%lu reconnects=%lu\n",
                connected() ? "connected" : (requested ? "waiting" : "off"),
                keyAvailable ? 1 : 0, peerAddress[0] ? 1 : 0,
                peerAddress[0] ? peerAddress : "-", peerPort,
                static_cast<unsigned long>(stats.accepted), static_cast<unsigned long>(stats.authFailures),
+               static_cast<unsigned long>(stats.transportFailures),
                static_cast<unsigned long>(stats.replayDrops), static_cast<unsigned long>(stats.malformed),
                static_cast<unsigned long>(stats.unauthorized),
                static_cast<unsigned long>(stats.reconnects));
     if (stats.accepted)
     {
-        out.printf("Last telemetry: host=%s cpu=%.1f%% temp=%.1fC ram=%.1f%% up=%us online=%u\n",
-                   latest.hostname, latest.cpuTenths / 10.0f, latest.temperatureTenths / 10.0f,
+        char temperature[16];
+        formatTemperature(latest.temperatureTenths, temperature, sizeof(temperature));
+        out.printf("Last telemetry: host=%s cpu=%.1f%% temp=%s ram=%.1f%% up=%us online=%u\n",
+                   latest.hostname, latest.cpuTenths / 10.0f, temperature,
                    latest.ramTenths / 10.0f, latest.uptimeSeconds, latest.online ? 1 : 0);
     }
 }
@@ -310,6 +355,7 @@ const secure_protocol::Telemetry& secure_transport::lastTelemetry()
     static secure_protocol::Telemetry value;
     return value;
 }
+uint32_t secure_transport::lastTelemetryAt() { return 0; }
 const secure_transport::Counters& secure_transport::counters()
 {
     static secure_transport::Counters value;

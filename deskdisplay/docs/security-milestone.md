@@ -22,9 +22,25 @@ now physically verified:
 - no visible PSRAM leak during testing
 
 Display, touch and existing Wi-Fi behavior remained available during the secure
-transport test. No visible PSRAM regression was observed. Exact runtime heap,
-minimum-heap, largest-block and update-rate measurements should still be added
-when the next long-duration resource run is performed.
+transport test. No visible PSRAM regression was observed. The longer telemetry
+run below adds the first measured active-session heap and PSRAM values.
+
+The subsequent secure telemetry run physically verified the application path
+and measured approximately 248.8 KB free internal heap during the active TLS
+session, 239.2–239.5 KB minimum heap, a 233460-byte largest block, 476004 bytes
+of PSRAM used and a 946400-byte sketch. With the peer unavailable, free heap
+returned to about 284144 bytes; after automatic reconnect it returned to about
+248816 bytes. The Cluster page, sequence handling, offline timeout and
+reconnect remained stable.
+
+The final telemetry retest confirmed the corrected secure path on the real
+device: the hostname displayed exactly `fedora`, TLS reconnect restored live
+telemetry after `secure_peer` was restarted, and Wi-Fi, UI and touch remained
+responsive. Active telemetry measured about 248800 bytes free internal heap,
+239184 bytes minimum heap, a 233460-byte largest block and 476004 bytes of
+PSRAM used, with no progressive loss. Temperature no longer uses the Fedora
+`acpitz` value (observed as a constant 25.0 C); recognized CPU/package sources
+varied approximately 57–69 C, and unsupported hosts display `N/A`.
 
 ## Baseline inspected
 
@@ -109,7 +125,7 @@ Wi-Fi+BLE builds. PlatformIO sizes from the current clean build are:
 | Build | Flash | Static RAM | Change |
 |---|---:|---:|---:|
 | UI Wi-Fi baseline | 788533 bytes | 45172 bytes | — |
-| UI secure Wi-Fi | 944969 bytes | 47896 bytes | +156436 flash / +2724 RAM |
+| UI secure Wi-Fi | 946405 bytes | 47968 bytes | +157872 flash / +2796 RAM |
 
 The default UI build remains 373209 bytes flash / 20676 bytes static RAM; the
 secure source stubs add only 52 flash bytes and no static RAM. The connected TLS
@@ -205,11 +221,16 @@ the secure status counters.
 
 ## Remaining risks and next step
 
-The current Arduino wrapper does not expose a detailed TLS alert classification,
-so `auth-fail` counts failed secure connection attempts (including some TCP or
-peer-unavailable failures), not only wrong-key alerts. The test peer is a single
-PSK identity and the ESP32 trusts the configured endpoint by address; LAN DNS,
-discovery and multi-peer authorization are intentionally absent.
+The installed Arduino wrapper exposes `WiFiClientSecure::lastError()` but does
+not expose a detailed TLS alert classification. The transport treats `0`/`-1`
+and the wrapper's mbedTLS socket/connect/send/receive/reset errors as
+`transport-fail`; other negative mbedTLS results during TLS setup/handshake are
+counted as `auth-fail`. Errors while reading an established session are counted
+as transport failures because the wrapper does not expose their individual
+record-layer cause. A wrong-PSK test is still required to confirm the expected
+`auth-fail` classification on the device. The test peer is a single PSK identity
+and the ESP32 trusts the configured endpoint by address; LAN DNS, discovery and
+multi-peer authorization are intentionally absent.
 
 The next milestone should physically validate this secure build and measure
 handshake/connected resource cost. After that, add a small telemetry page fed

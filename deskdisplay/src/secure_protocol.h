@@ -20,6 +20,7 @@ constexpr size_t payloadSize = 1 + hostnameMax + 2 + 2 + 2 + 4 + 1;
 constexpr size_t headerSize = 2 + 1 + 1 + 2 + 8;
 constexpr size_t frameSize = headerSize + payloadSize;
 constexpr size_t maxFrameSize = 128;
+constexpr int16_t temperatureUnavailable = INT16_MIN;
 
 struct Telemetry
 {

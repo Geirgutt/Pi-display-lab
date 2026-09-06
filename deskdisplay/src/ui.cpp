@@ -53,6 +53,35 @@ void header(const char* title)
     display().setTextSize(2);
     display().drawString(title, 340, 19);
 }
+
+void nodeTelemetry(const app_state::Model& model)
+{
+    const secure_protocol::Telemetry& node = model.nodeTelemetry;
+    char line[48];
+    display().fillRect(28, 80, 424, 27, background);
+    snprintf(line, sizeof(line), "%s", node.hostname[0] ? node.hostname : "No node data");
+    label(line, 32, 84, 2, muted);
+    valueRow("Status", model.nodeOnline ? "ONLINE" : "OFFLINE", 120,
+             model.nodeOnline ? good : warning);
+    snprintf(line, sizeof(line), "%u.%u %%", node.cpuTenths / 10, node.cpuTenths % 10);
+    valueRow("CPU", line, 151);
+    if (node.temperatureTenths == secure_protocol::temperatureUnavailable)
+        valueRow("Temp", "N/A", 182, muted);
+    else
+    {
+        snprintf(line, sizeof(line), "%d.%d C", node.temperatureTenths / 10,
+                 abs(node.temperatureTenths % 10));
+        valueRow("Temp", line, 182);
+    }
+    snprintf(line, sizeof(line), "%u.%u %%", node.ramTenths / 10, node.ramTenths % 10);
+    valueRow("RAM", line, 213);
+    const uint32_t days = node.uptimeSeconds / 86400;
+    const uint32_t hours = (node.uptimeSeconds / 3600) % 24;
+    const uint32_t minutes = (node.uptimeSeconds / 60) % 60;
+    if (days > 0) snprintf(line, sizeof(line), "%ud %02uh %02um", days, hours, minutes);
+    else snprintf(line, sizeof(line), "%uh %02um", hours, minutes);
+    valueRow("Uptime", line, 244);
+}
 }
 
 void ui::begin(const app_state::Model& model) { page(model); }
@@ -86,7 +115,15 @@ void ui::page(const app_state::Model& model)
         snprintf(line, sizeof(line), "%llu s", static_cast<unsigned long long>(model.diagnostics.uptimeMs / 1000));
         valueRow("Uptime", line, 213);
         label("Serial `d` still prints the full report.", 32, 285, 1, muted);
-        button(5, "Back", 145, 380, model.pressedButton == 5);
+        button(5, "Cluster", 35, 325, model.pressedButton == 5);
+        button(6, "Back", 145, 380, model.pressedButton == 6);
+    }
+    else if (model.page == app_state::Page::Cluster)
+    {
+        header("Cluster");
+        display().fillRoundRect(20, 72, 440, 270, 10, card);
+        nodeTelemetry(model);
+        button(7, "Back", 145, 380, model.pressedButton == 7);
     }
     else
     {
@@ -95,7 +132,7 @@ void ui::page(const app_state::Model& model)
         label("Primary contact", 32, 84, 2, muted);
         touch(model);
         label("Raw coordinates are shown without calibration changes.", 32, 274, 1, muted);
-        button(6, "Back", 145, 380, model.pressedButton == 6);
+        button(7, "Back", 145, 380, model.pressedButton == 7);
     }
 }
 
@@ -112,6 +149,11 @@ void ui::telemetry(const app_state::Model& model)
         valueRow("PSRAM free", line, 182);
         snprintf(line, sizeof(line), "%llu s", static_cast<unsigned long long>(model.diagnostics.uptimeMs / 1000));
         valueRow("Uptime", line, 213);
+        return;
+    }
+    if (model.page == app_state::Page::Cluster)
+    {
+        nodeTelemetry(model);
         return;
     }
     if (model.wifiConnected)
@@ -160,5 +202,10 @@ void ui::pressed(const app_state::Model& model)
         button(3, "Backlight", 35, 397, model.pressedButton == 3);
         button(4, "Touch Test", 255, 397, model.pressedButton == 4);
     }
-    else button(model.pressedButton, "Back", 145, 380, model.pressedButton != 0);
+    else if (model.page == app_state::Page::System)
+    {
+        button(5, "Cluster", 35, 325, model.pressedButton == 5);
+        button(6, "Back", 145, 380, model.pressedButton == 6);
+    }
+    else button(7, "Back", 145, 380, model.pressedButton == 7);
 }

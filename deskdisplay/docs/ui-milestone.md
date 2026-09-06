@@ -161,20 +161,8 @@ test passed without a display, touch, radio, responsiveness or memory regression
 
 ## Next milestone
 
-The proposed next milestone is one external Linux/Raspberry Pi telemetry page.
-Before implementation, compare a small UDP datagram, an HTTP endpoint and a TCP
-stream. The current recommendation is a versioned, bounded UDP packet sent at
-about 1 Hz, parsed in the existing loop without a new task. A compact line such
-as `DD1|host=pi4|cpu=23.4|temp=47.2|ram=38.1|up=123456|online=1` avoids a JSON
-library and keeps the ESP32 side small. Include a sequence number or sender
-uptime, reject oversized/malformed packets, and mark the host offline after a
-short missed-packet timeout while retaining the last values for display.
-
-The Linux sender can be a small Python program using `psutil` and the standard
-library UDP socket. HTTP would be easier to inspect manually but requires an
-ESP32 server, request parsing and more idle resources. TCP adds connection state
-without helping this one-way, periodic data flow. The UDP design should be
-measured in the next milestone; a reasonable initial estimate is a few KB of
-flash, less than 1 KB of fixed application buffer/state, no additional task and
-little CPU work at 1 Hz, while the already-running Wi-Fi stack remains the
-largest radio cost. No telemetry code is included yet.
+The secure one-node Linux/Raspberry Pi telemetry page is implemented in
+[docs/telemetry-milestone.md](telemetry-milestone.md). It keeps the existing
+TLS stream and fixed frame rather than adding a second transport. A later
+milestone can measure multi-node state and provisioning once this first real
+telemetry path has been physically tested.

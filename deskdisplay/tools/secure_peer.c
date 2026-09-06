@@ -10,6 +10,7 @@
 #define _POSIX_C_SOURCE 200809L
 
 #include <arpa/inet.h>
+#include <dirent.h>
 #include <errno.h>
 #include <fcntl.h>
 #include <netinet/in.h>
@@ -122,22 +123,83 @@ static uint16_t read_ram_tenths(void)
     return (uint16_t)(((total - available) * 1000u) / total);
 }
 
+static int read_millidegrees(const char* path, int16_t* result)
+{
+    FILE* file = fopen(path, "r");
+    if (!file) return 0;
+    long millidegrees = 0;
+    const int ok = fscanf(file, "%ld", &millidegrees) == 1;
+    fclose(file);
+    if (!ok || millidegrees < -100000 || millidegrees > 200000) return 0;
+    *result = (int16_t)(millidegrees / 100);
+    return 1;
+}
+
+static int read_text(const char* path, char* result, size_t capacity)
+{
+    FILE* file = fopen(path, "r");
+    if (!file) return 0;
+    const int ok = fgets(result, (int)capacity, file) != NULL;
+    fclose(file);
+    if (!ok) return 0;
+    result[strcspn(result, "\r\n")] = 0;
+    return result[0] != 0;
+}
+
+static int is_cpu_thermal_type(const char* type)
+{
+    return !strcmp(type, "cpu-thermal") || !strcmp(type, "cpu_thermal")
+        || !strcmp(type, "bcm2835_thermal") || !strcmp(type, "x86_pkg_temp")
+        || !strcmp(type, "soc-thermal") || !strcmp(type, "soc_thermal");
+}
+
+static int is_cpu_hwmon(const char* name)
+{
+    return !strcmp(name, "coretemp") || !strcmp(name, "k10temp")
+        || !strcmp(name, "zenpower") || !strcmp(name, "cpu_thermal")
+        || !strcmp(name, "cpu-thermal") || !strcmp(name, "bcm2835_thermal");
+}
+
 static int16_t read_temperature_tenths(void)
 {
-    const char* paths[] = {
-        "/sys/class/thermal/thermal_zone0/temp",
-        "/sys/class/hwmon/hwmon0/temp1_input",
-    };
-    for (size_t i = 0; i < sizeof(paths) / sizeof(paths[0]); ++i)
+    DIR* thermal = opendir("/sys/class/thermal");
+    if (thermal)
     {
-        FILE* file = fopen(paths[i], "r");
-        if (!file) continue;
-        long millidegrees = 0;
-        const int ok = fscanf(file, "%ld", &millidegrees) == 1;
-        fclose(file);
-        if (ok) return (int16_t)(millidegrees / 100);
+        struct dirent* entry = NULL;
+        while ((entry = readdir(thermal)) != NULL)
+        {
+            if (strncmp(entry->d_name, "thermal_zone", 12) != 0) continue;
+            char typePath[512], tempPath[512], type[64];
+            snprintf(typePath, sizeof(typePath), "/sys/class/thermal/%s/type", entry->d_name);
+            if (!read_text(typePath, type, sizeof(type)) || !is_cpu_thermal_type(type)) continue;
+            snprintf(tempPath, sizeof(tempPath), "/sys/class/thermal/%s/temp", entry->d_name);
+            int16_t value = 0;
+            if (read_millidegrees(tempPath, &value)) { closedir(thermal); return value; }
+        }
+        closedir(thermal);
     }
-    return -10;
+
+    DIR* hwmon = opendir("/sys/class/hwmon");
+    if (hwmon)
+    {
+        struct dirent* entry = NULL;
+        while ((entry = readdir(hwmon)) != NULL)
+        {
+            if (strncmp(entry->d_name, "hwmon", 5) != 0) continue;
+            char namePath[512], name[64];
+            snprintf(namePath, sizeof(namePath), "/sys/class/hwmon/%s/name", entry->d_name);
+            if (!read_text(namePath, name, sizeof(name)) || !is_cpu_hwmon(name)) continue;
+            for (unsigned sensor = 1; sensor <= 16; ++sensor)
+            {
+                char tempPath[512];
+                snprintf(tempPath, sizeof(tempPath), "/sys/class/hwmon/%s/temp%u_input", entry->d_name, sensor);
+                int16_t value = 0;
+                if (read_millidegrees(tempPath, &value)) { closedir(hwmon); return value; }
+            }
+        }
+        closedir(hwmon);
+    }
+    return INT16_MIN;
 }
 
 static int send_all(SSL* ssl, const unsigned char* data, size_t length)
