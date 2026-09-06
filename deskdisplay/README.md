@@ -23,7 +23,9 @@ pio run -e guition-4848s040-wifi
 
 See [foundation and hardware tests](docs/foundation.md) and the
 [pre-change resource baseline](docs/baseline.md). No web server, LVGL, OTA,
-dashboard engine, telemetry protocol or BLE service is included.
+dashboard engine or control/RPC service is included. The optional secure
+telemetry foundation and its measured trade-offs are documented in
+[docs/security-milestone.md](docs/security-milestone.md).
 
 The first LovyanGFX-only application dashboard is documented in
 [docs/ui-milestone.md](docs/ui-milestone.md). It is built into all four

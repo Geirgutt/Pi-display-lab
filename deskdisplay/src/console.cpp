@@ -3,6 +3,7 @@
 #include "hardware.h"
 #include "network.h"
 #include "ble_test.h"
+#include "secure_transport.h"
 
 namespace
 {
@@ -46,6 +47,21 @@ void execute()
             : "Configuration failed (SSID 1-32 bytes, WPA password 8-63 bytes).");
     }
 #endif
+#if DESKDISPLAY_SECURE && DESKDISPLAY_WIFI
+    else if (!strcmp(line, "secure start")) Serial.println(secure_transport::start() ? "Secure transport requested." : "Secure start failed; configure key and peer first.");
+    else if (!strcmp(line, "secure stop")) { secure_transport::stop(); Serial.println("Secure transport stopped."); }
+    else if (!strcmp(line, "secure status")) secure_transport::printStatus(Serial);
+    else if (!strncmp(line, "secure key ", 11)) Serial.println(secure_transport::setKeyHex(line + 11) ? "Secure PSK stored." : "Invalid PSK; expected exactly 64 hexadecimal characters.");
+    else if (!strncmp(line, "secure peer ", 12))
+    {
+        char* separator = strchr(line + 12, ' ');
+        if (!separator) { Serial.println("Expected secure peer IPv4 PORT"); return; }
+        *separator = 0;
+        const long port = strtol(separator + 1, nullptr, 10);
+        Serial.println(port > 0 && port <= 65535 && secure_transport::setPeer(line + 12, static_cast<uint16_t>(port))
+            ? "Secure peer stored." : "Invalid secure peer.");
+    }
+#endif
     else if (length) Serial.println("Unknown command; use ?");
 }
 }
@@ -65,6 +81,9 @@ void console::help()
 #endif
 #if DESKDISPLAY_BLE
     Serial.println("BLE: ble start, ble stop, ble status (inactive at boot; d=resources)");
+#endif
+#if DESKDISPLAY_SECURE && DESKDISPLAY_WIFI
+    Serial.println("Secure: secure key <64 hex>, secure peer IPv4 PORT, secure start, secure stop, secure status");
 #endif
 }
 

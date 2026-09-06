@@ -7,6 +7,7 @@
 #include "touch.h"
 #include "ui.h"
 #include "ble_test.h"
+#include "secure_transport.h"
 #include <Arduino.h>
 
 namespace
@@ -114,6 +115,7 @@ bool app::begin()
     hardware::setBacklight(true);
     Serial.println("Display initialized.");
     Serial.println(touch::begin() ? "Touch initialized (raw coordinates)." : "Touch initialization failed; display remains available.");
+    secure_transport::begin();
     refreshState();
     ui::begin(model);
     nextTelemetry = millis() + 1000;
@@ -130,6 +132,9 @@ void app::service()
 #endif
 #if DESKDISPLAY_WIFI
     network::service();
+#endif
+#if DESKDISPLAY_SECURE && DESKDISPLAY_WIFI
+    secure_transport::service();
 #endif
     const uint32_t now = millis();
     if (static_cast<int32_t>(now - nextTelemetry) >= 0)
