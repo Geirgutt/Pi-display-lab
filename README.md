@@ -9,6 +9,23 @@ for WebSocket: løsningen blir mindre, lettere å forstå og stabil på en eldre
 Senere kan samme JSON-state sendes til en fysisk ESP32-S3 uten å skrive om
 målinger eller beregningslogikk.
 
+## DeskDisplay-firmware
+
+Dette er også hovedlageret for DeskDisplay-firmwareprosjektet. Den eksisterende
+Pi Display Lab-strukturen ligger fortsatt i repository-roten; firmwareprosjektet
+ligger separat under `deskdisplay/`.
+
+Bygg firmware fra prosjektmappen:
+
+```bash
+cd deskdisplay
+pio run -e guition-4848s040
+```
+
+De valgfrie Wi-Fi-, BLE-, Wi-Fi+BLE- og secure-miljøene er definert i
+`deskdisplay/platformio.ini`. Ikke legg PSK-er, lokale credentials,
+PlatformIO-buildfiler eller firmware-backuper i Git.
+
 ## Dette får du
 
 - **Home:** klokke, CPU-bruk, CPU-temperatur, RAM, CPU-frekvens, strupestatus
