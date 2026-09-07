@@ -29,6 +29,8 @@ telemetry foundation and its measured trade-offs are documented in
 
 The first Linux/Raspberry Pi telemetry sender and the one-node Cluster page are
 documented in [docs/telemetry-milestone.md](docs/telemetry-milestone.md).
+The one-worker bootstrap service and the server-side training provider test are
+documented in [docs/one-pi-telemetry-service.md](docs/one-pi-telemetry-service.md).
 
 The first LovyanGFX-only application dashboard is documented in
 [docs/ui-milestone.md](docs/ui-milestone.md). It is built into all four

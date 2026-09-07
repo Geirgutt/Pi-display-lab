@@ -6,8 +6,9 @@ en emulert **480 × 320 TFT-skjerm** i nettleseren.
 
 Første versjon bruker enkel polling hvert sekund. Det er bevisst valgt i stedet
 for WebSocket: løsningen blir mindre, lettere å forstå og stabil på en eldre Pi.
-Senere kan samme JSON-state sendes til en fysisk ESP32-S3 uten å skrive om
-målinger eller beregningslogikk.
+Web og DeskDisplay har hver sin presentasjon av de samme systembegrepene. Web
+bruker `DashboardState`, mens den første fysiske DeskDisplay-telemetrien bruker
+den verifiserte secure peer-protokollen.
 
 ## DeskDisplay-firmware
 
@@ -33,6 +34,7 @@ PlatformIO-buildfiler eller firmware-backuper i Git.
 - **Cluster:** ekte Pi-noder samt kø, aktive primtalls- og Monte Carlo-jobber,
   workers og resultathistorikk fra den separate coordinator-tjenesten.
 - **Nerd:** Monte Carlo-estimat av pi med levende sirkelgrafikk for treff og bom.
+- **Training:** lokal/mock treningsstate med dagens økt, kommende økter og siste aktivitet.
 - **Developer controls:** permanent nodestatus, valg av clusterkapasitet og
   oppstart av Monte Carlo- og primtallsbatcher på workerne.
 - **Mock-modus:** test hele prosjektet på Windows uten Raspberry Pi.
@@ -611,13 +613,14 @@ alltid tegne siste melding uten å måtte huske en lang historikk.
 | `config.py` | Validerer lokal config og gir sikre standardverdier |
 | `display_state.py` | Leser sensorer, holder noderegister og bygger felles dashboard-state |
 | `node_agent.py` | Sender systemmålinger fra en ekstra Raspberry Pi |
+| `training.py` | Provider-grense og normalisert lokal/mock treningsstate |
 | `scripts/setup-cluster.py` | Norsk veiviser og normal installasjonsvei |
 | `scripts/` | Lavnivåverktøy for installasjon, PKI, verifisering og oppdatering |
 | `ansible/` | Ruller worker-kode og tjenester ut over eksisterende SSH-nøkler |
 | `updates.py` | Sjekker `origin/main` og lager lenke til en tilgjengelig commit |
 | `transports.py` | Felles `DeviceTransport`, nettlesertransport og ESP32-stub |
 | `templates/index.html` | Selve nettsidens struktur |
-| `static/app.js` | Henter state og tegner de tre skjermbildene |
+| `static/app.js` | Henter state og tegner de fire skjermbildene |
 | `static/style.css` | Farger, TFT-ramme, layout og responsiv skalering |
 | `tests/` | Små kontroller av API, beregningsjobb og transportlag |
 | `requirements.txt` | Den eneste Python-avhengigheten: Flask |
@@ -678,7 +681,7 @@ TODO for neste etappe:
 4. Test først meldingen med en MQTT-klient på PC.
 5. Lag ESP32-S3-firmware som kobler til Wi-Fi og abonnerer på topicet.
 6. Parse `protocol_version`, `screen`, `nodes`, `network`, `demo` og `message`.
-7. Lag tre ESP32-renderere som tilsvarer nettleserens tre renderere.
+7. Lag små ESP32-renderere som tilsvarer de relevante nettleser-rendererne.
 8. Legg til reconnect, «ingen data»-skjerm og tidsstempelkontroll.
 
 Andre muligheter er WebSocket, rå TCP eller USB-serial. WebSocket er fint for

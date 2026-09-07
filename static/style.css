@@ -1028,9 +1028,75 @@ h1 {
 .node-throttle.history { color: var(--amber); }
 .node-throttle.ok { color: #609a91; }
 
+.training-layout {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 8px;
+  padding-top: 11px;
+}
+
+.training-card,
+.training-empty {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  padding: 10px;
+  border: 1px solid #203642;
+  border-radius: 5px;
+  background: rgba(12, 27, 35, 0.78);
+}
+
+.training-card-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.training-title {
+  color: #dce8ec;
+  font-size: 13px;
+}
+
+.training-date,
+.training-details,
+.training-source {
+  color: #78909d;
+  font-size: 8px;
+}
+
+.training-upcoming {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.training-upcoming .training-card {
+  padding: 7px 10px;
+}
+
+.training-empty {
+  justify-content: center;
+  min-height: 80px;
+  color: #78909d;
+  text-align: center;
+}
+
+.training-empty strong {
+  color: var(--amber);
+  font-size: 12px;
+}
+
+.training-source {
+  margin-top: auto;
+  padding-top: 4px;
+  letter-spacing: 0.1em;
+}
+
 .screen-buttons {
   display: grid;
-  grid-template-columns: repeat(3, 1fr);
+  grid-template-columns: repeat(4, 1fr);
   gap: 8px;
 }
 

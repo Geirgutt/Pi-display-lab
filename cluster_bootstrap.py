@@ -374,7 +374,7 @@ def prepare_removal(payload, removed, input_fn=input):
 
 def stop_removed_workers(payload, passwords):
     script = r'''set -eu
-for service in cluster-worker.service pi-display-node-agent.service; do
+for service in cluster-worker.service pi-display-node-agent.service deskdisplay-secure-peer.service; do
   if systemctl cat "$service" >/dev/null 2>&1; then
     systemctl disable --now "$service"
   fi

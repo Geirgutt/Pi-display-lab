@@ -24,6 +24,7 @@ void clear()
 void execute()
 {
     if (!strcmp(line, "d")) diagnostics::print(Serial);
+    else if (!strcmp(line, "b")) Serial.printf("Brightness: %u%%\n", hardware::cycleBrightness());
     else if (!strcmp(line, "0")) hardware::setBacklight(false);
     else if (!strcmp(line, "1")) hardware::setBacklight(true);
     else if (!strcmp(line, "?")) console::help();
@@ -68,7 +69,7 @@ void execute()
 
 void console::help()
 {
-    Serial.println("Commands (Enter to submit): d=diagnostics, 0/1=backlight off/on, ?=help");
+    Serial.println("Commands (Enter to submit): d=diagnostics, b=cycle brightness, 0/1=backlight off/on, ?=help");
 #if DESKDISPLAY_WIFI
     Serial.println("Wi-Fi: w=start stored, s=status/IP/RSSI, x=stop, forget=erase station credentials");
     Serial.println("Set credentials: wifi SSID<TAB>PASSWORD (literal tab, no quotes; not echoed)");

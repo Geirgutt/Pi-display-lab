@@ -24,6 +24,7 @@ from config import (
     DEFAULT_CLUSTER_CREDENTIALS_FILE,
     DEFAULT_COORDINATOR_CERT_FILE,
     DEFAULT_COORDINATOR_KEY_FILE,
+    DEFAULT_DESKDISPLAY_PSK_FILE,
     ConfigValidationError,
     load_config,
     validate_controller_config,
@@ -133,6 +134,12 @@ def build_controller_config(
         "coordinator_port": coordinator_port,
         "app_port": app_port,
         "node_heartbeat_auth": node_heartbeat_auth,
+        "deskdisplay": {
+            "enabled": False,
+            "worker": "",
+            "port": 4567,
+            "psk_file": DEFAULT_DESKDISPLAY_PSK_FILE,
+        },
         "cluster": {
             "enabled": True,
             "coordinator_url": f"https://{controller_host.strip()}:{coordinator_port}",
@@ -198,6 +205,15 @@ def migrate_config(raw: dict[str, Any]) -> dict[str, Any]:
     migrated["node_role"] = "controller"
     migrated["cluster"] = cluster
     migrated.setdefault("node_heartbeat_auth", True)
+    migrated.setdefault(
+        "deskdisplay",
+        {
+            "enabled": False,
+            "worker": "",
+            "port": 4567,
+            "psk_file": DEFAULT_DESKDISPLAY_PSK_FILE,
+        },
+    )
     return migrated
 
 
@@ -595,6 +611,12 @@ def run_wizard(project_dir: str | Path, input_fn: InputFunction = input) -> int:
     print("\nCluster encryption:\n  HTTPS / TLS aktivert")
     heartbeat_text = "aktivert" if raw.get("node_heartbeat_auth") is True else "deaktivert"
     print(f"\nHeartbeat authentication:\n  {heartbeat_text}")
+    deskdisplay = raw.get("deskdisplay") or {}
+    if deskdisplay.get("enabled") is True:
+        print(
+            "\nDeskDisplay secure telemetry:\n"
+            f"  {deskdisplay.get('worker')} · TCP {deskdisplay.get('port', 4567)}"
+        )
     print("\nController som compute-worker:\n  NEI")
     if not yes_no("\nFortsette installasjonen?", default=True, input_fn=input_fn):
         print("Ingen cluster-installasjon ble startet. Eventuell klargjøring er bevart.")
@@ -648,6 +670,8 @@ def run_wizard(project_dir: str | Path, input_fn: InputFunction = input) -> int:
     for address in raw["worker_hosts"]:
         identity = workers_by_address.get(address, address)
         print(f"\n{identity}:\n✓ SSH\n✓ Worker\n✓ Node agent\n✓ Worker token\n✓ TLS verification")
+        if deskdisplay.get("enabled") is True and address.casefold() == str(deskdisplay.get("worker", "")).casefold():
+            print("✓ DeskDisplay secure telemetry")
     print(f"\nVersion:\n✓ alle noder kjører commit {commit}")
     print(f"\nDashboard:\nhttp://{raw['controller_host']}:{raw['app_port']}")
     print(f"\nCoordinator:\nhttps://{raw['controller_host']}:{raw['coordinator_port']}")

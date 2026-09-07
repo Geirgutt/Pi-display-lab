@@ -44,6 +44,13 @@ void button(uint8_t id, const char* caption, int16_t x, int16_t y, bool active)
     (void)id;
 }
 
+void brightnessButton(const app_state::Model& model)
+{
+    char caption[20];
+    snprintf(caption, sizeof(caption), "Bright %u%%", model.brightnessPercent);
+    button(3, caption, 35, 397, model.pressedButton == 3);
+}
+
 void header(const char* title)
 {
     display().fillRect(0, 0, width, headerHeight, 0x0841);
@@ -97,7 +104,7 @@ void ui::page(const app_state::Model& model)
         telemetry(model);
         button(1, "Wi-Fi", 35, 325, model.pressedButton == 1);
         button(2, "System", 255, 325, model.pressedButton == 2);
-        button(3, "Backlight", 35, 397, model.pressedButton == 3);
+        brightnessButton(model);
         button(4, "Touch Test", 255, 397, model.pressedButton == 4);
     }
     else if (model.page == app_state::Page::System)
@@ -116,6 +123,7 @@ void ui::page(const app_state::Model& model)
         valueRow("Uptime", line, 213);
         label("Serial `d` still prints the full report.", 32, 285, 1, muted);
         button(5, "Cluster", 35, 325, model.pressedButton == 5);
+        button(8, "Training", 255, 325, model.pressedButton == 8);
         button(6, "Back", 145, 380, model.pressedButton == 6);
     }
     else if (model.page == app_state::Page::Cluster)
@@ -123,6 +131,18 @@ void ui::page(const app_state::Model& model)
         header("Cluster");
         display().fillRoundRect(20, 72, 440, 270, 10, card);
         nodeTelemetry(model);
+        button(7, "Back", 145, 380, model.pressedButton == 7);
+    }
+    else if (model.page == app_state::Page::Training)
+    {
+        header("Training");
+        display().fillRoundRect(20, 72, 440, 270, 10, card);
+        label("Server-side training state", 32, 84, 2, muted);
+        valueRow("Status", "PLACEHOLDER", 120, warning);
+        valueRow("Source", "WEB PROVIDER", 151, muted);
+        label("Live training data will arrive with", 32, 204, 1, muted);
+        label("a future compact DeskDisplay transport.", 32, 220, 1, muted);
+        label("No Garmin login or scraping runs here.", 32, 252, 1, muted);
         button(7, "Back", 145, 380, model.pressedButton == 7);
     }
     else
@@ -199,13 +219,19 @@ void ui::pressed(const app_state::Model& model)
     {
         button(1, "Wi-Fi", 35, 325, model.pressedButton == 1);
         button(2, "System", 255, 325, model.pressedButton == 2);
-        button(3, "Backlight", 35, 397, model.pressedButton == 3);
+        brightnessButton(model);
         button(4, "Touch Test", 255, 397, model.pressedButton == 4);
     }
     else if (model.page == app_state::Page::System)
     {
         button(5, "Cluster", 35, 325, model.pressedButton == 5);
+        button(8, "Training", 255, 325, model.pressedButton == 8);
         button(6, "Back", 145, 380, model.pressedButton == 6);
     }
     else button(7, "Back", 145, 380, model.pressedButton == 7);
+}
+
+void ui::brightness(const app_state::Model& model)
+{
+    brightnessButton(model);
 }

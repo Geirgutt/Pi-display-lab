@@ -15,6 +15,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+from training import TrainingProvider, load_training_provider
+
 def decode_throttle_flags(flags: int, available: bool = True) -> dict[str, Any]:
     """Gjør Raspberry Pi-bitfeltet lesbart for API og grensesnitt."""
 
@@ -324,11 +326,12 @@ class NodeRegistry:
 class DashboardState:
     """Samler all state i ett stabilt, skjerm-uavhengig JSON-format."""
 
-    SCREENS = {"home", "cluster", "nerd"}
+    SCREENS = {"home", "cluster", "nerd", "training"}
 
-    def __init__(self, mock_mode: bool = False) -> None:
+    def __init__(self, mock_mode: bool = False, training_provider: TrainingProvider | None = None) -> None:
         self.monitor = SystemMonitor(mock_mode=mock_mode)
         self.nodes = NodeRegistry()
+        self.training_provider = training_provider or load_training_provider(mock_mode)
         self.mock_mode = mock_mode
         self._screen = "home"
         self._lock = threading.Lock()
@@ -462,6 +465,7 @@ class DashboardState:
                 "running_jobs": [],
                 "results": [],
             },
+            "training": self.training_provider.snapshot(),
             "message": message,
             "mock_mode": self.mock_mode,
             "backend": f"Python {sys.version_info.major}.{sys.version_info.minor}",
@@ -524,6 +528,21 @@ class DashboardState:
                         "prime_count": 8013,
                     }
                 ],
+            },
+            "training": {
+                "available": True,
+                "source": "mock",
+                "updated_at": "2026-09-07T12:34:56+02:00",
+                "today": {
+                    "date": "2026-09-07",
+                    "title": "Base Run",
+                    "activity_type": "Run",
+                    "duration_minutes": 42,
+                    "distance_km": None,
+                },
+                "upcoming": [],
+                "last_activity": None,
+                "error": None,
             },
             "message": "Ready",
         }

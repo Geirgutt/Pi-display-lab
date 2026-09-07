@@ -38,6 +38,22 @@ class InstallationWorkflowTests(unittest.TestCase):
         self.assertIn('"worker_slots": {{ ansible_facts[\'processor_vcpus\']', playbook)
         self.assertNotIn("ca.key", playbook)
 
+    def test_deskdisplay_sender_is_optional_and_limited_to_one_worker(self) -> None:
+        playbook = self.read("ansible/install-workers.yml")
+        secrets = self.read("scripts/generate-cluster-secrets.py")
+        config = self.read("config.py")
+        self.assertIn("deskdisplay/tools/secure_peer.c", playbook)
+        self.assertIn("deskdisplay-secure-peer.service", playbook)
+        self.assertIn("inventory_hostname == deskdisplay_worker", playbook)
+        self.assertIn("force: false", playbook)
+        self.assertIn("state: absent", playbook)
+        self.assertIn("register: deskdisplay_build", playbook)
+        self.assertIn("Stopp hvis secure-peer-byggingen feilet", playbook)
+        self.assertIn("service_facts", playbook)
+        self.assertIn("deskdisplay-secure-peer.service", playbook)
+        self.assertIn("deskdisplay_peer_psk", secrets)
+        self.assertIn("DEFAULT_DESKDISPLAY_PSK_FILE", config)
+
     def test_services_are_non_root_and_have_low_risk_hardening(self) -> None:
         playbook = self.read("ansible/install-workers.yml")
         controller_units = "".join(

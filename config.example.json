@@ -9,6 +9,12 @@
   "coordinator_port": 5001,
   "app_port": 5000,
   "node_heartbeat_auth": true,
+  "deskdisplay": {
+    "enabled": false,
+    "worker": "worker-01.local",
+    "port": 4567,
+    "psk_file": "/etc/pi-display-lab/deskdisplay-peer.psk"
+  },
   "cluster": {
     "enabled": false,
     "coordinator_url": "https://controller.local:5001",

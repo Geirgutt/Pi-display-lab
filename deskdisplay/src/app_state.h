@@ -5,7 +5,7 @@
 
 namespace app_state
 {
-enum class Page : uint8_t { Dashboard, System, TouchTest, Cluster };
+enum class Page : uint8_t { Dashboard, System, TouchTest, Cluster, Training };
 
 struct Model
 {
@@ -20,7 +20,7 @@ struct Model
     int16_t touchX = -1;
     int16_t touchY = -1;
     uint8_t pressedButton = 0;
-    bool backlightOn = true;
+    uint8_t brightnessPercent = 100;
     secure_protocol::Telemetry nodeTelemetry{};
     uint32_t nodeLastUpdate = 0;
     uint32_t nodeAccepted = 0;

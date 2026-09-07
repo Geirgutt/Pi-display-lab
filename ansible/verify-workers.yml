@@ -2,6 +2,9 @@
 - name: Verifiser Pi Display Lab cluster-workers
   hosts: cluster_workers
   gather_facts: true
+  vars:
+    deskdisplay_enabled: false
+    deskdisplay_worker: ""
 
   tasks:
     - name: Les workerens Git-revisjon
@@ -30,6 +33,15 @@
       loop:
         - cluster-worker.service
         - pi-display-node-agent.service
+      changed_when: false
+
+    - name: Les DeskDisplay secure-peer-status når den er konfigurert
+      ansible.builtin.command:
+        argv:
+          - systemctl
+          - is-active
+          - deskdisplay-secure-peer.service
+      when: deskdisplay_enabled | bool and inventory_hostname == deskdisplay_worker
       changed_when: false
 
     - name: Verifiser HTTPS/CA og worker-identitet

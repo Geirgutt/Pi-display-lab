@@ -26,6 +26,7 @@ void refreshState()
     model.wifiConnected = wifi.connected;
     model.wifiStatus = wifi.status;
     model.wifiRssi = wifi.rssi;
+    model.brightnessPercent = hardware::brightness();
     strncpy(model.ip, wifi.ip, sizeof(model.ip));
     model.ip[sizeof(model.ip) - 1] = 0;
     const secure_transport::Counters& secureStats = secure_transport::counters();
@@ -47,11 +48,12 @@ uint8_t hit(int16_t x, int16_t y)
         if (y >= 325 && y < 379) return x < 240 ? 1 : 2;
         if (y >= 397 && y < 451) return x < 240 ? 3 : 4;
     }
-    else if (model.page == app_state::Page::System && y >= 325 && y < 379 && x >= 35 && x < 225)
-        return 5;
+    else if (model.page == app_state::Page::System && y >= 325 && y < 379)
+        return x < 240 ? 5 : 8;
     else if (model.page == app_state::Page::System && y >= 380 && y < 434 && x >= 145 && x < 335)
         return 6;
-    else if ((model.page == app_state::Page::Cluster || model.page == app_state::Page::TouchTest)
+    else if ((model.page == app_state::Page::Cluster || model.page == app_state::Page::TouchTest
+              || model.page == app_state::Page::Training)
              && y >= 380 && y < 434 && x >= 145 && x < 335)
         return 7;
     return 0;
@@ -70,9 +72,13 @@ void action(uint8_t button)
         ui::telemetry(model);
         break;
     case 2: model.page = app_state::Page::System; model.pressedButton = 0; ui::page(model); break;
-    case 3: model.backlightOn = !model.backlightOn; hardware::setBacklight(model.backlightOn); break;
+    case 3:
+        model.brightnessPercent = hardware::cycleBrightness();
+        ui::brightness(model);
+        break;
     case 4: model.page = app_state::Page::TouchTest; model.pressedButton = 0; ui::page(model); break;
     case 5: model.page = app_state::Page::Cluster; model.pressedButton = 0; ui::page(model); break;
+    case 8: model.page = app_state::Page::Training; model.pressedButton = 0; ui::page(model); break;
     case 6:
     case 7: model.page = app_state::Page::Dashboard; model.pressedButton = 0; ui::page(model); break;
     default: break;

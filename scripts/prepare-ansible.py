@@ -51,6 +51,10 @@ def main() -> int:
         "worker_poll_interval": settings.cluster.poll_interval_seconds,
         "cluster_credentials_file": settings.cluster.credentials_file,
         "cluster_ca_file": settings.cluster.ca_certificate_file,
+        "deskdisplay_enabled": settings.deskdisplay.enabled,
+        "deskdisplay_worker": settings.deskdisplay.worker,
+        "deskdisplay_port": settings.deskdisplay.port,
+        "deskdisplay_psk_file": settings.deskdisplay.psk_file,
     }
     if settings.ssh_identity_file:
         variables["ansible_ssh_private_key_file"] = settings.ssh_identity_file

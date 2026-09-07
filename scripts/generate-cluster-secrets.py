@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import sys
 from pathlib import Path
 
@@ -23,6 +24,19 @@ from config import validate_controller_config  # noqa: E402
 def _write_private_json(path: Path, payload: dict[str, object]) -> None:
     path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
     os.chmod(path, 0o600)
+
+
+def _read_deskdisplay_psk(path: str) -> str:
+    try:
+        content = Path(path).read_text(encoding="ascii")
+    except (OSError, UnicodeError) as error:
+        raise SystemExit(
+            f"Mangler DeskDisplay-PSK-filen utenfor prosjektet: {path}"
+        ) from error
+    compact = "".join(content.split())
+    if re.fullmatch(r"[0-9a-fA-F]{64}", compact) is None:
+        raise SystemExit("DeskDisplay-PSK-filen må inneholde nøyaktig 64 hex-tegn")
+    return compact.lower()
 
 
 def main() -> int:
@@ -87,6 +101,9 @@ def main() -> int:
         }
         for host, identity in normalized.items()
     }
+    deskdisplay_psk = None
+    if settings.deskdisplay.enabled:
+        deskdisplay_psk = _read_deskdisplay_psk(settings.deskdisplay.psk_file)
     ca_certificate_path = output_dir / "ca.crt"
     try:
         ca_certificate = ca_certificate_path.read_text(encoding="ascii")
@@ -94,16 +111,16 @@ def main() -> int:
         raise SystemExit("Mangler klargjort offentlig CA-sertifikat") from error
     if "BEGIN CERTIFICATE" not in ca_certificate:
         raise SystemExit("Klargjort offentlig CA-sertifikat er ugyldig")
-    _write_private_json(
-        output_dir / "worker-secrets.json",
-        {
-            "worker_credentials": worker_credentials,
-            "node_heartbeat_enabled": settings.node_heartbeat_auth,
-            "node_heartbeat_token": node_token,
-            # Bare offentlig CA-sertifikat distribueres. CA-nøkkelen leses aldri her.
-            "cluster_ca_certificate": ca_certificate,
-        },
-    )
+    worker_secrets: dict[str, object] = {
+        "worker_credentials": worker_credentials,
+        "node_heartbeat_enabled": settings.node_heartbeat_auth,
+        "node_heartbeat_token": node_token,
+        # Bare offentlig CA-sertifikat distribueres. CA-nøkkelen leses aldri her.
+        "cluster_ca_certificate": ca_certificate,
+    }
+    if deskdisplay_psk is not None:
+        worker_secrets["deskdisplay_peer_psk"] = deskdisplay_psk
+    _write_private_json(output_dir / "worker-secrets.json", worker_secrets)
 
     if node_token:
         environment_file = output_dir / "node-heartbeat.env"

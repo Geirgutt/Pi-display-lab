@@ -74,6 +74,8 @@ class AppSmokeTests(unittest.TestCase):
         payload = response.get_json()
         for key in ("protocol_version", "screen", "time", "nodes", "cluster", "message"):
             self.assertIn(key, payload)
+        self.assertIn("training", payload)
+        self.assertEqual(payload["training"]["source"], "mock")
         self.assertEqual(len(payload["nodes"]), 1)
         self.assertEqual(payload["nodes"][0]["kind"], "local")
         self.assertIn("frequency_mhz", payload["system"])
@@ -139,6 +141,10 @@ class AppSmokeTests(unittest.TestCase):
 
         invalid = self.client.post("/api/screen", json={"screen": "moon"})
         self.assertEqual(invalid.status_code, 400)
+
+        training = self.client.post("/api/screen", json={"screen": "training"})
+        self.assertEqual(training.status_code, 200)
+        self.assertEqual(training.get_json()["state"]["screen"], "training")
 
     def test_demo_is_submitted_to_workers_instead_of_running_locally(self) -> None:
         coordinator = FakeClusterCoordinator()

@@ -440,6 +440,83 @@ function renderNerd(payload) {
   drawMonteCarlo(canvas, demo.points || []);
 }
 
+function trainingDate(value) {
+  if (!value) return "—";
+  const parsed = new Date(`${value}T12:00:00`);
+  return Number.isNaN(parsed.getTime())
+    ? value
+    : parsed.toLocaleDateString("nb-NO", { weekday: "short", day: "numeric", month: "short" });
+}
+
+function trainingDuration(minutes) {
+  return minutes === null || minutes === undefined ? "" : `${Number(minutes)} min`;
+}
+
+function trainingWorkoutCard(workout, label = "") {
+  const card = element("article", "training-card");
+  const heading = element("div", "training-card-heading");
+  heading.append(
+    element("span", "screen-overline", label),
+    element("time", "training-date", trainingDate(workout.date)),
+  );
+  const title = element("strong", "training-title", workout.title);
+  const details = [workout.activity_type, trainingDuration(workout.duration_minutes),
+    workout.distance_km === null || workout.distance_km === undefined ? "" : `${workout.distance_km} km`]
+    .filter(Boolean).join(" · ");
+  card.append(heading, title, element("span", "training-details", details || "Workout"));
+  return card;
+}
+
+function trainingActivityCard(activity) {
+  const card = element("article", "training-card last-activity");
+  const heading = element("div", "training-card-heading");
+  heading.append(element("span", "screen-overline", "LAST ACTIVITY"));
+  const details = [
+    activity.distance_km === null || activity.distance_km === undefined ? "" : `${activity.distance_km} km`,
+    activity.duration_seconds === null || activity.duration_seconds === undefined
+      ? ""
+      : `${Math.floor(Number(activity.duration_seconds) / 60)}:${String(Math.floor(Number(activity.duration_seconds) % 60)).padStart(2, "0")}`,
+    activity.average_pace_min_per_km === null || activity.average_pace_min_per_km === undefined
+      ? ""
+      : `${Number(activity.average_pace_min_per_km).toFixed(2)} min/km`,
+    activity.average_hr === null || activity.average_hr === undefined ? "" : `${Number(activity.average_hr)} bpm`,
+  ].filter(Boolean).join(" · ");
+  card.append(
+    heading,
+    element("strong", "training-title", activity.activity_type),
+    element("time", "training-date", trainingDate(activity.date)),
+    element("span", "training-details", details || "No activity metrics"),
+  );
+  return card;
+}
+
+function renderTraining(payload) {
+  const training = payload.training || { available: false, upcoming: [] };
+  const fragment = document.createDocumentFragment();
+  fragment.append(screenHeader("TRAINING", payload.time, training.available));
+  const body = element("section", "training-layout");
+  if (!training.available) {
+    const empty = element("div", "training-empty");
+    empty.append(
+      element("strong", "", "NO TRAINING PROVIDER"),
+      element("span", "", training.error || "Configure PI_DISPLAY_TRAINING_FILE to load local data."),
+    );
+    body.append(empty);
+  } else {
+    if (training.today) body.append(trainingWorkoutCard(training.today, "TODAY"));
+    else body.append(element("div", "training-empty", "NO WORKOUT TODAY"));
+    const upcoming = element("section", "training-upcoming");
+    upcoming.append(element("span", "screen-overline", "NEXT WORKOUTS"));
+    (training.upcoming || []).slice(0, 3).forEach((workout) => upcoming.append(trainingWorkoutCard(workout)));
+    if (!training.upcoming?.length) upcoming.append(element("span", "training-details", "No upcoming workouts"));
+    body.append(upcoming);
+    if (training.last_activity) body.append(trainingActivityCard(training.last_activity));
+  }
+  body.append(element("span", "training-source", `SOURCE · ${training.source || "NONE"}`));
+  fragment.append(body);
+  ui.screenContent.replaceChildren(fragment);
+}
+
 function fillSlotOptions(select, available) {
   const previous = Number(select.value || 1);
   const preferred = [1, 2, 4, 6, 8].filter((value) => value <= available);
@@ -509,7 +586,7 @@ function updateClusterControls(payload) {
 }
 
 function render(payload) {
-  const renderers = { home: renderHome, cluster: renderCluster, nerd: renderNerd };
+  const renderers = { home: renderHome, cluster: renderCluster, nerd: renderNerd, training: renderTraining };
   (renderers[payload.screen] || renderHome)(payload);
 
   ui.screenButtons.forEach((button) => {

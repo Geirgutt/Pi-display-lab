@@ -15,6 +15,7 @@ DEFAULT_CLUSTER_CREDENTIALS_FILE = "/etc/pi-display-lab/cluster-credentials.json
 DEFAULT_CLUSTER_CA_FILE = "/etc/pi-display-lab/pki/ca.crt"
 DEFAULT_COORDINATOR_CERT_FILE = "/etc/pi-display-lab/pki/coordinator.crt"
 DEFAULT_COORDINATOR_KEY_FILE = "/etc/pi-display-lab/pki/coordinator.key"
+DEFAULT_DESKDISPLAY_PSK_FILE = "/etc/pi-display-lab/deskdisplay-peer.psk"
 
 
 class ConfigValidationError(ValueError):
@@ -35,8 +36,19 @@ class ClusterConfig:
 
 
 @dataclass(frozen=True)
+class DeskDisplayConfig:
+    """Optional one-worker secure sender configuration."""
+
+    enabled: bool = False
+    worker: str = ""
+    port: int = 4567
+    psk_file: str = DEFAULT_DESKDISPLAY_PSK_FILE
+
+
+@dataclass(frozen=True)
 class AppConfig:
     cluster: ClusterConfig = field(default_factory=ClusterConfig)
+    deskdisplay: DeskDisplayConfig = field(default_factory=DeskDisplayConfig)
     node_role: str = "standalone"
     controller_host: str = "127.0.0.1"
     worker_hosts: tuple[str, ...] = ()
@@ -124,6 +136,7 @@ def load_config(path: str | Path | None = None) -> AppConfig:
         return AppConfig()
 
     cluster = raw.get("cluster") if isinstance(raw.get("cluster"), dict) else {}
+    deskdisplay = raw.get("deskdisplay") if isinstance(raw.get("deskdisplay"), dict) else {}
     coordinator_url = _valid_coordinator_url(cluster.get("coordinator_url"))
     poll_interval = cluster.get("poll_interval_seconds", 2.0)
     if isinstance(poll_interval, bool) or not isinstance(poll_interval, (int, float)):
@@ -170,6 +183,14 @@ def load_config(path: str | Path | None = None) -> AppConfig:
             ),
             worker_slots=worker_slots,
         ),
+        deskdisplay=DeskDisplayConfig(
+            enabled=deskdisplay.get("enabled") is True,
+            worker=_safe_host(deskdisplay.get("worker")),
+            port=_safe_port(deskdisplay.get("port"), 4567),
+            psk_file=_safe_private_file(
+                deskdisplay.get("psk_file"), DEFAULT_DESKDISPLAY_PSK_FILE
+            ),
+        ),
         node_role=role,
         controller_host=_safe_host(raw.get("controller_host"), "127.0.0.1"),
         worker_hosts=worker_hosts,
@@ -212,6 +233,7 @@ def validate_controller_config(path: str | Path) -> AppConfig:
         errors.append("controller_host må være en adresse workerne kan nå, ikke loopback")
 
     workers = raw.get("worker_hosts")
+    cleaned_workers: list[str] = []
     if not isinstance(workers, list) or not workers:
         errors.append("worker_hosts må inneholde minst én worker")
     else:
@@ -297,6 +319,28 @@ def validate_controller_config(path: str | Path) -> AppConfig:
 
     if not isinstance(raw.get("node_heartbeat_auth", False), bool):
         errors.append("node_heartbeat_auth må være true eller false")
+
+    deskdisplay = raw.get("deskdisplay", {})
+    if not isinstance(deskdisplay, dict):
+        errors.append("deskdisplay må være et JSON-objekt")
+        deskdisplay = {}
+    if not isinstance(deskdisplay.get("enabled", False), bool):
+        errors.append("deskdisplay.enabled må være true eller false")
+    elif deskdisplay.get("enabled") is True:
+        desk_worker = _safe_host(deskdisplay.get("worker"))
+        if not desk_worker:
+            errors.append("deskdisplay.worker mangler eller er ugyldig")
+        elif desk_worker.casefold() not in {host.casefold() for host in cleaned_workers}:
+            errors.append("deskdisplay.worker må være en konfigurert worker")
+        desk_port = deskdisplay.get("port", 4567)
+        if isinstance(desk_port, bool) or not isinstance(desk_port, int) or not 1 <= desk_port <= 65535:
+            errors.append("deskdisplay.port må være et heltall mellom 1 og 65535")
+        desk_psk_file = deskdisplay.get("psk_file", DEFAULT_DESKDISPLAY_PSK_FILE)
+        if (
+            _safe_private_file(desk_psk_file, DEFAULT_DESKDISPLAY_PSK_FILE) != desk_psk_file
+            or not desk_psk_file.startswith("/etc/pi-display-lab/")
+        ):
+            errors.append("deskdisplay.psk_file må ligge under /etc/pi-display-lab/")
 
     if errors:
         raise ConfigValidationError("Ugyldig config.local.json:\n- " + "\n- ".join(errors))
