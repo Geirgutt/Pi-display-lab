@@ -26,13 +26,20 @@ IDENTIFY_SCRIPT = r'''set -eu
 count="$1"
 cycles="${2:-1}"
 led=""
-for candidate in /sys/class/leds/led0 /sys/class/leds/ACT; do
-  if [ -d "$candidate" ]; then led="$candidate"; break; fi
+# Pi 3B+ exposes the red power LED as led1/PWR on installations where it is
+# software-controllable. Prefer it because it is easier to see through a case,
+# but retain ACT as a safe fallback for images that do not expose PWR for writes.
+for candidate in /sys/class/leds/led1 /sys/class/leds/PWR /sys/class/leds/led0 /sys/class/leds/ACT; do
+  if [ -d "$candidate" ] && [ -w "$candidate/trigger" ] && [ -w "$candidate/brightness" ]; then
+    led="$candidate"
+    break
+  fi
 done
 [ -n "$led" ] || exit 3
 trigger="$led/trigger"
 brightness="$led/brightness"
 old="$(sed -n 's/.*\[\([^]]*\)\].*/\1/p' "$trigger" 2>/dev/null || true)"
+printf 'IDENTIFY_LED=%s\n' "$led"
 printf '%s\n' none > "$trigger"
 restore() { [ -n "$old" ] && printf '%s\n' "$old" > "$trigger" || true; }
 trap restore EXIT INT TERM
@@ -304,7 +311,7 @@ def identify_display_nodes(target: str, selected_workers: list[str], passwords: 
         )
         if result.returncode:
             success = False
-            print(f"Kunne ikke blinke ACT-dioden på {host}; fortsetter likevel.", file=sys.stderr)
+            print(f"Kunne ikke blinke identifikasjons-LED-en på {host}; fortsetter likevel.", file=sys.stderr)
     return success
 
 
@@ -338,13 +345,18 @@ def identify_single_worker(host: str, ordinal: int, password: str, user: str,
         user, host, remote, identity_file=identity_file,
         stdin=(password + "\n") if password else "", timeout=45,
     )
+    if result.stdout:
+        print(result.stdout, end="", flush=True)
+    if result.stderr:
+        print(result.stderr, end="", file=sys.stderr, flush=True)
     return result.returncode == 0
 
 
 def configure_display_choice(config: str, worker_order: list[str], selected_workers: list[str],
                              passwords: dict[str, str], user: str, identity_file: str):
     print("\nDeskDisplay er ikke konfigurert for USB-provisjonering ennå.")
-    print("Når en Pi identifiseres, blinker ACT-dioden med sitt worker-nummer.")
+    print("Når en Pi identifiseres, blinker den røde dioden med sitt worker-nummer.")
+    print("Hvis rød LED ikke kan styres av OS-et, brukes grønn ACT-LED som reserve.")
     if not _terminal_yes_no("Er displayet koblet med USB-data til en Pi nå?"):
         update_display_choice(config, False, "", "", "", False)
         return False, "", "", ""

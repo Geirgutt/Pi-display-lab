@@ -28,11 +28,6 @@ if [[ -z "$BRANCH" ]]; then
   exit 1
 fi
 
-CLUSTER_ENABLED="false"
-if [[ -f "$CONFIG_FILE" ]]; then
-  CLUSTER_ENABLED="$(python3 scripts/config-value.py cluster_enabled --config "$CONFIG_FILE")"
-fi
-
 source "$PROJECT_DIR/scripts/sudo-session.sh"
 trap 'sudo_session_stop' EXIT
 
@@ -46,6 +41,14 @@ echo "Henter siste versjon av $BRANCH med fast-forward-only ..."
 git fetch origin "$BRANCH"
 git merge --ff-only "origin/$BRANCH"
 REVISION="$(git rev-parse HEAD)"
+echo "Lokal checkout er nå commit $REVISION."
+
+# Read this only after the fast-forward. The fetched version owns the update
+# flow, including the first-time DeskDisplay selection prompt.
+CLUSTER_ENABLED="false"
+if [[ -f "$CONFIG_FILE" ]]; then
+  CLUSTER_ENABLED="$(python3 scripts/config-value.py cluster_enabled --config "$CONFIG_FILE")"
+fi
 
 if [[ "$CLUSTER_ENABLED" == "true" ]]; then
   if ! python3 scripts/config-value.py cluster_enabled --validate --config "$CONFIG_FILE" >/dev/null; then
