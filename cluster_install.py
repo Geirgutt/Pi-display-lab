@@ -6,6 +6,8 @@ import argparse
 import getpass
 import json
 import os
+import re
+import shlex
 import socket
 import socketserver
 import subprocess
@@ -16,7 +18,7 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 from config import ConfigValidationError, validate_controller_config
-from cluster_ssh import ssh_options
+from cluster_ssh import require_ssh, ssh_options, ssh_run
 
 PROJECT_DIR = Path(__file__).resolve().parent
 MAX_FORKS = 10
@@ -173,7 +175,10 @@ def broker_passwords(path: str, workers: list[str]) -> dict[str, str]:
 
 def install(config: str, temp_dir: str, revision: str, workers: list[str], user: str,
             regenerate: bool, *, identity_file: str = "", sudo_socket: str = "",
-            display_port: str = "", display_wifi_ssid: str = "", display_no_flash: bool = False) -> int:
+            display_port: str = "", display_wifi_ssid: str = "", display_no_flash: bool = False,
+            display_attached: bool | None = None, display_host: str = "",
+            display_serial_port: str = "", controller_host: str = "",
+            display_gateway_port: int = 4567, display_psk_file: str = "") -> int:
     passwords = broker_passwords(sudo_socket, workers) if sudo_socket else collect_passwords(
         user, workers, **({"identity_file": identity_file} if identity_file else {}))
     print("Passordkontrollen er ferdig. Installerer controlleren ...", flush=True)
@@ -184,9 +189,13 @@ def install(config: str, temp_dir: str, revision: str, workers: list[str], user:
     if result.returncode:
         return result.returncode
     if not workers:
-        if display_port:
-            return provision_display(display_port, display_wifi_ssid, display_no_flash)
-        return 0
+        return provision_configured_display(
+            display_port, display_wifi_ssid, display_no_flash,
+            display_attached=display_attached, display_host=display_host,
+            display_serial_port=display_serial_port, controller_host=controller_host,
+            display_gateway_port=display_gateway_port, display_psk_file=display_psk_file,
+            user=user, identity_file=identity_file, workers=workers,
+        )
 
     forks = min(MAX_FORKS, len(workers))
     print(f"Installerer {len(workers)} workers, inntil {forks} samtidig, til commit {revision} ...", flush=True)
@@ -205,19 +214,85 @@ def install(config: str, temp_dir: str, revision: str, workers: list[str], user:
     if result.returncode:
         print("Worker-installasjonen feilet. Se Ansible-oppsummeringen over; rett feilen og kjør igjen.", flush=True)
         return result.returncode
-    if display_port:
-        return provision_display(display_port, display_wifi_ssid, display_no_flash)
-    return 0
+    return provision_configured_display(
+        display_port, display_wifi_ssid, display_no_flash,
+        display_attached=display_attached, display_host=display_host,
+        display_serial_port=display_serial_port, controller_host=controller_host,
+        display_gateway_port=display_gateway_port, display_psk_file=display_psk_file,
+        user=user, identity_file=identity_file, workers=workers,
+    )
 
 
-def provision_display(port: str, wifi_ssid: str, no_flash: bool) -> int:
-    command = ["bash", "scripts/provision-deskdisplay.sh", "--port", port]
+def _display_command(port: str, wifi_ssid: str, no_flash: bool) -> list[str]:
+    command = ["bash", "scripts/provision-deskdisplay.sh"]
+    if port:
+        command += ["--port", port]
     if wifi_ssid:
         command += ["--wifi-ssid", wifi_ssid]
     if no_flash:
         command.append("--no-flash")
+    return command
+
+
+def provision_display(port: str, wifi_ssid: str, no_flash: bool) -> int:
     print("Provisjonerer DeskDisplay lokalt ...", flush=True)
-    return subprocess.run(command, cwd=PROJECT_DIR).returncode
+    return subprocess.run(_display_command(port, wifi_ssid, no_flash), cwd=PROJECT_DIR).returncode
+
+
+def provision_remote_display(host: str, port: str, wifi_ssid: str, no_flash: bool,
+                             *, user: str, identity_file: str, controller_host: str,
+                             gateway_port: int, psk_file: str) -> int:
+    try:
+        psk = Path(psk_file).read_text(encoding="ascii").strip()
+    except (OSError, UnicodeError):
+        print(f"Kan ikke lese DeskDisplay-PSK på controlleren: {psk_file}", file=sys.stderr)
+        return 1
+    if re.fullmatch(r"[0-9A-Fa-f]{64}", psk) is None:
+        print("DeskDisplay-PSK på controlleren er ugyldig.", file=sys.stderr)
+        return 1
+    command = _display_command(port, wifi_ssid, no_flash)
+    command += ["--psk-stdin", "--controller-host", controller_host,
+                "--gateway-port", str(gateway_port)]
+    remote = "cd \"$HOME/Pi-display-lab\" && " + " ".join(
+        shlex.quote(part) for part in command
+    )
+    print(f"Provisjonerer DeskDisplay på worker {host} ...", flush=True)
+    result = ssh_run(
+        user, host, remote, identity_file=identity_file,
+        stdin=psk + "\n", timeout=900,
+    )
+    if result.returncode:
+        require_ssh(result, host)
+        return result.returncode
+    print(result.stdout, end="", flush=True)
+    return 0
+
+
+def provision_configured_display(port: str, wifi_ssid: str, no_flash: bool, *,
+                                 display_attached: bool | None, display_host: str,
+                                 display_serial_port: str, controller_host: str,
+                                 display_gateway_port: int, display_psk_file: str,
+                                 user: str, identity_file: str,
+                                 workers: list[str]) -> int:
+    if port:
+        return provision_display(port, wifi_ssid, no_flash)
+    if display_attached is not True:
+        return 0
+    serial_port = display_serial_port
+    if display_host == "controller":
+        return provision_display(serial_port, wifi_ssid, no_flash)
+    if display_host not in workers:
+        print(
+            f"Displayet er registrert på {display_host}, men denne installasjonen "
+            "oppdaterte ikke den workeren. Kjør installasjonen uten --limit-worker.",
+            file=sys.stderr,
+        )
+        return 1
+    return provision_remote_display(
+        display_host, serial_port, wifi_ssid, no_flash,
+        user=user, identity_file=identity_file, controller_host=controller_host,
+        gateway_port=display_gateway_port, psk_file=display_psk_file,
+    )
 
 
 def main() -> int:
@@ -240,7 +315,13 @@ def main() -> int:
                        args.regenerate_server_cert, identity_file=settings.ssh_identity_file,
                        sudo_socket=args.sudo_socket, display_port=args.display_port,
                        display_wifi_ssid=args.display_wifi_ssid,
-                       display_no_flash=args.display_no_flash)
+                       display_no_flash=args.display_no_flash,
+                       display_attached=settings.deskdisplay.display_attached,
+                       display_host=settings.deskdisplay.display_host,
+                       display_serial_port=settings.deskdisplay.display_serial_port,
+                       controller_host=settings.controller_host,
+                       display_gateway_port=settings.deskdisplay.port,
+                       display_psk_file=settings.deskdisplay.psk_file)
     except (ConfigValidationError, RuntimeError, OSError, EOFError) as error:
         print(f"Installasjonen stoppet: {error}", file=sys.stderr)
         return 1

@@ -44,6 +44,10 @@ class DeskDisplayConfig:
     worker: str = ""
     port: int = 4567
     psk_file: str = DEFAULT_DESKDISPLAY_PSK_FILE
+    # None means the installer has not asked where the physical display is.
+    display_attached: bool | None = None
+    display_host: str = ""
+    display_serial_port: str = ""
 
 
 @dataclass(frozen=True)
@@ -190,6 +194,15 @@ def load_config(path: str | Path | None = None) -> AppConfig:
             port=_safe_port(deskdisplay.get("port"), 4567),
             psk_file=_safe_private_file(
                 deskdisplay.get("psk_file"), DEFAULT_DESKDISPLAY_PSK_FILE
+            ),
+            display_attached=(
+                deskdisplay.get("display_attached")
+                if isinstance(deskdisplay.get("display_attached"), bool)
+                else None
+            ),
+            display_host=_safe_host(deskdisplay.get("display_host")),
+            display_serial_port=_safe_private_file(
+                deskdisplay.get("display_serial_port"), ""
             ),
         ),
         node_role=role,
@@ -340,6 +353,20 @@ def validate_controller_config(path: str | Path) -> AppConfig:
             or not desk_psk_file.startswith("/etc/pi-display-lab/")
         ):
             errors.append("deskdisplay.psk_file må ligge under /etc/pi-display-lab/")
+
+    display_attached = deskdisplay.get("display_attached")
+    if display_attached is not None and not isinstance(display_attached, bool):
+        errors.append("deskdisplay.display_attached må være true, false eller utelatt")
+    if display_attached is True:
+        display_host = deskdisplay.get("display_host", "")
+        valid_display_hosts = {"controller", *worker_hosts}
+        if display_host not in valid_display_hosts:
+            errors.append(
+                "deskdisplay.display_host må være controller eller en konfigurert worker"
+            )
+        display_serial_port = deskdisplay.get("display_serial_port", "")
+        if display_serial_port and _safe_private_file(display_serial_port, "") != display_serial_port:
+            errors.append("deskdisplay.display_serial_port er ugyldig")
 
     if errors:
         raise ConfigValidationError("Ugyldig config.local.json:\n- " + "\n- ".join(errors))

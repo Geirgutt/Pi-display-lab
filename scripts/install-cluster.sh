@@ -75,6 +75,7 @@ if [[ ! -f "$CONFIG_FILE" ]]; then
 fi
 
 cd "$PROJECT_DIR"
+python3 scripts/ensure-display-config.py "$CONFIG_FILE"
 if ! git diff --quiet || ! git diff --cached --quiet || [[ -n "$(git ls-files --others --exclude-standard)" ]]; then
   echo "Installasjonen stoppet: prosjektmappen har lokale Git-endringer."
   echo "Kontroller dem med: git status"

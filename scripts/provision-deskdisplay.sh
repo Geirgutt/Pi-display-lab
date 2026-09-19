@@ -13,6 +13,7 @@ CONTROLLER_SSH=""
 CONTROLLER_HOST=""
 DESKDISPLAY_PORT_NUMBER="4567"
 REMOTE_PSK_FILE="/etc/pi-display-lab/deskdisplay-peer.psk"
+PSK_STDIN=false
 FLASH=true
 
 usage() {
@@ -27,6 +28,8 @@ konfigurasjon i displayets NVS. PSK-en skrives aldri til terminalen eller repoet
 --no-flash brukes når secure-firmware allerede ligger på displayet.
 --controller-ssh henter PSK-en direkte fra controlleren over SSH uten å lagre den
 lokalt. SSH-kontoen må kunne lese PSK-filen, eventuelt med passordfri sudo.
+--psk-stdin brukes når en installeringsprosess på controlleren sender PSK-en
+gjennom en privat pipe til en worker med displayet tilkoblet.
 EOF
 }
 
@@ -62,6 +65,10 @@ while [[ $# -gt 0 ]]; do
       REMOTE_PSK_FILE="$2"
       shift 2
       ;;
+    --psk-stdin)
+      PSK_STDIN=true
+      shift
+      ;;
     --no-flash)
       FLASH=false
       shift
@@ -82,11 +89,33 @@ if [[ $EUID -eq 0 ]]; then
   echo "Kjør display-provisjoneringen som vanlig bruker, ikke direkte som root." >&2
   exit 1
 fi
-if [[ -z "$DISPLAY_PORT" || ! -e "$DISPLAY_PORT" ]]; then
-  echo "Mangler tilgjengelig display-port. Bruk --port /dev/serial/by-id/..." >&2
+if [[ -z "$DISPLAY_PORT" ]]; then
+  shopt -s nullglob
+  SERIAL_CANDIDATES=(/dev/serial/by-id/* /dev/ttyACM* /dev/ttyUSB*)
+  shopt -u nullglob
+  if [[ ${#SERIAL_CANDIDATES[@]} -eq 1 ]]; then
+    DISPLAY_PORT="${SERIAL_CANDIDATES[0]}"
+    echo "Fant display-port automatisk: $DISPLAY_PORT"
+  else
+    echo "Fant ikke entydig display-port. Bruk --port /dev/serial/by-id/..." >&2
+    exit 1
+  fi
+fi
+if [[ ! -e "$DISPLAY_PORT" ]]; then
+  echo "Display-porten finnes ikke: $DISPLAY_PORT" >&2
   exit 1
 fi
-if [[ -n "$CONTROLLER_SSH" ]]; then
+if [[ "$PSK_STDIN" == "true" ]]; then
+  [[ -n "$CONTROLLER_HOST" ]] || {
+    echo "--controller-host kreves sammen med --psk-stdin." >&2
+    exit 1
+  }
+  IFS= read -r PSK || true
+  if ! [[ "$PSK" =~ ^[[:space:]]*[0-9A-Fa-f]{64}[[:space:]]*$ ]]; then
+    echo "Mottok ikke en gyldig DeskDisplay-PSK via privat pipe." >&2
+    exit 1
+  fi
+elif [[ -n "$CONTROLLER_SSH" ]]; then
   [[ -n "$CONTROLLER_HOST" ]] || {
     echo "--controller-host kreves sammen med --controller-ssh." >&2
     exit 1
