@@ -141,11 +141,10 @@ class ConfigTests(unittest.TestCase):
                 validate_controller_config(path)
         self.assertIn("samme adresse", str(context.exception))
 
-    def test_optional_deskdisplay_sender_is_bound_to_one_configured_worker(self) -> None:
+    def test_optional_deskdisplay_gateway_runs_on_controller(self) -> None:
         valid = self.valid_controller_config()
         valid["deskdisplay"] = {
             "enabled": True,
-            "worker": "worker-01.example",
             "port": 4567,
             "psk_file": "/etc/pi-display-lab/deskdisplay-peer.psk",
         }
@@ -154,21 +153,21 @@ class ConfigTests(unittest.TestCase):
             path.write_text(json.dumps(valid), encoding="utf-8")
             settings = validate_controller_config(path)
         self.assertTrue(settings.deskdisplay.enabled)
-        self.assertEqual(settings.deskdisplay.worker, "worker-01.example")
+        self.assertEqual(settings.deskdisplay.worker, "")
         self.assertEqual(settings.deskdisplay.port, 4567)
 
-    def test_deskdisplay_sender_rejects_a_worker_outside_the_cluster(self) -> None:
+    def test_deskdisplay_gateway_rejects_invalid_legacy_worker_field(self) -> None:
         invalid = self.valid_controller_config()
         invalid["deskdisplay"] = {
             "enabled": True,
-            "worker": "other.example",
+            "worker": "bad worker name",
             "port": 4567,
             "psk_file": "/etc/pi-display-lab/deskdisplay-peer.psk",
         }
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "config.local.json"
             path.write_text(json.dumps(invalid), encoding="utf-8")
-            with self.assertRaisesRegex(ConfigValidationError, "konfigurert worker"):
+            with self.assertRaisesRegex(ConfigValidationError, "controlleren"):
                 validate_controller_config(path)
 
 

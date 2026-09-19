@@ -18,9 +18,9 @@ platform_detect() {
   esac
   command -v systemctl >/dev/null || { echo "Installasjonen krever systemd." >&2; return 1; }
   if [[ "$PLATFORM_FAMILY" == debian ]]; then
-    PLATFORM_PACKAGES=(git openssh-client openssl python3 python3-venv python3-packaging python3-cryptography python3-yaml python3-jinja2 sshpass curl)
+    PLATFORM_PACKAGES=(gcc libssl-dev git openssh-client openssl python3 python3-venv python3-packaging python3-cryptography python3-yaml python3-jinja2 sshpass curl)
   else
-    PLATFORM_PACKAGES=(git openssh-clients openssl python3 python3-pip python3-packaging python3-cryptography python3-pyyaml python3-jinja2 sshpass curl)
+    PLATFORM_PACKAGES=(gcc openssl-devel git openssh-clients openssl python3 python3-pip python3-packaging python3-cryptography python3-pyyaml python3-jinja2 sshpass curl)
   fi
   echo "Oppdaget ${PRETTY_NAME:-$ID}, $(uname -m)."
 }

@@ -27,6 +27,9 @@ def main() -> int:
             "cluster_server_key_file",
             "controller_host",
             "coordinator_port",
+            "deskdisplay_enabled",
+            "deskdisplay_port",
+            "deskdisplay_psk_file",
             "node_heartbeat_auth",
             "node_role",
             "ssh_user",
@@ -68,6 +71,12 @@ def main() -> int:
         value = settings.cluster.server_key_file
     elif args.key == "cluster_enabled":
         value = settings.cluster.enabled
+    elif args.key == "deskdisplay_enabled":
+        value = settings.deskdisplay.enabled
+    elif args.key == "deskdisplay_port":
+        value = settings.deskdisplay.port
+    elif args.key == "deskdisplay_psk_file":
+        value = settings.deskdisplay.psk_file
     else:
         value = getattr(settings, args.key)
     if args.key == "worker_hosts":

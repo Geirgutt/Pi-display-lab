@@ -34,7 +34,7 @@ uint8_t brightness() { return currentBrightness; }
 
 uint8_t cycleBrightness()
 {
-    constexpr uint8_t levels[] = {100, 75, 50, 25, 10};
+    constexpr uint8_t levels[] = {100, 75, 50, 25};
     for (size_t index = 0; index < sizeof(levels); ++index)
     {
         if (currentBrightness == levels[index])

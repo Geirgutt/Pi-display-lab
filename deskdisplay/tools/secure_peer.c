@@ -28,6 +28,30 @@ static volatile sig_atomic_t running = 1;
 static unsigned char psk[32];
 static int replay_once = 0;
 static int malformed_once = 0;
+static char state_host[16] = {0};
+static char state_path[128] = {0};
+static uint16_t state_port = 0;
+
+#define CLUSTER_NODE_MAX_PER_FRAME 3
+#define CLUSTER_STATE_MAX_NODES 128
+#define CLUSTER_NAME_MAX 16
+#define CLUSTER_NODE_SIZE (1 + CLUSTER_NAME_MAX + 2 + 2 + 2 + 4 + 1)
+#define CLUSTER_PAYLOAD_SIZE (4 + CLUSTER_NODE_MAX_PER_FRAME * CLUSTER_NODE_SIZE)
+#define CLUSTER_FRAME_SIZE (14 + CLUSTER_PAYLOAD_SIZE)
+
+struct cluster_node {
+    char name[CLUSTER_NAME_MAX + 1];
+    uint16_t cpu_tenths;
+    int16_t temperature_tenths;
+    uint16_t ram_tenths;
+    uint32_t uptime_seconds;
+    uint8_t online;
+};
+
+struct cluster_state {
+    size_t count;
+    struct cluster_node nodes[CLUSTER_STATE_MAX_NODES];
+};
 
 static void stop_handler(int signal_number)
 {
@@ -88,6 +112,120 @@ static void put32(unsigned char* p, uint32_t value)
 static void put64(unsigned char* p, uint64_t value)
 {
     for (unsigned i = 0; i < 8; ++i) p[i] = (unsigned char)(value >> (i * 8));
+}
+
+static int parse_unsigned(const char* text, unsigned long maximum, unsigned long* result)
+{
+    char* end = NULL;
+    const unsigned long value = strtoul(text, &end, 10);
+    if (!text[0] || !end || *end || value > maximum) return 0;
+    *result = value;
+    return 1;
+}
+
+static int parse_signed(const char* text, long minimum, long maximum, long* result)
+{
+    char* end = NULL;
+    const long value = strtol(text, &end, 10);
+    if (!text[0] || !end || *end || value < minimum || value > maximum) return 0;
+    *result = value;
+    return 1;
+}
+
+static int send_socket_all(int fd, const char* data, size_t length)
+{
+    size_t sent = 0;
+    while (sent < length)
+    {
+        const ssize_t amount = send(fd, data + sent, length - sent, 0);
+        if (amount <= 0) return 0;
+        sent += (size_t)amount;
+    }
+    return 1;
+}
+
+static int fetch_controller_state(struct cluster_state* result)
+{
+    if (!state_host[0] || !state_path[0] || !result) return 0;
+    const int fd = socket(AF_INET, SOCK_STREAM, 0);
+    if (fd < 0) return 0;
+    struct sockaddr_in endpoint = {0};
+    endpoint.sin_family = AF_INET;
+    endpoint.sin_port = htons(state_port);
+    if (inet_pton(AF_INET, state_host, &endpoint.sin_addr) != 1 ||
+        connect(fd, (struct sockaddr*)&endpoint, sizeof(endpoint)) != 0)
+    {
+        close(fd);
+        return 0;
+    }
+
+    char request[256];
+    const int request_length = snprintf(request, sizeof(request),
+                                        "GET %s HTTP/1.0\r\nHost: %s\r\nConnection: close\r\n\r\n",
+                                        state_path, state_host);
+    if (request_length <= 0 || (size_t)request_length >= sizeof(request) ||
+        !send_socket_all(fd, request, (size_t)request_length))
+    {
+        close(fd);
+        return 0;
+    }
+
+    static char response[16384];
+    memset(response, 0, sizeof(response));
+    size_t length = 0;
+    while (length + 1 < sizeof(response))
+    {
+        const ssize_t amount = recv(fd, response + length, sizeof(response) - length - 1, 0);
+        if (amount < 0) { close(fd); return 0; }
+        if (amount == 0) break;
+        length += (size_t)amount;
+    }
+    close(fd);
+    response[length] = 0;
+    if (strncmp(response, "HTTP/1.0 200", 12) != 0 && strncmp(response, "HTTP/1.1 200", 12) != 0)
+        return 0;
+    char* body = strstr(response, "\r\n\r\n");
+    if (!body) return 0;
+    body += 4;
+    if (strncmp(body, "DSCLUSTER/1\n", 12) != 0 && strncmp(body, "DSCLUSTER/1\r\n", 13) != 0)
+        return 0;
+    char* save = NULL;
+    char* line = strtok_r(body, "\r\n", &save);
+    if (!line || strcmp(line, "DSCLUSTER/1") != 0) return 0;
+    memset(result, 0, sizeof(*result));
+    while ((line = strtok_r(NULL, "\r\n", &save)) != NULL)
+    {
+        if (result->count >= CLUSTER_STATE_MAX_NODES) return 0;
+        char* fields[7] = {0};
+        size_t field_count = 0;
+        char* field_save = NULL;
+        char* field = strtok_r(line, "\t", &field_save);
+        while (field && field_count < 7)
+        {
+            fields[field_count++] = field;
+            field = strtok_r(NULL, "\t", &field_save);
+        }
+        if (field_count != 7 || strcmp(fields[0], "node") != 0 ||
+            !fields[1][0] || strlen(fields[1]) > CLUSTER_NAME_MAX)
+            return 0;
+        unsigned long cpu = 0, ram = 0, uptime = 0, online = 0;
+        long temperature = 0;
+        if (!parse_unsigned(fields[2], 1000, &cpu) ||
+            !parse_signed(fields[3], -32768, 32767, &temperature) ||
+            !parse_unsigned(fields[4], 1000, &ram) ||
+            !parse_unsigned(fields[5], 0xFFFFFFFFUL, &uptime) ||
+            !parse_unsigned(fields[6], 1, &online))
+            return 0;
+        struct cluster_node* node = &result->nodes[result->count++];
+        strncpy(node->name, fields[1], CLUSTER_NAME_MAX);
+        node->name[CLUSTER_NAME_MAX] = 0;
+        node->cpu_tenths = (uint16_t)cpu;
+        node->temperature_tenths = (int16_t)temperature;
+        node->ram_tenths = (uint16_t)ram;
+        node->uptime_seconds = (uint32_t)uptime;
+        node->online = (uint8_t)online;
+    }
+    return 1;
 }
 
 static int read_cpu(uint64_t* total, uint64_t* idle)
@@ -214,7 +352,7 @@ static int send_all(SSL* ssl, const unsigned char* data, size_t length)
     return 1;
 }
 
-static size_t make_frame(unsigned char* frame, uint64_t sequence, int invalid)
+static size_t make_local_frame(unsigned char* frame, uint64_t sequence, int invalid)
 {
     static char hostname[33] = {0};
     static int hostname_ready = 0;
@@ -259,6 +397,68 @@ static size_t make_frame(unsigned char* frame, uint64_t sequence, int invalid)
     return 58;
 }
 
+static size_t make_cluster_frame(unsigned char* frame, uint64_t sequence, int invalid)
+{
+    static struct cluster_state latest = {0};
+    static int state_available = 0;
+    static size_t page_index = 0;
+    struct cluster_state current = {0};
+    if (fetch_controller_state(&current))
+    {
+        latest = current;
+        state_available = 1;
+    }
+    else if (state_available)
+    {
+        current = latest;
+        for (size_t index = 0; index < current.count; ++index) current.nodes[index].online = 0;
+        latest = current;
+    }
+    else current.count = 0;
+
+    frame[0] = invalid ? 'X' : 'D';
+    frame[1] = 'S';
+    frame[2] = 1;
+    frame[3] = 2;
+    put16(frame + 4, CLUSTER_PAYLOAD_SIZE);
+    put64(frame + 6, sequence);
+    unsigned char* payload = frame + 14;
+    const size_t page_count = current.count == 0
+                            ? 1 : (current.count + CLUSTER_NODE_MAX_PER_FRAME - 1) / CLUSTER_NODE_MAX_PER_FRAME;
+    if (page_index >= page_count) page_index = 0;
+    const size_t first = page_index * CLUSTER_NODE_MAX_PER_FRAME;
+    const size_t page_nodes = current.count > first
+                            ? (current.count - first > CLUSTER_NODE_MAX_PER_FRAME
+                               ? CLUSTER_NODE_MAX_PER_FRAME : current.count - first)
+                            : 0;
+    payload[0] = (unsigned char)page_index;
+    payload[1] = (unsigned char)page_count;
+    put16(payload + 2, (uint16_t)current.count);
+    payload[4] = (unsigned char)page_nodes;
+    memset(payload + 5, 0, CLUSTER_NODE_MAX_PER_FRAME * CLUSTER_NODE_SIZE);
+    for (size_t index = 0; index < page_nodes; ++index)
+    {
+        const struct cluster_node* node = &current.nodes[first + index];
+        unsigned char* encoded = payload + 5 + index * CLUSTER_NODE_SIZE;
+        const size_t name_length = strlen(node->name) > CLUSTER_NAME_MAX ? CLUSTER_NAME_MAX : strlen(node->name);
+        encoded[0] = (unsigned char)name_length;
+        memcpy(encoded + 1, node->name, name_length);
+        put16(encoded + 1 + CLUSTER_NAME_MAX, node->cpu_tenths);
+        put16(encoded + 1 + CLUSTER_NAME_MAX + 2, (uint16_t)node->temperature_tenths);
+        put16(encoded + 1 + CLUSTER_NAME_MAX + 4, node->ram_tenths);
+        put32(encoded + 1 + CLUSTER_NAME_MAX + 6, node->uptime_seconds);
+        encoded[1 + CLUSTER_NAME_MAX + 10] = node->online;
+    }
+    page_index = (page_index + 1) % page_count;
+    return CLUSTER_FRAME_SIZE;
+}
+
+static size_t make_frame(unsigned char* frame, uint64_t sequence, int invalid)
+{
+    return state_path[0] ? make_cluster_frame(frame, sequence, invalid)
+                         : make_local_frame(frame, sequence, invalid);
+}
+
 static int make_listener(const char* address, uint16_t port)
 {
     const int fd = socket(AF_INET, SOCK_STREAM, 0);
@@ -287,11 +487,27 @@ int main(int argc, char** argv)
         if (!strcmp(argv[i], "--listen") && i + 1 < argc) listen_address = argv[++i];
         else if (!strcmp(argv[i], "--port") && i + 1 < argc) port = (uint16_t)atoi(argv[++i]);
         else if (!strcmp(argv[i], "--psk-file") && i + 1 < argc) psk_path = argv[++i];
+        else if (!strcmp(argv[i], "--state-host") && i + 1 < argc)
+        {
+            strncpy(state_host, argv[++i], sizeof(state_host) - 1);
+            state_host[sizeof(state_host) - 1] = 0;
+        }
+        else if (!strcmp(argv[i], "--state-port") && i + 1 < argc) state_port = (uint16_t)atoi(argv[++i]);
+        else if (!strcmp(argv[i], "--state-path") && i + 1 < argc)
+        {
+            strncpy(state_path, argv[++i], sizeof(state_path) - 1);
+            state_path[sizeof(state_path) - 1] = 0;
+        }
         else if (!strcmp(argv[i], "--replay-once")) replay_once = 1;
         else if (!strcmp(argv[i], "--malformed-once")) malformed_once = 1;
-        else { fprintf(stderr, "usage: %s --psk-file FILE [--listen IPv4] [--port N] [--replay-once] [--malformed-once]\n", argv[0]); return 2; }
+        else { fprintf(stderr, "usage: %s --psk-file FILE [--listen IPv4] [--port N] [--state-host IPv4 --state-port N --state-path PATH] [--replay-once] [--malformed-once]\n", argv[0]); return 2; }
     }
     if (!psk_path || !load_psk(psk_path)) { fprintf(stderr, "PSK file must contain 64 hexadecimal characters.\n"); return 2; }
+    if ((state_host[0] || state_port || state_path[0]) && (!state_host[0] || !state_port || !state_path[0]))
+    {
+        fprintf(stderr, "state-host, state-port and state-path must be supplied together.\n");
+        return 2;
+    }
     signal(SIGINT, stop_handler);
     signal(SIGTERM, stop_handler);
     SSL_library_init();
@@ -323,7 +539,7 @@ int main(int argc, char** argv)
         int replay_sent = 0, malformed_sent = 0;
         while (running)
         {
-            unsigned char frame[58];
+            unsigned char frame[128];
             const uint64_t wire_sequence = sequence;
             const size_t length = make_frame(frame, wire_sequence, malformed_sent == 0 && malformed_once);
             if (!send_all(ssl, frame, length)) break;

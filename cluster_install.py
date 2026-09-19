@@ -172,7 +172,8 @@ def broker_passwords(path: str, workers: list[str]) -> dict[str, str]:
 
 
 def install(config: str, temp_dir: str, revision: str, workers: list[str], user: str,
-            regenerate: bool, *, identity_file: str = "", sudo_socket: str = "") -> int:
+            regenerate: bool, *, identity_file: str = "", sudo_socket: str = "",
+            display_port: str = "", display_wifi_ssid: str = "", display_no_flash: bool = False) -> int:
     passwords = broker_passwords(sudo_socket, workers) if sudo_socket else collect_passwords(
         user, workers, **({"identity_file": identity_file} if identity_file else {}))
     print("Passordkontrollen er ferdig. Installerer controlleren ...", flush=True)
@@ -183,6 +184,8 @@ def install(config: str, temp_dir: str, revision: str, workers: list[str], user:
     if result.returncode:
         return result.returncode
     if not workers:
+        if display_port:
+            return provision_display(display_port, display_wifi_ssid, display_no_flash)
         return 0
 
     forks = min(MAX_FORKS, len(workers))
@@ -201,7 +204,20 @@ def install(config: str, temp_dir: str, revision: str, workers: list[str], user:
         result = subprocess.run(command, cwd=PROJECT_DIR, stdin=subprocess.DEVNULL)
     if result.returncode:
         print("Worker-installasjonen feilet. Se Ansible-oppsummeringen over; rett feilen og kjør igjen.", flush=True)
-    return result.returncode
+        return result.returncode
+    if display_port:
+        return provision_display(display_port, display_wifi_ssid, display_no_flash)
+    return 0
+
+
+def provision_display(port: str, wifi_ssid: str, no_flash: bool) -> int:
+    command = ["bash", "scripts/provision-deskdisplay.sh", "--port", port]
+    if wifi_ssid:
+        command += ["--wifi-ssid", wifi_ssid]
+    if no_flash:
+        command.append("--no-flash")
+    print("Provisjonerer DeskDisplay lokalt ...", flush=True)
+    return subprocess.run(command, cwd=PROJECT_DIR).returncode
 
 
 def main() -> int:
@@ -213,13 +229,18 @@ def main() -> int:
     parser.add_argument("--limit-worker", action="append", default=[])
     parser.add_argument("--regenerate-server-cert", action="store_true")
     parser.add_argument("--sudo-socket", default="")
+    parser.add_argument("--display-port", default="")
+    parser.add_argument("--display-wifi-ssid", default="")
+    parser.add_argument("--display-no-flash", action="store_true")
     args = parser.parse_args()
     try:
         settings = validate_controller_config(args.config)
         workers = select_workers(settings.worker_hosts, args.limit_worker, args.controller_only)
         return install(args.config, args.temp_dir, args.revision, workers, settings.ssh_user,
                        args.regenerate_server_cert, identity_file=settings.ssh_identity_file,
-                       sudo_socket=args.sudo_socket)
+                       sudo_socket=args.sudo_socket, display_port=args.display_port,
+                       display_wifi_ssid=args.display_wifi_ssid,
+                       display_no_flash=args.display_no_flash)
     except (ConfigValidationError, RuntimeError, OSError, EOFError) as error:
         print(f"Installasjonen stoppet: {error}", file=sys.stderr)
         return 1

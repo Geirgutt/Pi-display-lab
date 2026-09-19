@@ -15,6 +15,9 @@ REGENERATE_SERVER_CERT=false
 CONTROLLER_ONLY=false
 LIMIT_WORKERS=()
 SUDO_SOCKET=""
+DISPLAY_PORT=""
+DISPLAY_WIFI_SSID=""
+DISPLAY_NO_FLASH=false
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --sudo-socket)
@@ -35,12 +38,31 @@ while [[ $# -gt 0 ]]; do
       LIMIT_WORKERS+=("$2")
       shift 2
       ;;
+    --display-port)
+      [[ $# -ge 2 ]] || { echo "--display-port mangler verdi"; exit 2; }
+      DISPLAY_PORT="$2"
+      shift 2
+      ;;
+    --display-wifi-ssid)
+      [[ $# -ge 2 ]] || { echo "--display-wifi-ssid mangler verdi"; exit 2; }
+      DISPLAY_WIFI_SSID="$2"
+      shift 2
+      ;;
+    --display-no-flash)
+      DISPLAY_NO_FLASH=true
+      shift
+      ;;
     *)
       echo "Ukjent valg: $1"
       exit 2
       ;;
   esac
 done
+
+if [[ "$DISPLAY_NO_FLASH" == "true" && -z "$DISPLAY_PORT" ]]; then
+  echo "--display-no-flash krever --display-port" >&2
+  exit 2
+fi
 
 if [[ $EUID -eq 0 ]]; then
   echo "Kjør installasjonen som vanlig controller-bruker, aldri som root."
@@ -75,6 +97,9 @@ INSTALL_ARGS=()
 for WORKER in "${LIMIT_WORKERS[@]}"; do
   INSTALL_ARGS+=(--limit-worker "$WORKER")
 done
+[[ -z "$DISPLAY_PORT" ]] || INSTALL_ARGS+=(--display-port "$DISPLAY_PORT")
+[[ -z "$DISPLAY_WIFI_SSID" ]] || INSTALL_ARGS+=(--display-wifi-ssid "$DISPLAY_WIFI_SSID")
+[[ "$DISPLAY_NO_FLASH" != "true" ]] || INSTALL_ARGS+=(--display-no-flash)
 python3 cluster_install.py "$CONFIG_FILE" "$TEMP_DIR" "$REVISION" "${INSTALL_ARGS[@]}"
 
 echo

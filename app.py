@@ -7,7 +7,7 @@ import os
 import secrets
 from typing import Any
 
-from flask import Flask, jsonify, render_template, request
+from flask import Flask, Response, jsonify, render_template, request
 
 from cluster_auth import load_cluster_credentials, valid_worker_id
 from cluster_client import (
@@ -22,6 +22,65 @@ from config import AppConfig, load_config
 from display_state import DashboardState
 from transports import BrowserTransport, Esp32Transport, TransportHub
 from updates import UpdateManager
+
+
+DESKDISPLAY_NAME_MAX = 16
+
+
+def _deskdisplay_node_lines(payload: dict[str, Any], worker_hosts: tuple[str, ...]) -> str:
+    """Render a small loopback-only format for the controller-side gateway."""
+
+    nodes = list(payload.get("nodes") or [])
+    local = next((node for node in nodes if node.get("kind") == "local"), None)
+    remote = [node for node in nodes if node.get("kind") != "local"]
+    ordered: list[dict[str, Any]] = []
+    if local is not None:
+        ordered.append(local)
+
+    def keys(node: dict[str, Any]) -> set[str]:
+        values = {str(node.get("id") or "").casefold(), str(node.get("name") or "").casefold()}
+        values.update(value.split(".", 1)[0] for value in tuple(values) if value)
+        if node.get("ip"):
+            values.add(str(node["ip"]).casefold())
+        return values
+
+    unused = list(remote)
+    for host in worker_hosts:
+        host_keys = {host.casefold(), host.split(".", 1)[0].casefold()}
+        match = next((node for node in unused if keys(node) & host_keys), None)
+        if match is not None:
+            unused.remove(match)
+            ordered.append(match)
+        else:
+            # Keep configured workers visible before their first heartbeat.
+            ordered.append(
+                {
+                    "name": host.split(".", 1)[0],
+                    "cpu": 0,
+                    "temp": None,
+                    "ram": 0,
+                    "uptime_seconds": 0,
+                    "online": False,
+                }
+            )
+    # Do not truncate here. The controller gateway divides the complete list
+    # into display-sized pages before encoding the secure frames.
+    ordered.extend(unused)
+
+    lines = ["DSCLUSTER/1"]
+    for node in ordered:
+        name = str(node.get("name") or node.get("id") or "node")
+        name = name.replace("\t", " ").replace("\r", " ").replace("\n", " ")[:DESKDISPLAY_NAME_MAX]
+        cpu = node.get("cpu")
+        ram = node.get("ram")
+        temp = node.get("temp")
+        cpu_tenths = int(round(float(cpu) * 10)) if isinstance(cpu, (int, float)) else 0
+        ram_tenths = int(round(float(ram) * 10)) if isinstance(ram, (int, float)) else 0
+        temp_tenths = int(round(float(temp) * 10)) if isinstance(temp, (int, float)) else -32768
+        uptime = int(node.get("uptime_seconds") or 0)
+        online = 1 if node.get("online") else 0
+        lines.append(f"node\t{name}\t{cpu_tenths}\t{temp_tenths}\t{ram_tenths}\t{uptime}\t{online}")
+    return "\n".join(lines) + "\n"
 
 
 def create_app(
@@ -73,6 +132,19 @@ def create_app(
         payload = dashboard.snapshot(cluster_status=cluster_status.snapshot())
         transports.publish(payload)
         return jsonify(browser.latest())
+
+    @app.get("/api/deskdisplay/state")
+    def deskdisplay_state() -> Any:
+        """Expose only the compact node snapshot to the local secure gateway."""
+
+        if request.remote_addr not in {"127.0.0.1", "::1"}:
+            return jsonify({"ok": False, "error": "Kun lokal gateway er tillatt"}), 403
+        payload = dashboard.snapshot(cluster_status=cluster_status.snapshot())
+        return Response(
+            _deskdisplay_node_lines(payload, settings.worker_hosts),
+            mimetype="text/plain",
+            headers={"Cache-Control": "no-store"},
+        )
 
     @app.post("/api/screen")
     def set_screen() -> Any:

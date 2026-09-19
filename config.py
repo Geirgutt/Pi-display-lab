@@ -37,9 +37,10 @@ class ClusterConfig:
 
 @dataclass(frozen=True)
 class DeskDisplayConfig:
-    """Optional one-worker secure sender configuration."""
+    """Optional controller-side secure cluster gateway configuration."""
 
     enabled: bool = False
+    # Kept for local-config compatibility; the gateway now runs on the controller.
     worker: str = ""
     port: int = 4567
     psk_file: str = DEFAULT_DESKDISPLAY_PSK_FILE
@@ -327,11 +328,9 @@ def validate_controller_config(path: str | Path) -> AppConfig:
     if not isinstance(deskdisplay.get("enabled", False), bool):
         errors.append("deskdisplay.enabled må være true eller false")
     elif deskdisplay.get("enabled") is True:
-        desk_worker = _safe_host(deskdisplay.get("worker"))
-        if not desk_worker:
-            errors.append("deskdisplay.worker mangler eller er ugyldig")
-        elif desk_worker.casefold() not in {host.casefold() for host in cleaned_workers}:
-            errors.append("deskdisplay.worker må være en konfigurert worker")
+        desk_worker = deskdisplay.get("worker")
+        if desk_worker not in (None, "") and not _safe_host(desk_worker):
+            errors.append("deskdisplay.worker er ugyldig; gatewayen kjører på controlleren")
         desk_port = deskdisplay.get("port", 4567)
         if isinstance(desk_port, bool) or not isinstance(desk_port, int) or not 1 <= desk_port <= 65535:
             errors.append("deskdisplay.port må være et heltall mellom 1 og 65535")

@@ -105,6 +105,24 @@ class AppSmokeTests(unittest.TestCase):
         self.assertEqual(nodes[1]["frequency_mhz"], 900.0)
         self.assertTrue(nodes[1]["throttle"]["active"])
 
+    def test_deskdisplay_state_is_loopback_only_and_contains_cluster_rows(self) -> None:
+        accepted = self.client.post(
+            "/api/nodes/heartbeat",
+            json={"node_id": "worker-01", "name": "worker-01", "cpu": 27.4,
+                  "temp": 48.2, "ram": 39.1, "cores": 4, "uptime_seconds": 123},
+        )
+        self.assertEqual(accepted.status_code, 202)
+        state = self.client.get("/api/deskdisplay/state")
+        self.assertEqual(state.status_code, 200)
+        self.assertTrue(state.data.startswith(b"DSCLUSTER/1\n"))
+        self.assertIn(b"node\tPi2\t", state.data)
+        self.assertIn(b"node\tworker-01\t274\t482\t391\t123\t1", state.data)
+
+        denied = self.client.get(
+            "/api/deskdisplay/state", environ_base={"REMOTE_ADDR": "192.0.2.9"}
+        )
+        self.assertEqual(denied.status_code, 403)
+
     def test_heartbeat_validates_metrics_and_optional_token(self) -> None:
         invalid = self.client.post(
             "/api/nodes/heartbeat",

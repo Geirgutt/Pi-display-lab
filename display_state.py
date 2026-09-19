@@ -79,6 +79,7 @@ class SystemMonitor:
             "cpu": self._cpu_percent(),
             "temp": self._temperature_celsius(),
             "ram": self._memory_percent(),
+            "uptime_seconds": self._uptime_seconds(),
             "frequency_mhz": self._cpu_frequency_mhz(),
             "throttle": self._throttle_status(),
             "ip": local_ip,
@@ -92,6 +93,7 @@ class SystemMonitor:
             "cpu": round(34 + wave * 14, 1),
             "temp": round(50.5 + wave * 2.4, 1),
             "ram": round(47 + math.cos(self._mock_tick / 4) * 5, 1),
+            "uptime_seconds": 12_345 + self._mock_tick,
             "frequency_mhz": 1000.0 if wave > -0.2 else 600.0,
             "throttle": decode_throttle_flags(0),
             "ip": "192.0.2.42",
@@ -140,6 +142,13 @@ class SystemMonitor:
             return round((total - available) / total * 100, 1)
         except (OSError, ValueError, KeyError):
             return None
+
+    @staticmethod
+    def _uptime_seconds() -> int:
+        try:
+            return max(0, int(float(Path("/proc/uptime").read_text(encoding="utf-8").split()[0])))
+        except (OSError, ValueError, IndexError):
+            return 0
 
     @staticmethod
     def _run_vcgencmd(*args: str) -> str | None:
@@ -207,7 +216,7 @@ class SystemMonitor:
 class NodeRegistry:
     """Holder siste heartbeat fra ekte, eksterne noder i minnet."""
 
-    MAX_REGISTERED_NODES = 32
+    MAX_REGISTERED_NODES = 100
 
     def __init__(
         self,
@@ -263,6 +272,15 @@ class NodeRegistry:
             if raw_frequency is None
             else self._number(raw_frequency, "frequency_mhz", 1, 10_000)
         )
+        raw_uptime = payload.get("uptime_seconds", 0)
+        if isinstance(raw_uptime, bool):
+            raise ValueError("uptime_seconds må være et heltall")
+        try:
+            uptime_seconds = int(raw_uptime)
+        except (TypeError, ValueError) as error:
+            raise ValueError("uptime_seconds må være et heltall") from error
+        if uptime_seconds != raw_uptime or not 0 <= uptime_seconds <= 0xFFFFFFFF:
+            raise ValueError("uptime_seconds er utenfor gyldig område")
         throttle_available = "throttle_flags" in payload
         raw_throttle_flags = payload.get("throttle_flags", 0)
         if isinstance(raw_throttle_flags, bool):
@@ -284,6 +302,7 @@ class NodeRegistry:
             "ram": ram,
             "cores": cores,
             "frequency_mhz": frequency_mhz,
+            "uptime_seconds": uptime_seconds,
             "throttle": decode_throttle_flags(throttle_flags, throttle_available),
             "ip": source_ip,
             "kind": "remote",
@@ -314,6 +333,7 @@ class NodeRegistry:
             "ram": node["ram"],
             "cores": node["cores"],
             "frequency_mhz": node["frequency_mhz"],
+            "uptime_seconds": node["uptime_seconds"],
             "throttle": dict(node["throttle"]),
             "ip": node["ip"],
             "online": age <= self.offline_after_seconds,
@@ -410,6 +430,7 @@ class DashboardState:
                 "temp": system["temp"],
                 "ram": system["ram"],
                 "cores": max(os.cpu_count() or 1, 1),
+                "uptime_seconds": int(system["uptime_seconds"]),
                 "frequency_mhz": system["frequency_mhz"],
                 "throttle": system["throttle"],
                 "ip": system["ip"],

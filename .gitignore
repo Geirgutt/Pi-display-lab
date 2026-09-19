@@ -1,5 +1,6 @@
 .venv/
 .ansible-venv/
+.display-venv/
 __pycache__/
 *.py[cod]
 .pytest_cache/

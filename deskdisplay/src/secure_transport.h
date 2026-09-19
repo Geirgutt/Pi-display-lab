@@ -26,6 +26,7 @@ bool enabled();
 bool connected();
 void printStatus(Print& out);
 const secure_protocol::Telemetry& lastTelemetry();
+const secure_protocol::ClusterTelemetry& lastClusterTelemetry();
 uint32_t lastTelemetryAt();
 const Counters& counters();
 }

@@ -38,20 +38,22 @@ class InstallationWorkflowTests(unittest.TestCase):
         self.assertIn('"worker_slots": {{ ansible_facts[\'processor_vcpus\']', playbook)
         self.assertNotIn("ca.key", playbook)
 
-    def test_deskdisplay_sender_is_optional_and_limited_to_one_worker(self) -> None:
+    def test_deskdisplay_gateway_is_installed_on_controller(self) -> None:
         playbook = self.read("ansible/install-workers.yml")
-        secrets = self.read("scripts/generate-cluster-secrets.py")
         config = self.read("config.py")
-        self.assertIn("deskdisplay/tools/secure_peer.c", playbook)
-        self.assertIn("deskdisplay-secure-peer.service", playbook)
-        self.assertIn("inventory_hostname == deskdisplay_worker", playbook)
-        self.assertIn("force: false", playbook)
-        self.assertIn("state: absent", playbook)
-        self.assertIn("register: deskdisplay_build", playbook)
-        self.assertIn("Stopp hvis secure-peer-byggingen feilet", playbook)
+        controller_service = self.read("scripts/install-deskdisplay-service.sh")
+        installer = self.read("scripts/install-cluster.sh")
+        display_provisioner = self.read("scripts/provision-deskdisplay.sh")
+        self.assertIn("deskdisplay/tools/secure_peer.c", controller_service)
+        self.assertIn("/api/deskdisplay/state", controller_service)
+        self.assertIn('SERVICE_NAME="deskdisplay-secure-peer"', controller_service)
+        self.assertIn("openssl rand -hex 32", controller_service)
+        self.assertIn("--display-port", installer)
+        self.assertIn("secure key $PSK", display_provisioner)
+        self.assertIn("--display-no-flash", installer)
+        self.assertIn(".display-venv/", self.read(".gitignore"))
+        self.assertIn("Stopp gammel DeskDisplay-tjeneste", playbook)
         self.assertIn("service_facts", playbook)
-        self.assertIn("deskdisplay-secure-peer.service", playbook)
-        self.assertIn("deskdisplay_peer_psk", secrets)
         self.assertIn("DEFAULT_DESKDISPLAY_PSK_FILE", config)
 
     def test_services_are_non_root_and_have_low_risk_hardening(self) -> None:
@@ -61,6 +63,7 @@ class InstallationWorkflowTests(unittest.TestCase):
             for path in (
                 "scripts/install-service.sh",
                 "scripts/install-coordinator-service.sh",
+                "scripts/install-deskdisplay-service.sh",
             )
         )
         self.assertIn("ansible_facts['user_uid'] | int != 0", playbook)

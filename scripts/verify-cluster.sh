@@ -29,6 +29,9 @@ REVISION="$(git rev-parse HEAD)"
 echo "Kontrollerer controller-tjenester ..."
 systemctl is-active --quiet pi-display-lab.service
 systemctl is-active --quiet cluster-coordinator.service
+if [[ "$("$PYTHON_BIN" scripts/config-value.py deskdisplay_enabled --config "$CONFIG_FILE")" == "true" ]]; then
+  systemctl is-active --quiet deskdisplay-secure-peer.service
+fi
 
 echo "Kontrollerer app, coordinator og autentisert status ..."
 "$PYTHON_BIN" scripts/verify-controller-api.py "$CONFIG_FILE"

@@ -89,6 +89,54 @@ void nodeTelemetry(const app_state::Model& model)
     else snprintf(line, sizeof(line), "%uh %02um", hours, minutes);
     valueRow("Uptime", line, 244);
 }
+
+void clusterTelemetry(const app_state::Model& model)
+{
+    if (model.clusterTelemetry.count == 0)
+    {
+        if (model.nodeTelemetry.hostname[0]) nodeTelemetry(model);
+        else label("No controller data", 32, 120, 2, muted);
+        return;
+    }
+
+    char pageLine[32];
+    snprintf(pageLine, sizeof(pageLine), "Nodes %u-%u / %u",
+             static_cast<unsigned>(model.clusterTelemetry.pageIndex * secure_protocol::clusterNodeMax + 1),
+             static_cast<unsigned>(model.clusterTelemetry.pageIndex * secure_protocol::clusterNodeMax
+                                  + model.clusterTelemetry.count),
+             static_cast<unsigned>(model.clusterTelemetry.totalNodes));
+    label(pageLine, 32, 83, 1, muted);
+    for (size_t index = 0; index < model.clusterTelemetry.count; ++index)
+    {
+        const secure_protocol::ClusterNode& node = model.clusterTelemetry.nodes[index];
+        const int16_t y = static_cast<int16_t>(101 + index * 77);
+        const uint16_t fill = node.online ? card : 0x2945;
+        display().fillRoundRect(28, y, 424, 66, 6, fill);
+        display().setTextColor(text, fill);
+        display().setTextSize(2);
+        display().drawString(node.name[0] ? node.name : "node", 38, y + 8);
+        display().setTextColor(node.online ? good : warning, fill);
+        display().drawString(node.online ? "ONLINE" : "OFFLINE", 330, y + 8);
+
+        char line[64];
+        if (node.temperatureTenths == secure_protocol::temperatureUnavailable)
+        {
+            snprintf(line, sizeof(line), "CPU %u.%u%%   RAM %u.%u%%   T N/A",
+                     node.cpuTenths / 10, node.cpuTenths % 10,
+                     node.ramTenths / 10, node.ramTenths % 10);
+        }
+        else
+        {
+            snprintf(line, sizeof(line), "CPU %u.%u%%   RAM %u.%u%%   T %d.%dC",
+                     node.cpuTenths / 10, node.cpuTenths % 10,
+                     node.ramTenths / 10, node.ramTenths % 10,
+                     node.temperatureTenths / 10, abs(node.temperatureTenths % 10));
+        }
+        display().setTextColor(node.online ? text : muted, fill);
+        display().setTextSize(1);
+        display().drawString(line, 38, y + 39);
+    }
+}
 }
 
 void ui::begin(const app_state::Model& model) { page(model); }
@@ -130,7 +178,7 @@ void ui::page(const app_state::Model& model)
     {
         header("Cluster");
         display().fillRoundRect(20, 72, 440, 270, 10, card);
-        nodeTelemetry(model);
+        clusterTelemetry(model);
         button(7, "Back", 145, 380, model.pressedButton == 7);
     }
     else if (model.page == app_state::Page::Training)
@@ -173,7 +221,7 @@ void ui::telemetry(const app_state::Model& model)
     }
     if (model.page == app_state::Page::Cluster)
     {
-        nodeTelemetry(model);
+        clusterTelemetry(model);
         return;
     }
     if (model.wifiConnected)

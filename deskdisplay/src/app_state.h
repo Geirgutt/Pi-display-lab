@@ -22,6 +22,7 @@ struct Model
     uint8_t pressedButton = 0;
     uint8_t brightnessPercent = 100;
     secure_protocol::Telemetry nodeTelemetry{};
+    secure_protocol::ClusterTelemetry clusterTelemetry{};
     uint32_t nodeLastUpdate = 0;
     uint32_t nodeAccepted = 0;
     bool nodeOnline = false;

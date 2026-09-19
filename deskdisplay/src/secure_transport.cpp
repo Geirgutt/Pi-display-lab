@@ -37,6 +37,7 @@ uint64_t lastSequence = 0;
 uint8_t frame[secure_protocol::maxFrameSize] = {};
 size_t frameLength = 0;
 secure_protocol::Telemetry latest;
+secure_protocol::ClusterTelemetry latestCluster;
 secure_transport::Counters stats;
 
 int hexValue(char c)
@@ -129,8 +130,12 @@ void formatTemperature(int16_t temperatureTenths, char* output, size_t capacity)
 
 bool processFrame()
 {
-    if (frameLength < secure_protocol::frameSize) return true;
-    if (frameLength > secure_protocol::frameSize)
+    if (frameLength < secure_protocol::headerSize) return true;
+    const size_t expected = frame[3] == secure_protocol::clusterTelemetryType
+                          ? secure_protocol::clusterFrameSize
+                          : secure_protocol::frameSize;
+    if (frameLength < expected) return true;
+    if (frameLength > expected)
     {
         ++stats.malformed;
         closeSession(true);
@@ -144,7 +149,12 @@ bool processFrame()
     }
     uint64_t sequence = 0;
     secure_protocol::Telemetry value;
-    if (!secure_protocol::decodeTelemetry(frame, frameLength, sequence, value))
+    secure_protocol::ClusterTelemetry clusterValue;
+    const bool isCluster = frame[3] == secure_protocol::clusterTelemetryType;
+    const bool decoded = isCluster
+                       ? secure_protocol::decodeClusterTelemetry(frame, frameLength, sequence, clusterValue)
+                       : secure_protocol::decodeTelemetry(frame, frameLength, sequence, value);
+    if (!decoded)
     {
         ++stats.malformed;
         closeSession(true);
@@ -157,15 +167,24 @@ bool processFrame()
         return true;
     }
     lastSequence = sequence;
-    latest = value;
+    if (isCluster) latestCluster = clusterValue;
+    else latest = value;
     lastValidTelemetry = millis();
     ++stats.accepted;
-    char temperature[16];
-    formatTemperature(latest.temperatureTenths, temperature, sizeof(temperature));
-    Serial.printf("Secure telemetry seq=%llu host=%s cpu=%.1f%% temp=%s ram=%.1f%% up=%us online=%u\n",
-                  static_cast<unsigned long long>(sequence), latest.hostname,
-                  latest.cpuTenths / 10.0f, temperature,
-                  latest.ramTenths / 10.0f, latest.uptimeSeconds, latest.online ? 1 : 0);
+    if (isCluster)
+    {
+        Serial.printf("Secure cluster seq=%llu nodes=%u\n",
+                      static_cast<unsigned long long>(sequence), latestCluster.count);
+    }
+    else
+    {
+        char temperature[16];
+        formatTemperature(latest.temperatureTenths, temperature, sizeof(temperature));
+        Serial.printf("Secure telemetry seq=%llu host=%s cpu=%.1f%% temp=%s ram=%.1f%% up=%us online=%u\n",
+                      static_cast<unsigned long long>(sequence), latest.hostname,
+                      latest.cpuTenths / 10.0f, temperature,
+                      latest.ramTenths / 10.0f, latest.uptimeSeconds, latest.online ? 1 : 0);
+    }
     clearFrame();
     return true;
 }
@@ -179,8 +198,16 @@ void serviceSession()
     }
     while (client.available())
     {
-        if (frameLength == secure_protocol::frameSize && !processFrame()) return;
-        const size_t room = secure_protocol::frameSize - frameLength;
+        size_t expected = secure_protocol::headerSize;
+        if (frameLength >= secure_protocol::headerSize)
+            expected = frame[3] == secure_protocol::clusterTelemetryType
+                     ? secure_protocol::clusterFrameSize : secure_protocol::frameSize;
+        if (frameLength >= expected)
+        {
+            if (!processFrame()) return;
+            continue;
+        }
+        const size_t room = expected - frameLength;
         if (room == 0)
         {
             ++stats.malformed;
@@ -199,7 +226,7 @@ void serviceSession()
         lastRx = millis();
         if (!processFrame()) return;
     }
-    if (frameLength == secure_protocol::frameSize && !processFrame()) return;
+    if (frameLength >= secure_protocol::headerSize && !processFrame()) return;
     if (uint32_t(millis() - lastRx) >= offlineMs)
     {
         if (frameLength != 0) ++stats.malformed;
@@ -315,6 +342,7 @@ bool secure_transport::setPeer(const char* address, uint16_t port)
 bool secure_transport::enabled() { return requested; }
 bool secure_transport::connected() { return sessionActive && client.connected(); }
 const secure_protocol::Telemetry& secure_transport::lastTelemetry() { return latest; }
+const secure_protocol::ClusterTelemetry& secure_transport::lastClusterTelemetry() { return latestCluster; }
 uint32_t secure_transport::lastTelemetryAt() { return lastValidTelemetry; }
 const secure_transport::Counters& secure_transport::counters() { return stats; }
 
@@ -331,11 +359,22 @@ void secure_transport::printStatus(Print& out)
                static_cast<unsigned long>(stats.reconnects));
     if (stats.accepted)
     {
-        char temperature[16];
-        formatTemperature(latest.temperatureTenths, temperature, sizeof(temperature));
-        out.printf("Last telemetry: host=%s cpu=%.1f%% temp=%s ram=%.1f%% up=%us online=%u\n",
-                   latest.hostname, latest.cpuTenths / 10.0f, temperature,
-                   latest.ramTenths / 10.0f, latest.uptimeSeconds, latest.online ? 1 : 0);
+        if (latestCluster.count > 0)
+        {
+            out.printf("Last cluster: nodes=%u", latestCluster.count);
+            for (size_t index = 0; index < latestCluster.count; ++index)
+                out.printf(" %s=%u", latestCluster.nodes[index].name,
+                           latestCluster.nodes[index].online ? 1 : 0);
+            out.println();
+        }
+        else
+        {
+            char temperature[16];
+            formatTemperature(latest.temperatureTenths, temperature, sizeof(temperature));
+            out.printf("Last telemetry: host=%s cpu=%.1f%% temp=%s ram=%.1f%% up=%us online=%u\n",
+                       latest.hostname, latest.cpuTenths / 10.0f, temperature,
+                       latest.ramTenths / 10.0f, latest.uptimeSeconds, latest.online ? 1 : 0);
+        }
     }
 }
 
@@ -353,6 +392,11 @@ void secure_transport::printStatus(Print& out) { out.println("Secure transport e
 const secure_protocol::Telemetry& secure_transport::lastTelemetry()
 {
     static secure_protocol::Telemetry value;
+    return value;
+}
+const secure_protocol::ClusterTelemetry& secure_transport::lastClusterTelemetry()
+{
+    static secure_protocol::ClusterTelemetry value;
     return value;
 }
 uint32_t secure_transport::lastTelemetryAt() { return 0; }

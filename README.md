@@ -7,8 +7,9 @@ en emulert **480 × 320 TFT-skjerm** i nettleseren.
 Første versjon bruker enkel polling hvert sekund. Det er bevisst valgt i stedet
 for WebSocket: løsningen blir mindre, lettere å forstå og stabil på en eldre Pi.
 Web og DeskDisplay har hver sin presentasjon av de samme systembegrepene. Web
-bruker `DashboardState`, mens den første fysiske DeskDisplay-telemetrien bruker
-den verifiserte secure peer-protokollen.
+bruker `DashboardState`, mens DeskDisplay kobler sikkert til controllerens
+cluster-gateway. Controlleren samler status fra seg selv og de registrerte
+workerne, slik at ESP32-en bare trenger én TLS-forbindelse.
 
 ## DeskDisplay-firmware
 
@@ -26,6 +27,13 @@ pio run -e guition-4848s040
 De valgfrie Wi-Fi-, BLE-, Wi-Fi+BLE- og secure-miljøene er definert i
 `deskdisplay/platformio.ini`. Ikke legg PSK-er, lokale credentials,
 PlatformIO-buildfiler eller firmware-backuper i Git.
+
+Når clusteret er installert på controlleren, kan displayet settes opp i samme
+installasjonsflyt med `bash scripts/install-cluster.sh --display-port
+/dev/serial/by-id/...`. Skriptet genererer PSK lokalt, flasher secure-firmware
+og legger nøkkelen/controller-adressen i displayets lokale NVS. Se
+`deskdisplay/docs/one-pi-telemetry-service.md` for Wi-Fi- og `--display-no-flash`
+alternativer.
 
 ## Dette får du
 
@@ -51,14 +59,14 @@ Workers ← HTTPS GET /job ─ Cluster coordinator ─ statuscache ┤
 SystemMonitor ─────────────────────────────────────── DashboardState
                                                        (én felles state)
              │
-             ▼
-         TransportHub
-          ┌──┴───────────────┐
-          ▼                  ▼
- BrowserTransport    Esp32Transport (senere MQTT)
-          │
-          ▼
-  Flask API → nettleser → TFT-renderer
+            ▼
+        TransportHub
+         ┌──┴───────────────┐
+         ▼                  ▼
+ BrowserTransport    Controller gateway → TLS → DeskDisplay
+         │                                      │
+         ▼                                      ▼
+ Flask API → nettleser → TFT-renderer       Cluster page
 ```
 
 Kort forklart:
@@ -314,11 +322,13 @@ serversertifikat med SAN for valgt controller-IP eller hostname:
 /etc/pi-display-lab/pki/coordinator.crt     serversertifikat
 /etc/pi-display-lab/cluster-credentials.json 0600
 /etc/pi-display-lab/node-heartbeat.env      0600, når aktivert
+/etc/pi-display-lab/deskdisplay-peer.psk     0600, når DeskDisplay er aktivert
 ```
 
 CA-privatnøkkelen forlater aldri controlleren. Hver worker får bare offentlig
 `ca.crt`, sitt eget worker-token og eventuelt det delte heartbeat-tokenet. Pi
-Display Lab beholder admin-tokenet lokalt. Klientene validerer både CA-kjeden og
+Display Lab beholder admin-tokenet og DeskDisplay-PSK-en lokalt på controlleren.
+Klientene validerer både CA-kjeden og
 at sertifikatets SAN matcher controller-adressen; det finnes ingen
 `verify=False`-reserve. Ved adresseendring kan veiviseren lage bare et nytt
 serversertifikat og beholde CA-en.

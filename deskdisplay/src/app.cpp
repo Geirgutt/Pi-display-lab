@@ -33,6 +33,7 @@ void refreshState()
     if (secureStats.accepted != model.nodeAccepted)
     {
         model.nodeTelemetry = secure_transport::lastTelemetry();
+        model.clusterTelemetry = secure_transport::lastClusterTelemetry();
         model.nodeAccepted = secureStats.accepted;
     }
     model.nodeLastUpdate = secure_transport::lastTelemetryAt();

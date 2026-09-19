@@ -1,60 +1,59 @@
-# One-Pi secure telemetry service
+# Controller secure cluster telemetry gateway
 
 The first bootstrap integration installs the existing
-`deskdisplay/tools/secure_peer.c` sender on one selected cluster worker. The
-sender remains the canonical protocol implementation. Ansible compiles it on
-the worker into `/usr/local/libexec/pi-display-lab/secure_peer`, installs a
-separate `deskdisplay-secure-peer.service`, and removes build-only packages
-that were not already installed. The runtime needs only the normal system
-OpenSSL libraries.
+`deskdisplay/tools/secure_peer.c` sender on the controller. The sender remains
+the canonical protocol implementation. The controller-side service reads a
+compact loopback snapshot from the main Flask app and sends the controller and
+all configured workers over one authenticated TLS connection to DeskDisplay.
+The display receives pages of three nodes and rotates through them once per
+second, so the number of workers is not limited by the physical screen layout.
 
-The feature is disabled by default and is deliberately bound to one worker in
-the controller's ignored `config.local.json`:
+The feature is disabled by default and is configured in the controller's
+ignored `config.local.json`:
 
 ```json
 "deskdisplay": {
   "enabled": true,
-  "worker": "worker-01.local",
   "port": 4567,
   "psk_file": "/etc/pi-display-lab/deskdisplay-peer.psk"
 }
 ```
 
-The PSK file is read on the controller, passed through the existing private
-installation staging directory, and copied to the selected worker with mode
-`0600`. It is never written to Git or included in the generated public config.
-The worker copy uses `force: false`, so a normal reinstall/update preserves an
-existing local PSK. Change the PSK deliberately on both the worker and the
-DeskDisplay when rotation is needed.
+The PSK file is read and used on the controller with mode `0600`. It is never
+written to Git or distributed to workers. Change the PSK deliberately on both
+the controller and the DeskDisplay when rotation is needed.
 
-Create the controller-side PSK before running the installer. Keep the command
-outside the project directory:
-
-```sh
-sudo install -d -o "$(id -un)" -g "$(id -gn)" -m 700 /etc/pi-display-lab
-umask 077
-openssl rand -hex 32 > /etc/pi-display-lab/deskdisplay-peer.psk
-chmod 600 /etc/pi-display-lab/deskdisplay-peer.psk
-```
-
-Set `deskdisplay.enabled` and the exact worker address in `config.local.json`,
-then run the normal installer. During the first physical test, limit the
-worker installation explicitly:
+Set `deskdisplay.enabled` in `config.local.json`, then run the normal installer.
+It creates a fresh 32-byte PSK locally on the controller when the file is
+missing, preserves an existing valid PSK, and refuses to overwrite an invalid
+one:
 
 ```sh
-bash scripts/install-cluster.sh --limit-worker worker-01.local
+bash scripts/install-cluster.sh
 ```
 
-The selected worker listens on TCP port `4567` on all local interfaces. Open
-that port in the worker firewall only if the lab firewall requires it. The
-existing cluster worker, node-agent, controller and coordinator services are
-separate units and are not replaced by the secure sender.
+With the display connected over USB, the same installer can build, flash and
+provision the secure firmware. The optional Wi-Fi prompt is kept out of Git and
+the password is written only to the display's local NVS:
 
-The secure sender is intentionally a listener: configure the DeskDisplay's
-secure peer address to the selected worker's LAN address, enter the same PSK
-over the serial console, and start the existing secure transport commands. The
-sender emits the verified fixed frame once per second and reports the real
-hostname, CPU, RAM, CPU/SoC temperature or unavailable, and uptime.
+```sh
+bash scripts/install-cluster.sh \
+  --display-port /dev/serial/by-id/usb-... \
+  --display-wifi-ssid "mitt-nettverk"
+```
+
+PlatformIO is installed into the ignored local `.display-venv/` if it is not
+already available. Use `--display-no-flash` when the secure firmware is already
+on the display. The provisioning sends the locally generated PSK, controller
+IPv4 address and gateway port over the serial console without printing the PSK.
+
+The controller listens on TCP port `4567` on all local interfaces. Open that
+port in the controller firewall only if the lab firewall requires it. The
+existing cluster worker, node-agent and coordinator services remain separate.
+
+The secure sender is intentionally a listener. The gateway emits a fixed
+cluster frame once per second and reports the controller and all configured
+workers. Missing heartbeats are shown offline; there is no two-worker limit.
 
 ## Local training provider test
 

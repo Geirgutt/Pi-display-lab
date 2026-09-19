@@ -136,7 +136,6 @@ def build_controller_config(
         "node_heartbeat_auth": node_heartbeat_auth,
         "deskdisplay": {
             "enabled": False,
-            "worker": "",
             "port": 4567,
             "psk_file": DEFAULT_DESKDISPLAY_PSK_FILE,
         },
@@ -392,6 +391,9 @@ def _existing_config_choice(input_fn: InputFunction) -> str:
 def setup_firewall(raw: dict[str, Any], input_fn: InputFunction) -> None:
     """Offer concrete rules when a supported local firewall is active."""
     ports = [f"{raw['app_port']}/tcp", f"{raw['coordinator_port']}/tcp"]
+    deskdisplay = raw.get("deskdisplay") or {}
+    if deskdisplay.get("enabled") is True:
+        ports.append(f"{deskdisplay.get('port', 4567)}/tcp")
     if shutil.which("firewall-cmd"):
         state = run_text(["sudo", "-n", "firewall-cmd", "--state"])
         if state == "running":
@@ -615,7 +617,7 @@ def run_wizard(project_dir: str | Path, input_fn: InputFunction = input) -> int:
     if deskdisplay.get("enabled") is True:
         print(
             "\nDeskDisplay secure telemetry:\n"
-            f"  {deskdisplay.get('worker')} · TCP {deskdisplay.get('port', 4567)}"
+            f"  controller · TCP {deskdisplay.get('port', 4567)}"
         )
     print("\nController som compute-worker:\n  NEI")
     if not yes_no("\nFortsette installasjonen?", default=True, input_fn=input_fn):
@@ -670,8 +672,8 @@ def run_wizard(project_dir: str | Path, input_fn: InputFunction = input) -> int:
     for address in raw["worker_hosts"]:
         identity = workers_by_address.get(address, address)
         print(f"\n{identity}:\n✓ SSH\n✓ Worker\n✓ Node agent\n✓ Worker token\n✓ TLS verification")
-        if deskdisplay.get("enabled") is True and address.casefold() == str(deskdisplay.get("worker", "")).casefold():
-            print("✓ DeskDisplay secure telemetry")
+    if deskdisplay.get("enabled") is True:
+        print("\nDeskDisplay:\n✓ secure cluster gateway på controller")
     print(f"\nVersion:\n✓ alle noder kjører commit {commit}")
     print(f"\nDashboard:\nhttp://{raw['controller_host']}:{raw['app_port']}")
     print(f"\nCoordinator:\nhttps://{raw['controller_host']}:{raw['coordinator_port']}")

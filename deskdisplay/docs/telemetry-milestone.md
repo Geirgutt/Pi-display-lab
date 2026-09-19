@@ -219,6 +219,8 @@ plaintext telemetry, a second listener, control commands or a web service.
 
 ## Intentionally deferred
 
-This is one node only. Multi-node storage, discovery, configuration UI, web
-server, telemetry history, control/RPC commands, Home Assistant, MQTT, OTA,
-LVGL and service installation remain separate milestones.
+This historical milestone describes the original one-node test. The current
+controller gateway extends the same secure transport with a compact snapshot
+of the controller and up to two configured workers. Multi-node storage,
+discovery, configuration UI, telemetry history, control/RPC commands, Home
+Assistant, MQTT, OTA and LVGL remain separate milestones.
