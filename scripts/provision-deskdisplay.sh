@@ -243,3 +243,11 @@ if ! grep -q "Secure: " <<<"$STATUS_OUTPUT"; then
 fi
 printf '%s' "$STATUS_OUTPUT"
 echo "DeskDisplay er provisjonert mot $CONTROLLER_IP:$DESKDISPLAY_PORT_NUMBER."
+if [[ -n "$CONTROLLER_SSH" ]]; then
+  if ssh -o BatchMode=yes "$CONTROLLER_SSH" 'cd "$HOME/Pi-display-lab" && python3 scripts/mark-display-ota-ready.py config.local.json'; then
+    echo "Controlleren er markert som OTA-klargjort for DeskDisplay."
+  else
+    echo "Advarsel: kunne ikke markere controlleren som OTA-klargjort." >&2
+    echo "Kjør scripts/mark-display-ota-ready.py på controlleren før OTA-oppdatering." >&2
+  fi
+fi
