@@ -375,7 +375,7 @@ def validate_controller_config(path: str | Path) -> AppConfig:
         errors.append("deskdisplay.display_attached må være true, false eller utelatt")
     if display_attached is True:
         display_host = deskdisplay.get("display_host", "")
-        valid_display_hosts = {"controller", *worker_hosts}
+        valid_display_hosts = {"controller", *cleaned_workers}
         if display_host not in valid_display_hosts:
             errors.append(
                 "deskdisplay.display_host må være controller eller en konfigurert worker"
