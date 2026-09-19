@@ -33,10 +33,6 @@ if [[ -f "$CONFIG_FILE" ]]; then
   CLUSTER_ENABLED="$(python3 scripts/config-value.py cluster_enabled --config "$CONFIG_FILE")"
 fi
 
-if [[ "$CLUSTER_ENABLED" == "true" ]]; then
-  python3 scripts/ensure-display-config.py "$CONFIG_FILE"
-fi
-
 source "$PROJECT_DIR/scripts/sudo-session.sh"
 trap 'sudo_session_stop' EXIT
 

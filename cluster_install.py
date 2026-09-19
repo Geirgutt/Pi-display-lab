@@ -24,6 +24,7 @@ PROJECT_DIR = Path(__file__).resolve().parent
 MAX_FORKS = 10
 IDENTIFY_SCRIPT = r'''set -eu
 count="$1"
+cycles="${2:-1}"
 led=""
 for candidate in /sys/class/leds/led0 /sys/class/leds/ACT; do
   if [ -d "$candidate" ]; then led="$candidate"; break; fi
@@ -35,15 +36,19 @@ old="$(sed -n 's/.*\[\([^]]*\)\].*/\1/p' "$trigger" 2>/dev/null || true)"
 printf '%s\n' none > "$trigger"
 restore() { [ -n "$old" ] && printf '%s\n' "$old" > "$trigger" || true; }
 trap restore EXIT INT TERM
-i=0
-while [ "$i" -lt "$count" ]; do
-  printf '%s\n' 1 > "$brightness"
-  sleep 0.45
-  printf '%s\n' 0 > "$brightness"
-  sleep 0.45
-  i=$((i + 1))
+cycle=0
+while [ "$cycle" -lt "$cycles" ]; do
+  i=0
+  while [ "$i" -lt "$count" ]; do
+    printf '%s\n' 1 > "$brightness"
+    sleep 0.45
+    printf '%s\n' 0 > "$brightness"
+    sleep 0.45
+    i=$((i + 1))
+  done
+  sleep 1.5
+  cycle=$((cycle + 1))
 done
-sleep 2
 '''
 
 
@@ -206,6 +211,11 @@ def install(config: str, temp_dir: str, revision: str, workers: list[str], user:
             display_identify_pending: bool = False, worker_order: list[str] | None = None) -> int:
     passwords = broker_passwords(sudo_socket, workers) if sudo_socket else collect_passwords(
         user, workers, **({"identity_file": identity_file} if identity_file else {}))
+    if display_attached is None and Path(config).is_file():
+        display_attached, display_host, display_serial_port, configured_wifi_ssid = configure_display_choice(
+            config, worker_order or workers, workers, passwords, user, identity_file,
+        )
+        display_identify_pending = False
     print("Passordkontrollen er ferdig. Installerer controlleren ...", flush=True)
     controller = ["bash", "scripts/install-cluster-controller.sh", config, temp_dir, revision]
     if regenerate:
@@ -296,6 +306,97 @@ def identify_display_nodes(target: str, selected_workers: list[str], passwords: 
             success = False
             print(f"Kunne ikke blinke ACT-dioden på {host}; fortsetter likevel.", file=sys.stderr)
     return success
+
+
+def _terminal_prompt(message: str, default: str = "") -> str:
+    suffix = f" [{default}]" if default else ""
+    try:
+        with open("/dev/tty", "r+", encoding="utf-8", errors="replace") as terminal:
+            terminal.write(message + suffix + ": ")
+            terminal.flush()
+            return terminal.readline().strip() or default
+    except OSError:
+        return input(message + suffix + ": ").strip() or default
+
+
+def _terminal_yes_no(message: str) -> bool:
+    while True:
+        answer = _terminal_prompt(message + " [j/N]").casefold()
+        if answer in {"", "n", "nei", "no"}:
+            return False
+        if answer in {"j", "ja", "y", "yes"}:
+            return True
+        print("Svar j eller n.")
+
+
+def identify_single_worker(host: str, ordinal: int, password: str, user: str,
+                           identity_file: str, *, cycles: int = 3) -> bool:
+    print(f"Identifiserer {host}: {ordinal} blink, gjentas {cycles} ganger ...", flush=True)
+    sudo = "sudo -S -p ''" if password else "sudo -n"
+    remote = f"{sudo} /bin/sh -c {shlex.quote(IDENTIFY_SCRIPT)} identify {min(ordinal, 9)} {cycles}"
+    result = ssh_run(
+        user, host, remote, identity_file=identity_file,
+        stdin=(password + "\n") if password else "", timeout=45,
+    )
+    return result.returncode == 0
+
+
+def configure_display_choice(config: str, worker_order: list[str], selected_workers: list[str],
+                             passwords: dict[str, str], user: str, identity_file: str):
+    print("\nDeskDisplay er ikke konfigurert for USB-provisjonering ennå.")
+    print("Når en Pi identifiseres, blinker ACT-dioden med sitt worker-nummer.")
+    if not _terminal_yes_no("Er displayet koblet med USB-data til en Pi nå?"):
+        update_display_choice(config, False, "", "", "", False)
+        return False, "", "", ""
+
+    candidates = [("controller", "controlleren", 1)]
+    candidates.extend(
+        (host, host, index)
+        for index, host in enumerate(worker_order, start=1)
+        if host in selected_workers
+    )
+    for target, label, ordinal in candidates:
+        if target == "controller":
+            result = subprocess.run([
+                "sudo", "-n", "sh", "-c", IDENTIFY_SCRIPT, "identify", "1", "3",
+            ])
+        else:
+            result = None
+            if not identify_single_worker(
+                target, ordinal, passwords.get(target, ""), user, identity_file,
+            ):
+                print(f"Kunne ikke identifisere {label}; prøver neste Pi.", file=sys.stderr)
+                continue
+        if result is not None and result.returncode:
+            print(f"Kunne ikke identifisere {label}; prøver neste Pi.", file=sys.stderr)
+            continue
+        print(f"Så du blinkingen på {label}?")
+        if _terminal_yes_no("Er dette Pi-en displayet er koblet til?"):
+            serial_port = _terminal_prompt("Seriell port (tom = finn automatisk)")
+            wifi_ssid = _terminal_prompt("Wi-Fi-SSID (tom = behold lagret Wi-Fi)")
+            update_display_choice(config, True, target, serial_port, wifi_ssid, True)
+            return True, target, serial_port, wifi_ssid
+
+    raise RuntimeError("Ingen Pi ble valgt. Kjør oppdateringen på nytt og velg displayets Pi.")
+
+
+def update_display_choice(config: str, attached: bool, host: str, serial_port: str,
+                          wifi_ssid: str, wifi_configured: bool) -> None:
+    path = Path(config)
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    deskdisplay = payload.setdefault("deskdisplay", {})
+    deskdisplay.update({
+        "display_attached": attached,
+        "display_host": host,
+        "display_serial_port": serial_port,
+        "display_wifi_ssid": wifi_ssid,
+        "display_wifi_configured": wifi_configured if not wifi_ssid else False,
+        "display_identify_pending": False,
+    })
+    if attached:
+        deskdisplay["enabled"] = True
+    path.write_text(json.dumps(payload, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+    os.chmod(path, 0o600)
 
 
 def _display_command(port: str, wifi_ssid: str, no_flash: bool) -> list[str]:

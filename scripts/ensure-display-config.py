@@ -54,6 +54,16 @@ def main() -> int:
     if not isinstance(deskdisplay, dict):
         print("deskdisplay må være et JSON-objekt.", file=sys.stderr)
         return 1
+    if len(sys.argv) == 3:
+        for key in (
+            "display_attached", "display_host", "display_serial_port",
+            "display_wifi_ssid", "display_wifi_configured", "display_identify_pending",
+        ):
+            deskdisplay.pop(key, None)
+        path.write_text(json.dumps(payload, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+        os.chmod(path, 0o600)
+        print("Displayvalget er nullstilt. Neste installasjon/oppdatering spør på nytt.")
+        return 0
     if isinstance(deskdisplay.get("display_attached"), bool) and len(sys.argv) == 2:
         return 0
 
