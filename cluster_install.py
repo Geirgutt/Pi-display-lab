@@ -38,12 +38,12 @@ trap restore EXIT INT TERM
 i=0
 while [ "$i" -lt "$count" ]; do
   printf '%s\n' 1 > "$brightness"
-  sleep 0.18
+  sleep 0.45
   printf '%s\n' 0 > "$brightness"
-  sleep 0.18
+  sleep 0.45
   i=$((i + 1))
 done
-sleep 0.7
+sleep 2
 '''
 
 
