@@ -22,6 +22,29 @@ from cluster_ssh import require_ssh, ssh_options, ssh_run
 
 PROJECT_DIR = Path(__file__).resolve().parent
 MAX_FORKS = 10
+IDENTIFY_SCRIPT = r'''set -eu
+count="$1"
+led=""
+for candidate in /sys/class/leds/led0 /sys/class/leds/ACT; do
+  if [ -d "$candidate" ]; then led="$candidate"; break; fi
+done
+[ -n "$led" ] || exit 3
+trigger="$led/trigger"
+brightness="$led/brightness"
+old="$(sed -n 's/.*\[\([^]]*\)\].*/\1/p' "$trigger" 2>/dev/null || true)"
+printf '%s\n' none > "$trigger"
+restore() { [ -n "$old" ] && printf '%s\n' "$old" > "$trigger" || true; }
+trap restore EXIT INT TERM
+i=0
+while [ "$i" -lt "$count" ]; do
+  printf '%s\n' 1 > "$brightness"
+  sleep 0.18
+  printf '%s\n' 0 > "$brightness"
+  sleep 0.18
+  i=$((i + 1))
+done
+sleep 0.7
+'''
 
 
 def select_workers(configured: tuple[str, ...], limits: list[str], controller_only: bool) -> list[str]:
@@ -179,7 +202,8 @@ def install(config: str, temp_dir: str, revision: str, workers: list[str], user:
             display_attached: bool | None = None, display_host: str = "",
             display_serial_port: str = "", controller_host: str = "",
             display_gateway_port: int = 4567, display_psk_file: str = "",
-            configured_wifi_ssid: str = "", display_wifi_configured: bool | None = None) -> int:
+            configured_wifi_ssid: str = "", display_wifi_configured: bool | None = None,
+            display_identify_pending: bool = False, worker_order: list[str] | None = None) -> int:
     passwords = broker_passwords(sudo_socket, workers) if sudo_socket else collect_passwords(
         user, workers, **({"identity_file": identity_file} if identity_file else {}))
     print("Passordkontrollen er ferdig. Installerer controlleren ...", flush=True)
@@ -190,6 +214,12 @@ def install(config: str, temp_dir: str, revision: str, workers: list[str], user:
     if result.returncode:
         return result.returncode
     if not workers:
+        if display_identify_pending and display_attached is True:
+            if identify_display_nodes(
+                display_host, workers, passwords, user, identity_file,
+                worker_order or workers,
+            ):
+                mark_display_identification_done(config)
         result = provision_configured_display(
             display_port, display_wifi_ssid or configured_wifi_ssid, display_no_flash,
             display_attached=display_attached, display_host=display_host,
@@ -219,6 +249,12 @@ def install(config: str, temp_dir: str, revision: str, workers: list[str], user:
     if result.returncode:
         print("Worker-installasjonen feilet. Se Ansible-oppsummeringen over; rett feilen og kjør igjen.", flush=True)
         return result.returncode
+    if display_identify_pending:
+        if identify_display_nodes(
+            display_host, workers, passwords, user, identity_file,
+            worker_order or workers,
+        ):
+            mark_display_identification_done(config)
     result = provision_configured_display(
         display_port, display_wifi_ssid or configured_wifi_ssid, display_no_flash,
         display_attached=display_attached, display_host=display_host,
@@ -230,6 +266,36 @@ def install(config: str, temp_dir: str, revision: str, workers: list[str], user:
     if result == 0 and display_attached is True:
         mark_display_wifi_configured(config)
     return result
+
+
+def identify_display_nodes(target: str, selected_workers: list[str], passwords: dict[str, str],
+                           user: str, identity_file: str, worker_order: list[str]) -> bool:
+    if target == "controller":
+        result = subprocess.run(["sudo", "-n", "sh", "-c", IDENTIFY_SCRIPT, "identify", "1"])
+        if result.returncode:
+            print("Kunne ikke blinke controllerens ACT-diode; fortsetter likevel.", file=sys.stderr)
+            return False
+        return True
+    candidates = [host for host in worker_order if host in selected_workers]
+    if len(candidates) > 10:
+        candidates = candidates[:9] + ([target] if target not in candidates[:9] else [])
+    success = True
+    for ordinal, host in enumerate(worker_order, start=1):
+        if host not in candidates:
+            continue
+        count = min(ordinal, 9)
+        print(f"Identifiserer {host}: {count} blink ...", flush=True)
+        sudo = "sudo -S -p ''" if passwords.get(host, "") else "sudo -n"
+        remote = f"{sudo} /bin/sh -c {shlex.quote(IDENTIFY_SCRIPT)} identify {count}"
+        result = ssh_run(
+            user, host, remote, identity_file=identity_file,
+            stdin=(passwords.get(host, "") + "\n") if passwords.get(host, "") else "",
+            timeout=30,
+        )
+        if result.returncode:
+            success = False
+            print(f"Kunne ikke blinke ACT-dioden på {host}; fortsetter likevel.", file=sys.stderr)
+    return success
 
 
 def _display_command(port: str, wifi_ssid: str, no_flash: bool) -> list[str]:
@@ -322,6 +388,16 @@ def mark_display_wifi_configured(config: str) -> None:
         os.chmod(path, 0o600)
 
 
+def mark_display_identification_done(config: str) -> None:
+    path = Path(config)
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    deskdisplay = payload.get("deskdisplay")
+    if isinstance(deskdisplay, dict):
+        deskdisplay["display_identify_pending"] = False
+        path.write_text(json.dumps(payload, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+        os.chmod(path, 0o600)
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("config")
@@ -350,7 +426,9 @@ def main() -> int:
                        display_gateway_port=settings.deskdisplay.port,
                        display_psk_file=settings.deskdisplay.psk_file,
                        configured_wifi_ssid=settings.deskdisplay.display_wifi_ssid,
-                       display_wifi_configured=settings.deskdisplay.display_wifi_configured)
+                       display_wifi_configured=settings.deskdisplay.display_wifi_configured,
+                       display_identify_pending=settings.deskdisplay.display_identify_pending,
+                       worker_order=list(settings.worker_hosts))
     except (ConfigValidationError, RuntimeError, OSError, EOFError) as error:
         print(f"Installasjonen stoppet: {error}", file=sys.stderr)
         return 1

@@ -70,6 +70,7 @@ def main() -> int:
             "display_serial_port": "",
             "display_wifi_ssid": "",
             "display_wifi_configured": False,
+            "display_identify_pending": False,
         })
     else:
         choices = [("controller", "controlleren")]
@@ -97,6 +98,7 @@ def main() -> int:
             "display_serial_port": serial_port,
             "display_wifi_ssid": wifi_ssid,
             "display_wifi_configured": not bool(wifi_ssid),
+            "display_identify_pending": True,
         })
 
     path.write_text(json.dumps(payload, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
