@@ -50,6 +50,8 @@ class InstallationWorkflowTests(unittest.TestCase):
         self.assertIn("openssl rand -hex 32", controller_service)
         self.assertIn("--display-port", installer)
         self.assertIn("secure key $PSK", display_provisioner)
+        self.assertIn("--controller-ssh", display_provisioner)
+        self.assertIn("sudo -n cat", display_provisioner)
         self.assertIn("--display-no-flash", installer)
         self.assertIn(".display-venv/", self.read(".gitignore"))
         self.assertIn("Stopp gammel DeskDisplay-tjeneste", playbook)

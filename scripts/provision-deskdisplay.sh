@@ -9,15 +9,24 @@ CONFIG_FILE="$PROJECT_DIR/config.local.json"
 PYTHON_BIN="$PROJECT_DIR/.venv/bin/python"
 DISPLAY_PORT=""
 WIFI_SSID=""
+CONTROLLER_SSH=""
+CONTROLLER_HOST=""
+DESKDISPLAY_PORT_NUMBER="4567"
+REMOTE_PSK_FILE="/etc/pi-display-lab/deskdisplay-peer.psk"
 FLASH=true
 
 usage() {
   cat <<'EOF'
 Bruk: scripts/provision-deskdisplay.sh --port SERIAL_PORT [--wifi-ssid SSID] [--no-flash]
 
+Når displayet står på en annen PC enn controlleren, bruk også:
+  --controller-ssh USER@CONTROLLER --controller-host HOST_OR_IP
+
 Flasher den sikre firmwarevarianten og legger lokal Wi-Fi/PSK/controller-
 konfigurasjon i displayets NVS. PSK-en skrives aldri til terminalen eller repoet.
 --no-flash brukes når secure-firmware allerede ligger på displayet.
+--controller-ssh henter PSK-en direkte fra controlleren over SSH uten å lagre den
+lokalt. SSH-kontoen må kunne lese PSK-filen, eventuelt med passordfri sudo.
 EOF
 }
 
@@ -31,6 +40,26 @@ while [[ $# -gt 0 ]]; do
     --wifi-ssid)
       [[ $# -ge 2 ]] || { echo "--wifi-ssid mangler verdi" >&2; exit 2; }
       WIFI_SSID="$2"
+      shift 2
+      ;;
+    --controller-ssh)
+      [[ $# -ge 2 ]] || { echo "--controller-ssh mangler verdi" >&2; exit 2; }
+      CONTROLLER_SSH="$2"
+      shift 2
+      ;;
+    --controller-host)
+      [[ $# -ge 2 ]] || { echo "--controller-host mangler verdi" >&2; exit 2; }
+      CONTROLLER_HOST="$2"
+      shift 2
+      ;;
+    --gateway-port)
+      [[ $# -ge 2 ]] || { echo "--gateway-port mangler verdi" >&2; exit 2; }
+      DESKDISPLAY_PORT_NUMBER="$2"
+      shift 2
+      ;;
+    --remote-psk-file)
+      [[ $# -ge 2 ]] || { echo "--remote-psk-file mangler verdi" >&2; exit 2; }
+      REMOTE_PSK_FILE="$2"
       shift 2
       ;;
     --no-flash)
@@ -57,26 +86,49 @@ if [[ -z "$DISPLAY_PORT" || ! -e "$DISPLAY_PORT" ]]; then
   echo "Mangler tilgjengelig display-port. Bruk --port /dev/serial/by-id/..." >&2
   exit 1
 fi
-if [[ ! -f "$CONFIG_FILE" || ! -x "$PYTHON_BIN" ]]; then
-  echo "Mangler config.local.json eller .venv i $PROJECT_DIR" >&2
-  exit 1
+if [[ -n "$CONTROLLER_SSH" ]]; then
+  [[ -n "$CONTROLLER_HOST" ]] || {
+    echo "--controller-host kreves sammen med --controller-ssh." >&2
+    exit 1
+  }
+  [[ "$REMOTE_PSK_FILE" =~ ^/[A-Za-z0-9_./-]+$ && "$REMOTE_PSK_FILE" != *..* ]] || {
+    echo "Utrygg --remote-psk-file." >&2
+    exit 1
+  }
+  echo "Henter DeskDisplay-PSK sikkert fra controlleren ..."
+  PSK="$(ssh -o BatchMode=yes "$CONTROLLER_SSH" cat -- "$REMOTE_PSK_FILE" 2>/dev/null || true)"
+  if ! [[ "$PSK" =~ ^[[:space:]]*[0-9A-Fa-f]{64}[[:space:]]*$ ]]; then
+    PSK="$(ssh -o BatchMode=yes "$CONTROLLER_SSH" sudo -n cat -- "$REMOTE_PSK_FILE" 2>/dev/null || true)"
+  fi
+  if ! [[ "$PSK" =~ ^[[:space:]]*[0-9A-Fa-f]{64}[[:space:]]*$ ]]; then
+    echo "Kunne ikke hente gyldig DeskDisplay-PSK fra controlleren." >&2
+    exit 1
+  fi
+else
+  if [[ ! -f "$CONFIG_FILE" || ! -x "$PYTHON_BIN" ]]; then
+    echo "Mangler config.local.json eller .venv i $PROJECT_DIR" >&2
+    exit 1
+  fi
+  DESKDISPLAY_ENABLED="$("$PYTHON_BIN" "$PROJECT_DIR/scripts/config-value.py" deskdisplay_enabled --config "$CONFIG_FILE")"
+  [[ "$DESKDISPLAY_ENABLED" == "true" ]] || {
+    echo "deskdisplay.enabled må være true i config.local.json." >&2
+    exit 1
+  }
+  CONTROLLER_HOST="$("$PYTHON_BIN" "$PROJECT_DIR/scripts/config-value.py" controller_host --config "$CONFIG_FILE")"
+  DESKDISPLAY_PORT_NUMBER="$("$PYTHON_BIN" "$PROJECT_DIR/scripts/config-value.py" deskdisplay_port --config "$CONFIG_FILE")"
+  PSK_FILE="$("$PYTHON_BIN" "$PROJECT_DIR/scripts/config-value.py" deskdisplay_psk_file --config "$CONFIG_FILE")"
+  if [[ ! -f "$PSK_FILE" ]]; then
+    echo "Mangler lokal DeskDisplay-PSK: $PSK_FILE" >&2
+    echo "Kjør først scripts/install-cluster.sh slik at PSK-en genereres på controlleren." >&2
+    exit 1
+  fi
+  PSK="$(cat "$PSK_FILE")"
+  if ! [[ "$PSK" =~ ^[[:space:]]*[0-9A-Fa-f]{64}[[:space:]]*$ ]]; then
+    echo "Lokal DeskDisplay-PSK er ugyldig: $PSK_FILE" >&2
+    exit 1
+  fi
 fi
-
-DESKDISPLAY_ENABLED="$("$PYTHON_BIN" "$PROJECT_DIR/scripts/config-value.py" deskdisplay_enabled --config "$CONFIG_FILE")"
-[[ "$DESKDISPLAY_ENABLED" == "true" ]] || {
-  echo "deskdisplay.enabled må være true i config.local.json." >&2
-  exit 1
-}
-CONTROLLER_HOST="$("$PYTHON_BIN" "$PROJECT_DIR/scripts/config-value.py" controller_host --config "$CONFIG_FILE")"
-DESKDISPLAY_PORT_NUMBER="$("$PYTHON_BIN" "$PROJECT_DIR/scripts/config-value.py" deskdisplay_port --config "$CONFIG_FILE")"
-PSK_FILE="$("$PYTHON_BIN" "$PROJECT_DIR/scripts/config-value.py" deskdisplay_psk_file --config "$CONFIG_FILE")"
-
-if [[ ! -f "$PSK_FILE" ]] || ! grep -Eq '^[[:space:]]*[0-9A-Fa-f]{64}[[:space:]]*$' "$PSK_FILE"; then
-  echo "Mangler gyldig lokal DeskDisplay-PSK: $PSK_FILE" >&2
-  echo "Kjør først scripts/install-cluster.sh slik at PSK-en genereres på controlleren." >&2
-  exit 1
-fi
-PSK="$(tr -d '[:space:]' <"$PSK_FILE")"
+PSK="$(printf '%s' "$PSK" | tr -d '[:space:]')"
 
 if [[ "$CONTROLLER_HOST" =~ ^[0-9]{1,3}(\.[0-9]{1,3}){3}$ ]]; then
   CONTROLLER_IP="$CONTROLLER_HOST"

@@ -32,20 +32,31 @@ one:
 bash scripts/install-cluster.sh
 ```
 
-With the display connected over USB, the same installer can build, flash and
-provision the secure firmware. The optional Wi-Fi prompt is kept out of Git and
-the password is written only to the display's local NVS:
+With the display connected over USB, a PC with a checkout of this repository
+can build, flash and provision the secure firmware. The display does not need
+to be connected to the controller. The provisioning command fetches the PSK
+from the controller over SSH into memory only; it is never written to the PC,
+Git or the terminal. The optional Wi-Fi prompt is written only to the
+display's local NVS:
 
 ```sh
-bash scripts/install-cluster.sh \
-  --display-port /dev/serial/by-id/usb-... \
-  --display-wifi-ssid "mitt-nettverk"
+bash scripts/provision-deskdisplay.sh \
+  --port /dev/serial/by-id/usb-... \
+  --controller-ssh pi@controller.local \
+  --controller-host controller.local \
+  --wifi-ssid "mitt-nettverk"
 ```
 
 PlatformIO is installed into the ignored local `.display-venv/` if it is not
 already available. Use `--display-no-flash` when the secure firmware is already
-on the display. The provisioning sends the locally generated PSK, controller
-IPv4 address and gateway port over the serial console without printing the PSK.
+on the display. The provisioning sends the controller's locally generated PSK,
+controller IPv4 address and gateway port over the serial console without
+printing the PSK.
+
+After this initial setup the display only needs USB-C power. A normal
+`scripts/update.sh` updates the controller and workers, but does not flash the
+display. Run the provisioning command again only when firmware or display-side
+credentials must change.
 
 The controller listens on TCP port `4567` on all local interfaces. Open that
 port in the controller firewall only if the lab firewall requires it. The

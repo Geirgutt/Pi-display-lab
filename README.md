@@ -28,10 +28,12 @@ De valgfrie Wi-Fi-, BLE-, Wi-Fi+BLE- og secure-miljøene er definert i
 `deskdisplay/platformio.ini`. Ikke legg PSK-er, lokale credentials,
 PlatformIO-buildfiler eller firmware-backuper i Git.
 
-Når clusteret er installert på controlleren, kan displayet settes opp i samme
-installasjonsflyt med `bash scripts/install-cluster.sh --display-port
-/dev/serial/by-id/...`. Skriptet genererer PSK lokalt, flasher secure-firmware
-og legger nøkkelen/controller-adressen i displayets lokale NVS. Se
+Når clusteret er installert på controlleren, kan displayet settes opp fra en
+PC der displayet er tilkoblet med
+`bash scripts/provision-deskdisplay.sh --port /dev/serial/by-id/...`
+og `--controller-ssh`. Skriptet henter PSK sikkert fra controlleren, flasher
+secure-firmware og legger nøkkelen/controller-adressen i displayets lokale NVS.
+Se
 `deskdisplay/docs/one-pi-telemetry-service.md` for Wi-Fi- og `--display-no-flash`
 alternativer.
 
