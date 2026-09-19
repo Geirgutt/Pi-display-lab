@@ -14,6 +14,7 @@ CONTROLLER_HOST=""
 DESKDISPLAY_PORT_NUMBER="4567"
 REMOTE_PSK_FILE="/etc/pi-display-lab/deskdisplay-peer.psk"
 PSK_STDIN=false
+WIFI_PASSWORD_STDIN=false
 FLASH=true
 
 usage() {
@@ -30,6 +31,7 @@ konfigurasjon i displayets NVS. PSK-en skrives aldri til terminalen eller repoet
 lokalt. SSH-kontoen må kunne lese PSK-filen, eventuelt med passordfri sudo.
 --psk-stdin brukes når en installeringsprosess på controlleren sender PSK-en
 gjennom en privat pipe til en worker med displayet tilkoblet.
+--wifi-password-stdin leser Wi-Fi-passordet som neste linje etter PSK-en.
 EOF
 }
 
@@ -67,6 +69,10 @@ while [[ $# -gt 0 ]]; do
       ;;
     --psk-stdin)
       PSK_STDIN=true
+      shift
+      ;;
+    --wifi-password-stdin)
+      WIFI_PASSWORD_STDIN=true
       shift
       ;;
     --no-flash)
@@ -111,6 +117,9 @@ if [[ "$PSK_STDIN" == "true" ]]; then
     exit 1
   }
   IFS= read -r PSK || true
+  if [[ "$WIFI_PASSWORD_STDIN" == "true" ]]; then
+    IFS= read -r WIFI_PASSWORD || true
+  fi
   if ! [[ "$PSK" =~ ^[[:space:]]*[0-9A-Fa-f]{64}[[:space:]]*$ ]]; then
     echo "Mottok ikke en gyldig DeskDisplay-PSK via privat pipe." >&2
     exit 1
@@ -169,7 +178,9 @@ if [[ ! "$CONTROLLER_IP" =~ ^[0-9]{1,3}(\.[0-9]{1,3}){3}$ ]]; then
   exit 1
 fi
 
-if [[ -z "$WIFI_SSID" && -t 0 && -r /dev/tty ]]; then
+if [[ "$WIFI_PASSWORD_STDIN" == "true" ]]; then
+  [[ -n "$WIFI_SSID" ]] || { echo "Wi-Fi-SSID mangler ved bruk av --wifi-password-stdin." >&2; exit 1; }
+elif [[ -z "$WIFI_SSID" && -t 0 && -r /dev/tty ]]; then
   read -r -p "Wi-Fi-SSID (tomt beholder lagrede credentials): " WIFI_SSID </dev/tty
   if [[ -n "$WIFI_SSID" ]]; then
     read -r -s -p "Wi-Fi-passord (skjult): " WIFI_PASSWORD </dev/tty

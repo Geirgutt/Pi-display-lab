@@ -68,6 +68,8 @@ def main() -> int:
             "display_attached": False,
             "display_host": "",
             "display_serial_port": "",
+            "display_wifi_ssid": "",
+            "display_wifi_configured": False,
         })
     else:
         choices = [("controller", "controlleren")]
@@ -85,11 +87,16 @@ def main() -> int:
         serial_port = prompt(
             "Seriell port på denne Pi-en (tom = finn automatisk)",
         )
+        wifi_ssid = prompt(
+            "Wi-Fi-SSID (tom = behold allerede lagret Wi-Fi)",
+        )
         deskdisplay.update({
             "enabled": True,
             "display_attached": True,
             "display_host": target,
             "display_serial_port": serial_port,
+            "display_wifi_ssid": wifi_ssid,
+            "display_wifi_configured": not bool(wifi_ssid),
         })
 
     path.write_text(json.dumps(payload, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")

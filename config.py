@@ -48,6 +48,8 @@ class DeskDisplayConfig:
     display_attached: bool | None = None
     display_host: str = ""
     display_serial_port: str = ""
+    display_wifi_ssid: str = ""
+    display_wifi_configured: bool | None = None
 
 
 @dataclass(frozen=True)
@@ -203,6 +205,16 @@ def load_config(path: str | Path | None = None) -> AppConfig:
             display_host=_safe_host(deskdisplay.get("display_host")),
             display_serial_port=_safe_private_file(
                 deskdisplay.get("display_serial_port"), ""
+            ),
+            display_wifi_ssid=(
+                deskdisplay.get("display_wifi_ssid", "")
+                if isinstance(deskdisplay.get("display_wifi_ssid", ""), str)
+                else ""
+            ).strip(),
+            display_wifi_configured=(
+                deskdisplay.get("display_wifi_configured")
+                if isinstance(deskdisplay.get("display_wifi_configured"), bool)
+                else None
             ),
         ),
         node_role=role,
@@ -367,6 +379,16 @@ def validate_controller_config(path: str | Path) -> AppConfig:
         display_serial_port = deskdisplay.get("display_serial_port", "")
         if display_serial_port and _safe_private_file(display_serial_port, "") != display_serial_port:
             errors.append("deskdisplay.display_serial_port er ugyldig")
+        display_wifi_ssid = deskdisplay.get("display_wifi_ssid", "")
+        if (
+            not isinstance(display_wifi_ssid, str)
+            or len(display_wifi_ssid) > 32
+            or any(character in display_wifi_ssid for character in "\r\n\t\0")
+        ):
+            errors.append("deskdisplay.display_wifi_ssid må være høyst 32 tegn")
+        display_wifi_configured = deskdisplay.get("display_wifi_configured")
+        if display_wifi_configured is not None and not isinstance(display_wifi_configured, bool):
+            errors.append("deskdisplay.display_wifi_configured må være true, false eller utelatt")
 
     if errors:
         raise ConfigValidationError("Ugyldig config.local.json:\n- " + "\n- ".join(errors))

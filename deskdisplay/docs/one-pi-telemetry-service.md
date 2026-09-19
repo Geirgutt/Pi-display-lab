@@ -60,11 +60,13 @@ credentials must change.
 
 The first `scripts/install-cluster.sh` or `scripts/update.sh` run asks whether
 the display is connected over USB data. The answer and selected Pi are stored
-in the ignored `config.local.json`; later updates reuse that choice. If the
-display is assigned to a worker, the installer runs the provisioning script on
-that worker after the worker update and sends the PSK through a private SSH
-stdin pipe. The PSK is not installed as a worker credential or written to the
-worker's repository.
+in the ignored `config.local.json`; later updates reuse that choice. The first
+yes-answer also asks for an optional Wi-Fi SSID; the password is requested
+hidden and is not stored. If the display is assigned to a worker, the installer
+runs the provisioning script on that worker after the worker update and sends
+the PSK (and, when needed, Wi-Fi password) through private SSH stdin pipes. The
+PSK is not installed as a worker credential or written to the worker's
+repository.
 
 The controller listens on TCP port `4567` on all local interfaces. Open that
 port in the controller firewall only if the lab firewall requires it. The

@@ -178,7 +178,8 @@ def install(config: str, temp_dir: str, revision: str, workers: list[str], user:
             display_port: str = "", display_wifi_ssid: str = "", display_no_flash: bool = False,
             display_attached: bool | None = None, display_host: str = "",
             display_serial_port: str = "", controller_host: str = "",
-            display_gateway_port: int = 4567, display_psk_file: str = "") -> int:
+            display_gateway_port: int = 4567, display_psk_file: str = "",
+            configured_wifi_ssid: str = "", display_wifi_configured: bool | None = None) -> int:
     passwords = broker_passwords(sudo_socket, workers) if sudo_socket else collect_passwords(
         user, workers, **({"identity_file": identity_file} if identity_file else {}))
     print("Passordkontrollen er ferdig. Installerer controlleren ...", flush=True)
@@ -189,13 +190,17 @@ def install(config: str, temp_dir: str, revision: str, workers: list[str], user:
     if result.returncode:
         return result.returncode
     if not workers:
-        return provision_configured_display(
-            display_port, display_wifi_ssid, display_no_flash,
+        result = provision_configured_display(
+            display_port, display_wifi_ssid or configured_wifi_ssid, display_no_flash,
             display_attached=display_attached, display_host=display_host,
             display_serial_port=display_serial_port, controller_host=controller_host,
             display_gateway_port=display_gateway_port, display_psk_file=display_psk_file,
+            display_wifi_configured=display_wifi_configured,
             user=user, identity_file=identity_file, workers=workers,
         )
+        if result == 0 and display_attached is True:
+            mark_display_wifi_configured(config)
+        return result
 
     forks = min(MAX_FORKS, len(workers))
     print(f"Installerer {len(workers)} workers, inntil {forks} samtidig, til commit {revision} ...", flush=True)
@@ -214,13 +219,17 @@ def install(config: str, temp_dir: str, revision: str, workers: list[str], user:
     if result.returncode:
         print("Worker-installasjonen feilet. Se Ansible-oppsummeringen over; rett feilen og kjør igjen.", flush=True)
         return result.returncode
-    return provision_configured_display(
-        display_port, display_wifi_ssid, display_no_flash,
+    result = provision_configured_display(
+        display_port, display_wifi_ssid or configured_wifi_ssid, display_no_flash,
         display_attached=display_attached, display_host=display_host,
         display_serial_port=display_serial_port, controller_host=controller_host,
         display_gateway_port=display_gateway_port, display_psk_file=display_psk_file,
+        display_wifi_configured=display_wifi_configured,
         user=user, identity_file=identity_file, workers=workers,
     )
+    if result == 0 and display_attached is True:
+        mark_display_wifi_configured(config)
+    return result
 
 
 def _display_command(port: str, wifi_ssid: str, no_flash: bool) -> list[str]:
@@ -241,7 +250,8 @@ def provision_display(port: str, wifi_ssid: str, no_flash: bool) -> int:
 
 def provision_remote_display(host: str, port: str, wifi_ssid: str, no_flash: bool,
                              *, user: str, identity_file: str, controller_host: str,
-                             gateway_port: int, psk_file: str) -> int:
+                             gateway_port: int, psk_file: str,
+                             wifi_password: str = "") -> int:
     try:
         psk = Path(psk_file).read_text(encoding="ascii").strip()
     except (OSError, UnicodeError):
@@ -253,13 +263,15 @@ def provision_remote_display(host: str, port: str, wifi_ssid: str, no_flash: boo
     command = _display_command(port, wifi_ssid, no_flash)
     command += ["--psk-stdin", "--controller-host", controller_host,
                 "--gateway-port", str(gateway_port)]
+    if wifi_password:
+        command.append("--wifi-password-stdin")
     remote = "cd \"$HOME/Pi-display-lab\" && " + " ".join(
         shlex.quote(part) for part in command
     )
     print(f"Provisjonerer DeskDisplay på worker {host} ...", flush=True)
     result = ssh_run(
         user, host, remote, identity_file=identity_file,
-        stdin=psk + "\n", timeout=900,
+        stdin=psk + "\n" + (wifi_password + "\n" if wifi_password else ""), timeout=900,
     )
     if result.returncode:
         require_ssh(result, host)
@@ -272,6 +284,7 @@ def provision_configured_display(port: str, wifi_ssid: str, no_flash: bool, *,
                                  display_attached: bool | None, display_host: str,
                                  display_serial_port: str, controller_host: str,
                                  display_gateway_port: int, display_psk_file: str,
+                                 display_wifi_configured: bool | None,
                                  user: str, identity_file: str,
                                  workers: list[str]) -> int:
     if port:
@@ -288,11 +301,25 @@ def provision_configured_display(port: str, wifi_ssid: str, no_flash: bool, *,
             file=sys.stderr,
         )
         return 1
+    wifi_password = ""
+    if wifi_ssid and display_wifi_configured is not True:
+        wifi_password = read_password("Wi-Fi-passord for DeskDisplay: ")
     return provision_remote_display(
         display_host, serial_port, wifi_ssid, no_flash,
         user=user, identity_file=identity_file, controller_host=controller_host,
         gateway_port=display_gateway_port, psk_file=display_psk_file,
+        wifi_password=wifi_password,
     )
+
+
+def mark_display_wifi_configured(config: str) -> None:
+    path = Path(config)
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    deskdisplay = payload.get("deskdisplay")
+    if isinstance(deskdisplay, dict):
+        deskdisplay["display_wifi_configured"] = True
+        path.write_text(json.dumps(payload, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+        os.chmod(path, 0o600)
 
 
 def main() -> int:
@@ -321,7 +348,9 @@ def main() -> int:
                        display_serial_port=settings.deskdisplay.display_serial_port,
                        controller_host=settings.controller_host,
                        display_gateway_port=settings.deskdisplay.port,
-                       display_psk_file=settings.deskdisplay.psk_file)
+                       display_psk_file=settings.deskdisplay.psk_file,
+                       configured_wifi_ssid=settings.deskdisplay.display_wifi_ssid,
+                       display_wifi_configured=settings.deskdisplay.display_wifi_configured)
     except (ConfigValidationError, RuntimeError, OSError, EOFError) as error:
         print(f"Installasjonen stoppet: {error}", file=sys.stderr)
         return 1
