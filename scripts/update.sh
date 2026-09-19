@@ -8,11 +8,25 @@ SCRIPT_SOURCE="${BASH_SOURCE[0]}"
 PROJECT_DIR="$(cd -- "${SCRIPT_SOURCE%/*}/.." && pwd)"
 VENV_DIR="$PROJECT_DIR/.venv"
 CONFIG_FILE="$PROJECT_DIR/config.local.json"
+DISPLAY_OTA=false
 
 if [[ $EUID -eq 0 ]]; then
   echo "Kjør oppdateringen som vanlig bruker, ikke som root."
   exit 1
 fi
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --display-ota)
+      DISPLAY_OTA=true
+      shift
+      ;;
+    *)
+      echo "Ukjent valg: $1" >&2
+      exit 2
+      ;;
+  esac
+done
 
 cd "$PROJECT_DIR"
 
@@ -59,7 +73,15 @@ if [[ "$CLUSTER_ENABLED" == "true" ]]; then
   fi
   echo "Oppdaterer controller og workers til eksakt commit $REVISION ..."
   bash scripts/install-cluster.sh
+  if [[ "$DISPLAY_OTA" == "true" ]]; then
+    bash scripts/stage-deskdisplay-ota.sh
+  fi
   exit 0
+fi
+
+if [[ "$DISPLAY_OTA" == "true" ]]; then
+  echo "--display-ota krever aktivert cluster og DeskDisplay-gateway." >&2
+  exit 2
 fi
 
 if [[ ! -x "$VENV_DIR/bin/python" ]]; then

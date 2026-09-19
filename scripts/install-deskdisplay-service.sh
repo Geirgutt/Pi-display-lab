@@ -11,6 +11,8 @@ CONFIG_FILE="$PROJECT_DIR/config.local.json"
 PYTHON_BIN="$PROJECT_DIR/.venv/bin/python"
 RUNTIME_DIR="/usr/local/libexec/pi-display-lab"
 BINARY="$RUNTIME_DIR/secure_peer"
+OTA_DIR="/var/lib/pi-display-lab/deskdisplay"
+OTA_FILE="$OTA_DIR/firmware.bin"
 UNIT_FILE="/etc/systemd/system/$SERVICE_NAME.service"
 
 if [[ $EUID -eq 0 && -z ${SUDO_USER:-} ]]; then
@@ -56,6 +58,7 @@ sudo chown "$RUN_USER:$RUN_GROUP" "$PSK_FILE"
 sudo chmod 0600 "$PSK_FILE"
 
 sudo install -d -o root -g root -m 0755 "$RUNTIME_DIR"
+sudo install -d -o "$RUN_USER" -g "$RUN_GROUP" -m 0700 "$OTA_DIR"
 sudo gcc -O2 -Wall -Wextra -I"$PROJECT_DIR/deskdisplay/src" \
   -o "$BINARY" "$PROJECT_DIR/deskdisplay/tools/secure_peer.c" -lssl -lcrypto
 sudo chown root:root "$BINARY"
@@ -72,13 +75,14 @@ After=network-online.target pi-display-lab.service
 [Service]
 Type=simple
 User=$RUN_USER
-ExecStart=$BINARY --listen 0.0.0.0 --port $DESKDISPLAY_PORT --psk-file $PSK_FILE --state-host 127.0.0.1 --state-port $APP_PORT --state-path /api/deskdisplay/state
+ExecStart=$BINARY --listen 0.0.0.0 --port $DESKDISPLAY_PORT --psk-file $PSK_FILE --state-host 127.0.0.1 --state-port $APP_PORT --state-path /api/deskdisplay/state --ota-file $OTA_FILE
 Restart=always
 RestartSec=5
 NoNewPrivileges=true
 PrivateTmp=true
 ProtectHome=true
 ProtectSystem=strict
+ReadWritePaths=$OTA_DIR
 ProtectKernelTunables=true
 ProtectControlGroups=true
 RestrictSUIDSGID=true

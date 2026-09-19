@@ -55,8 +55,18 @@ printing the PSK.
 
 After this initial setup the display only needs USB-C power. A normal
 `scripts/update.sh` updates the controller and workers, but does not flash the
-display. Run the provisioning command again only when firmware or display-side
-credentials must change.
+display. Once the display has received the OTA-capable secure firmware over USB,
+an explicit `bash scripts/update.sh --display-ota` builds the secure firmware,
+stages it in the controller's private runtime directory and restarts the
+gateway. The display receives it over the existing authenticated PSK/TLS
+connection when it next connects. The gateway removes the image only after a
+successful transfer; failed transfers remain available for retry.
+
+The OTA path is deliberately explicit and does not run on ordinary updates.
+It verifies the image SHA-256 digest inside the authenticated TLS session and
+uses the ESP32 inactive OTA app slot. The current lab deployment authenticates
+the controller with the locally generated PSK; independent public-key firmware
+signing and ESP32 flash encryption remain separate hardening work.
 
 The first `scripts/install-cluster.sh` or `scripts/update.sh` run asks whether
 the display is connected over USB data. The answer and selected Pi are stored

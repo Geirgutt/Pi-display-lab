@@ -15,6 +15,7 @@
 #include <fcntl.h>
 #include <netinet/in.h>
 #include <openssl/err.h>
+#include <openssl/sha.h>
 #include <openssl/ssl.h>
 #include <signal.h>
 #include <stdint.h>
@@ -22,6 +23,8 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/socket.h>
+#include <sys/stat.h>
+#include <sys/time.h>
 #include <unistd.h>
 
 static volatile sig_atomic_t running = 1;
@@ -31,6 +34,17 @@ static int malformed_once = 0;
 static char state_host[16] = {0};
 static char state_path[128] = {0};
 static uint16_t state_port = 0;
+static char ota_file_path[4096] = {0};
+
+#define OTA_OFFER_TYPE 0x80
+#define OTA_CHUNK_TYPE 0x81
+#define OTA_COMPLETE_TYPE 0x82
+#define OTA_ACK_TYPE 0x90
+#define OTA_READY 1
+#define OTA_CHUNK_ACCEPTED 2
+#define OTA_COMPLETE 3
+#define OTA_FAILED 0x80
+#define OTA_CHUNK_SIZE 96
 
 #define CLUSTER_NODE_MAX_PER_FRAME 3
 #define CLUSTER_STATE_MAX_NODES 128
@@ -352,6 +366,135 @@ static int send_all(SSL* ssl, const unsigned char* data, size_t length)
     return 1;
 }
 
+static int read_all(SSL* ssl, unsigned char* data, size_t length)
+{
+    size_t received = 0;
+    while (received < length)
+    {
+        const int result = SSL_read(ssl, data + received, (int)(length - received));
+        if (result <= 0) return 0;
+        received += (size_t)result;
+    }
+    return 1;
+}
+
+static int read_frame(SSL* ssl, unsigned char* frame, size_t capacity, size_t* length)
+{
+    if (capacity < 14 || !read_all(ssl, frame, 14)) return 0;
+    if (frame[0] != 'D' || frame[1] != 'S' || frame[2] != 1) return 0;
+    const size_t payload_length = (size_t)frame[4] | ((size_t)frame[5] << 8);
+    if (payload_length > capacity - 14) return 0;
+    if (!read_all(ssl, frame + 14, payload_length)) return 0;
+    *length = 14 + payload_length;
+    return 1;
+}
+
+static int wait_ota_ack(SSL* ssl, unsigned char expected_status, uint32_t expected_offset)
+{
+    unsigned char frame[128] = {0};
+    size_t length = 0;
+    if (!read_frame(ssl, frame, sizeof(frame), &length) || frame[3] != OTA_ACK_TYPE
+        || length != 19 || frame[14] != expected_status)
+        return 0;
+    const uint32_t offset = (uint32_t)frame[15] | ((uint32_t)frame[16] << 8)
+                          | ((uint32_t)frame[17] << 16) | ((uint32_t)frame[18] << 24);
+    return offset == expected_offset;
+}
+
+static int ota_digest(const char* path, uint32_t* size, unsigned char digest[32])
+{
+    FILE* file = fopen(path, "rb");
+    if (!file) return 0;
+    SHA256_CTX context;
+    SHA256_Init(&context);
+    unsigned char buffer[4096];
+    uint64_t total = 0;
+    size_t amount;
+    while ((amount = fread(buffer, 1, sizeof(buffer), file)) > 0)
+    {
+        total += amount;
+        if (total > UINT32_MAX || SHA256_Update(&context, buffer, amount) != 1)
+        {
+            fclose(file);
+            return 0;
+        }
+    }
+    const int ok = !ferror(file) && total > 0 && SHA256_Final(digest, &context) == 1;
+    fclose(file);
+    if (!ok) return 0;
+    *size = (uint32_t)total;
+    return 1;
+}
+
+static int send_ota_header(SSL* ssl, unsigned char type, uint64_t sequence,
+                           const unsigned char* payload, size_t payload_length)
+{
+    unsigned char frame[128] = {0};
+    if (payload_length > sizeof(frame) - 14) return 0;
+    frame[0] = 'D'; frame[1] = 'S'; frame[2] = 1; frame[3] = type;
+    frame[4] = (unsigned char)payload_length;
+    frame[5] = (unsigned char)(payload_length >> 8);
+    for (unsigned index = 0; index < 8; ++index)
+        frame[6 + index] = (unsigned char)(sequence >> (index * 8));
+    if (payload_length) memcpy(frame + 14, payload, payload_length);
+    return send_all(ssl, frame, 14 + payload_length);
+}
+
+static int perform_ota(SSL* ssl)
+{
+    uint32_t image_size = 0;
+    unsigned char digest[32] = {0};
+    if (!ota_digest(ota_file_path, &image_size, digest))
+    {
+        fprintf(stderr, "OTA image could not be read or hashed: %s\n", ota_file_path);
+        return 0;
+    }
+    unsigned char offer[36] = {0};
+    offer[0] = (unsigned char)image_size;
+    offer[1] = (unsigned char)(image_size >> 8);
+    offer[2] = (unsigned char)(image_size >> 16);
+    offer[3] = (unsigned char)(image_size >> 24);
+    memcpy(offer + 4, digest, sizeof(digest));
+    if (!send_ota_header(ssl, OTA_OFFER_TYPE, 1, offer, sizeof(offer))
+        || !wait_ota_ack(ssl, OTA_READY, 0))
+        return 0;
+
+    FILE* file = fopen(ota_file_path, "rb");
+    if (!file) return 0;
+    unsigned char buffer[OTA_CHUNK_SIZE];
+    unsigned char chunk[OTA_CHUNK_SIZE + 6];
+    uint32_t offset = 0;
+    uint64_t sequence = 2;
+    int ok = 1;
+    while (offset < image_size)
+    {
+        const size_t amount = fread(buffer, 1, sizeof(buffer), file);
+        if (amount == 0) { ok = 0; break; }
+        chunk[0] = (unsigned char)offset;
+        chunk[1] = (unsigned char)(offset >> 8);
+        chunk[2] = (unsigned char)(offset >> 16);
+        chunk[3] = (unsigned char)(offset >> 24);
+        chunk[4] = (unsigned char)amount;
+        chunk[5] = (unsigned char)(amount >> 8);
+        memcpy(chunk + 6, buffer, amount);
+        if (!send_ota_header(ssl, OTA_CHUNK_TYPE, sequence++, chunk, amount + 6)
+            || !wait_ota_ack(ssl, OTA_CHUNK_ACCEPTED, offset + (uint32_t)amount))
+        { ok = 0; break; }
+        offset += (uint32_t)amount;
+    }
+    fclose(file);
+    if (ok)
+        ok = send_ota_header(ssl, OTA_COMPLETE_TYPE, sequence++, NULL, 0)
+          && wait_ota_ack(ssl, OTA_COMPLETE, offset);
+    if (ok)
+    {
+        unlink(ota_file_path);
+        printf("OTA image delivered successfully (%u bytes).\n", image_size);
+    }
+    else fprintf(stderr, "OTA transfer failed; image retained for retry.\n");
+    return ok;
+}
+
 static size_t make_local_frame(unsigned char* frame, uint64_t sequence, int invalid)
 {
     static char hostname[33] = {0};
@@ -498,9 +641,14 @@ int main(int argc, char** argv)
             strncpy(state_path, argv[++i], sizeof(state_path) - 1);
             state_path[sizeof(state_path) - 1] = 0;
         }
+        else if (!strcmp(argv[i], "--ota-file") && i + 1 < argc)
+        {
+            strncpy(ota_file_path, argv[++i], sizeof(ota_file_path) - 1);
+            ota_file_path[sizeof(ota_file_path) - 1] = 0;
+        }
         else if (!strcmp(argv[i], "--replay-once")) replay_once = 1;
         else if (!strcmp(argv[i], "--malformed-once")) malformed_once = 1;
-        else { fprintf(stderr, "usage: %s --psk-file FILE [--listen IPv4] [--port N] [--state-host IPv4 --state-port N --state-path PATH] [--replay-once] [--malformed-once]\n", argv[0]); return 2; }
+        else { fprintf(stderr, "usage: %s --psk-file FILE [--listen IPv4] [--port N] [--state-host IPv4 --state-port N --state-path PATH] [--ota-file FILE] [--replay-once] [--malformed-once]\n", argv[0]); return 2; }
     }
     if (!psk_path || !load_psk(psk_path)) { fprintf(stderr, "PSK file must contain 64 hexadecimal characters.\n"); return 2; }
     if ((state_host[0] || state_port || state_path[0]) && (!state_host[0] || !state_port || !state_path[0]))
@@ -526,6 +674,8 @@ int main(int argc, char** argv)
     {
         const int socket_fd = accept(listener, NULL, NULL);
         if (socket_fd < 0) { if (errno == EINTR) continue; perror("accept"); break; }
+        const struct timeval ota_timeout = {.tv_sec = 30, .tv_usec = 0};
+        setsockopt(socket_fd, SOL_SOCKET, SO_RCVTIMEO, &ota_timeout, sizeof(ota_timeout));
         SSL* ssl = SSL_new(context);
         SSL_set_fd(ssl, socket_fd);
         if (SSL_accept(ssl) != 1)
@@ -535,6 +685,14 @@ int main(int argc, char** argv)
             SSL_free(ssl); close(socket_fd); continue;
         }
         printf("TLS session established: %s\n", SSL_get_cipher(ssl));
+        if (ota_file_path[0] && access(ota_file_path, R_OK) == 0)
+        {
+            perform_ota(ssl);
+            SSL_shutdown(ssl);
+            SSL_free(ssl); close(socket_fd);
+            printf("TLS session closed after OTA attempt; waiting for reconnect.\n");
+            continue;
+        }
         uint64_t sequence = 1;
         int replay_sent = 0, malformed_sent = 0;
         while (running)

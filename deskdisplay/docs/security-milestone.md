@@ -153,8 +153,13 @@ after timeout and after reconnect.
 - `platformio.ini`: optional `guition-4848s040-secure` build.
 - `src/app.cpp` and `src/console.cpp`: service and test commands only.
 
-No dashboard telemetry page, control/RPC operation, reboot action, discovery,
-provisioning UI, OTA, Home Assistant integration or BLE transport was added.
+The secure build now also contains a narrowly scoped OTA operation. The
+controller is the authenticated TLS peer, sends an image offer, streams fixed
+chunks to the inactive OTA app slot, and waits for an image digest and update
+completion acknowledgement before the display reboots. OTA is not enabled by
+ordinary updates; the controller stages an image only for an explicit
+`--display-ota` request. Public-key firmware signing and flash encryption are
+still separate hardening milestones.
 
 ## Build and test commands
 

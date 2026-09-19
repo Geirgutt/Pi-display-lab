@@ -10,8 +10,10 @@
 #include <WiFiClientSecure.h>
 #include <Preferences.h>
 #include <IPAddress.h>
+#include <Update.h>
 #include <esp_system.h>
 #include <mbedtls/net_sockets.h>
+#include <mbedtls/sha256.h>
 
 namespace
 {
@@ -34,11 +36,19 @@ uint32_t nextConnect = 0;
 uint32_t lastRx = 0;
 uint32_t lastValidTelemetry = 0;
 uint64_t lastSequence = 0;
+uint64_t txSequence = 1;
 uint8_t frame[secure_protocol::maxFrameSize] = {};
 size_t frameLength = 0;
 secure_protocol::Telemetry latest;
 secure_protocol::ClusterTelemetry latestCluster;
 secure_transport::Counters stats;
+bool otaActive = false;
+uint32_t otaSize = 0;
+uint32_t otaOffset = 0;
+uint8_t otaDigest[secure_protocol::otaDigestSize] = {};
+mbedtls_sha256_context otaHash;
+bool otaHashInitialized = false;
+uint32_t otaRebootAt = 0;
 
 int hexValue(char c)
 {
@@ -75,6 +85,78 @@ void closeSession(bool countReconnect)
     lastSequence = 0;
     clearFrame();
     if (countReconnect) ++stats.reconnects;
+}
+
+void resetOta()
+{
+    if (otaActive) Update.abort();
+    otaActive = false;
+    otaSize = 0;
+    otaOffset = 0;
+    memset(otaDigest, 0, sizeof(otaDigest));
+    if (otaHashInitialized)
+    {
+        mbedtls_sha256_free(&otaHash);
+        otaHashInitialized = false;
+    }
+}
+
+bool sendOtaAck(uint8_t status, uint32_t offset)
+{
+    uint8_t response[secure_protocol::otaAckFrameSize] = {};
+    response[0] = secure_protocol::magic0;
+    response[1] = secure_protocol::magic1;
+    response[2] = secure_protocol::version;
+    response[3] = secure_protocol::otaAckType;
+    secure_protocol::put16(response + 4, secure_protocol::otaAckPayloadSize);
+    secure_protocol::put64(response + 6, txSequence++);
+    response[secure_protocol::headerSize] = status;
+    secure_protocol::put32(response + secure_protocol::headerSize + 1, offset);
+    return client.write(response, sizeof(response)) == sizeof(response);
+}
+
+bool startOta(const uint8_t* payload, size_t length)
+{
+    if (!payload || length != secure_protocol::otaOfferPayloadSize) return false;
+    resetOta();
+    otaSize = secure_protocol::get32(payload);
+    if (otaSize == 0) return false;
+    memcpy(otaDigest, payload + 4, sizeof(otaDigest));
+    if (!Update.begin(otaSize, U_FLASH)) return false;
+    mbedtls_sha256_init(&otaHash);
+    if (mbedtls_sha256_starts_ret(&otaHash, 0) != 0)
+    {
+        Update.abort();
+        mbedtls_sha256_free(&otaHash);
+        return false;
+    }
+    otaHashInitialized = true;
+    otaActive = true;
+    otaOffset = 0;
+    return true;
+}
+
+bool finishOta()
+{
+    if (!otaActive || otaOffset != otaSize) return false;
+    uint8_t actual[secure_protocol::otaDigestSize] = {};
+    const bool hashOk = otaHashInitialized
+                     && mbedtls_sha256_finish_ret(&otaHash, actual) == 0
+                     && memcmp(actual, otaDigest, sizeof(actual)) == 0;
+    if (otaHashInitialized)
+    {
+        mbedtls_sha256_free(&otaHash);
+        otaHashInitialized = false;
+    }
+    if (!hashOk || !Update.end(false))
+    {
+        Update.abort();
+        otaActive = false;
+        return false;
+    }
+    otaActive = false;
+    otaRebootAt = millis() + 1000;
+    return true;
 }
 
 void loadConfiguration()
@@ -128,12 +210,76 @@ void formatTemperature(int16_t temperatureTenths, char* output, size_t capacity)
         snprintf(output, capacity, "%.1fC", temperatureTenths / 10.0f);
 }
 
+size_t expectedFrameSize()
+{
+    if (frameLength < secure_protocol::headerSize) return secure_protocol::headerSize;
+    const uint16_t payloadLength = secure_protocol::get16(frame + 4);
+    switch (frame[3])
+    {
+    case secure_protocol::otaOfferType:
+        return payloadLength == secure_protocol::otaOfferPayloadSize
+             ? secure_protocol::otaOfferFrameSize : 0;
+    case secure_protocol::otaChunkType:
+        return payloadLength >= secure_protocol::otaChunkHeaderSize
+            && payloadLength <= secure_protocol::otaChunkHeaderSize + secure_protocol::otaChunkDataSize
+             ? secure_protocol::headerSize + payloadLength : 0;
+    case secure_protocol::otaCompleteType:
+        return payloadLength == 0 ? secure_protocol::otaCompleteFrameSize : 0;
+    default:
+        return frame[3] == secure_protocol::clusterTelemetryType
+             ? secure_protocol::clusterFrameSize : secure_protocol::frameSize;
+    }
+}
+
+bool processOtaFrame()
+{
+    const uint8_t type = frame[3];
+    const uint8_t* payload = frame + secure_protocol::headerSize;
+    const size_t payloadLength = secure_protocol::get16(frame + 4);
+    if (type == secure_protocol::otaOfferType)
+    {
+        const bool ready = startOta(payload, payloadLength);
+        if (!sendOtaAck(ready ? secure_protocol::otaReady : secure_protocol::otaFailed, 0)) return false;
+        if (!ready) closeSession(true);
+        return ready;
+    }
+    if (type == secure_protocol::otaChunkType)
+    {
+        const uint32_t offset = secure_protocol::get32(payload);
+        const uint16_t length = secure_protocol::get16(payload + 4);
+        if (!otaActive || length != payloadLength - secure_protocol::otaChunkHeaderSize
+            || offset != otaOffset || length == 0
+            || Update.write(const_cast<uint8_t*>(payload + secure_protocol::otaChunkHeaderSize), length) != length
+            || mbedtls_sha256_update_ret(&otaHash, payload + secure_protocol::otaChunkHeaderSize, length) != 0)
+        {
+            sendOtaAck(secure_protocol::otaFailed, otaOffset);
+            resetOta();
+            closeSession(true);
+            return false;
+        }
+        otaOffset += length;
+        return sendOtaAck(secure_protocol::otaChunkAccepted, otaOffset);
+    }
+    if (type == secure_protocol::otaCompleteType)
+    {
+        const bool complete = finishOta();
+        if (!sendOtaAck(complete ? secure_protocol::otaComplete : secure_protocol::otaFailed, otaOffset)) return false;
+        if (!complete) closeSession(true);
+        return complete;
+    }
+    return false;
+}
+
 bool processFrame()
 {
     if (frameLength < secure_protocol::headerSize) return true;
-    const size_t expected = frame[3] == secure_protocol::clusterTelemetryType
-                          ? secure_protocol::clusterFrameSize
-                          : secure_protocol::frameSize;
+    const size_t expected = expectedFrameSize();
+    if (expected == 0)
+    {
+        ++stats.malformed;
+        closeSession(true);
+        return false;
+    }
     if (frameLength < expected) return true;
     if (frameLength > expected)
     {
@@ -143,9 +289,11 @@ bool processFrame()
     }
     if (frame[3] >= secure_protocol::controlTypeBase)
     {
-        ++stats.unauthorized;
-        closeSession(true);
-        return false;
+        const bool handled = frame[3] == secure_protocol::otaOfferType
+                          || frame[3] == secure_protocol::otaChunkType
+                          || frame[3] == secure_protocol::otaCompleteType;
+        if (!handled) ++stats.unauthorized;
+        return handled && processOtaFrame();
     }
     uint64_t sequence = 0;
     secure_protocol::Telemetry value;
@@ -198,10 +346,13 @@ void serviceSession()
     }
     while (client.available())
     {
-        size_t expected = secure_protocol::headerSize;
-        if (frameLength >= secure_protocol::headerSize)
-            expected = frame[3] == secure_protocol::clusterTelemetryType
-                     ? secure_protocol::clusterFrameSize : secure_protocol::frameSize;
+        size_t expected = expectedFrameSize();
+        if (expected == 0)
+        {
+            ++stats.malformed;
+            closeSession(true);
+            return;
+        }
         if (frameLength >= expected)
         {
             if (!processFrame()) return;
@@ -247,6 +398,8 @@ void secure_transport::begin()
 
 void secure_transport::service()
 {
+    if (otaRebootAt != 0 && static_cast<int32_t>(millis() - otaRebootAt) >= 0)
+        ESP.restart();
     if (!requested || !keyAvailable || !peerAddress[0]) return;
     network::Info wifi;
     network::info(wifi);

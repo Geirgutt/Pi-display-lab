@@ -22,10 +22,16 @@ pio run -e guition-4848s040-wifi
 ```
 
 See [foundation and hardware tests](docs/foundation.md) and the
-[pre-change resource baseline](docs/baseline.md). No web server, LVGL, OTA,
-dashboard engine or control/RPC service is included. The optional secure
+[pre-change resource baseline](docs/baseline.md). No web server, LVGL,
+dashboard engine or general control/RPC service is included. The optional secure
 telemetry foundation and its measured trade-offs are documented in
 [docs/security-milestone.md](docs/security-milestone.md).
+
+The secure build includes an authenticated OTA receiver over the existing PSK/TLS
+connection. It writes the downloaded image to the inactive ESP32 OTA slot and
+checks its SHA-256 digest before rebooting. The controller can stage a built
+image with `bash scripts/update.sh --display-ota`; the first OTA-capable image
+must still be installed over USB.
 
 The first Linux/Raspberry Pi telemetry sender and the one-node Cluster page are
 documented in [docs/telemetry-milestone.md](docs/telemetry-milestone.md).
