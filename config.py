@@ -51,6 +51,7 @@ class DeskDisplayConfig:
     display_wifi_ssid: str = ""
     display_wifi_configured: bool | None = None
     display_identify_pending: bool = False
+    display_ota_ready: bool = False
 
 
 @dataclass(frozen=True)
@@ -218,6 +219,7 @@ def load_config(path: str | Path | None = None) -> AppConfig:
                 else None
             ),
             display_identify_pending=deskdisplay.get("display_identify_pending") is True,
+            display_ota_ready=deskdisplay.get("display_ota_ready") is True,
         ),
         node_role=role,
         controller_host=_safe_host(raw.get("controller_host"), "127.0.0.1"),
@@ -394,6 +396,9 @@ def validate_controller_config(path: str | Path) -> AppConfig:
         display_identify_pending = deskdisplay.get("display_identify_pending", False)
         if not isinstance(display_identify_pending, bool):
             errors.append("deskdisplay.display_identify_pending må være true eller false")
+    display_ota_ready = deskdisplay.get("display_ota_ready", False)
+    if not isinstance(display_ota_ready, bool):
+        errors.append("deskdisplay.display_ota_ready må være true eller false")
 
     if errors:
         raise ConfigValidationError("Ugyldig config.local.json:\n- " + "\n- ".join(errors))

@@ -58,6 +58,7 @@ def main() -> int:
         for key in (
             "display_attached", "display_host", "display_serial_port",
             "display_wifi_ssid", "display_wifi_configured", "display_identify_pending",
+            "display_ota_ready",
         ):
             deskdisplay.pop(key, None)
         path.write_text(json.dumps(payload, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")

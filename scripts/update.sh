@@ -8,7 +8,7 @@ SCRIPT_SOURCE="${BASH_SOURCE[0]}"
 PROJECT_DIR="$(cd -- "${SCRIPT_SOURCE%/*}/.." && pwd)"
 VENV_DIR="$PROJECT_DIR/.venv"
 CONFIG_FILE="$PROJECT_DIR/config.local.json"
-DISPLAY_OTA=false
+DISPLAY_MODE=""
 
 if [[ $EUID -eq 0 ]]; then
   echo "Kjør oppdateringen som vanlig bruker, ikke som root."
@@ -18,7 +18,7 @@ fi
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --display-ota)
-      DISPLAY_OTA=true
+      DISPLAY_MODE="ota"
       shift
       ;;
     *)
@@ -60,8 +60,39 @@ echo "Lokal checkout er nå commit $REVISION."
 # Read this only after the fast-forward. The fetched version owns the update
 # flow, including the first-time DeskDisplay selection prompt.
 CLUSTER_ENABLED="false"
+DISPLAY_OTA_READY="false"
 if [[ -f "$CONFIG_FILE" ]]; then
   CLUSTER_ENABLED="$(python3 scripts/config-value.py cluster_enabled --config "$CONFIG_FILE")"
+  DISPLAY_OTA_READY="$(python3 scripts/config-value.py deskdisplay_ota_ready --config "$CONFIG_FILE")"
+fi
+
+prompt_yes_no() {
+  local answer=""
+  [[ -r /dev/tty ]] || return 1
+  read -r -p "$1 [j/N] " answer </dev/tty || return 1
+  case "${answer,,}" in
+    j|ja|y|yes) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+if [[ "$CLUSTER_ENABLED" == "true" && -z "$DISPLAY_MODE" ]]; then
+  if prompt_yes_no "Skal DeskDisplay oppdateres nå?"; then
+    if prompt_yes_no "Er DeskDisplay tilkoblet clusteret med USB-kabel nå?"; then
+      DISPLAY_MODE="cable"
+    else
+      DISPLAY_MODE="ota"
+      echo "OTA valgt. Displayet må allerede ha OTA-støttet firmware og være på Wi-Fi."
+    fi
+  else
+    DISPLAY_MODE="none"
+  fi
+fi
+
+if [[ "$DISPLAY_MODE" == "ota" && "$DISPLAY_OTA_READY" != "true" ]]; then
+  echo "OTA for DeskDisplay er ikke klargjort ennå. Koble displayet til en Pi med USB-kabel og kjør oppdateringen på nytt." >&2
+  echo "Oppdateringen stoppes før controller/workers endres." >&2
+  exit 2
 fi
 
 if [[ "$CLUSTER_ENABLED" == "true" ]]; then
@@ -72,14 +103,14 @@ if [[ "$CLUSTER_ENABLED" == "true" ]]; then
     exit 2
   fi
   echo "Oppdaterer controller og workers til eksakt commit $REVISION ..."
-  bash scripts/install-cluster.sh
-  if [[ "$DISPLAY_OTA" == "true" ]]; then
+  bash scripts/install-cluster.sh --display-mode "$DISPLAY_MODE"
+  if [[ "$DISPLAY_MODE" == "ota" ]]; then
     bash scripts/stage-deskdisplay-ota.sh
   fi
   exit 0
 fi
 
-if [[ "$DISPLAY_OTA" == "true" ]]; then
+if [[ "$DISPLAY_MODE" == "ota" ]]; then
   echo "--display-ota krever aktivert cluster og DeskDisplay-gateway." >&2
   exit 2
 fi

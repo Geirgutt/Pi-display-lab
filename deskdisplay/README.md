@@ -31,7 +31,8 @@ The secure build includes an authenticated OTA receiver over the existing PSK/TL
 connection. It writes the downloaded image to the inactive ESP32 OTA slot and
 checks its SHA-256 digest before rebooting. The controller can stage a built
 image with `bash scripts/update.sh --display-ota`; the first OTA-capable image
-must still be installed over USB.
+must still be installed over USB. No key material is included in the repository;
+the PSK is generated locally during controller installation.
 
 The first Linux/Raspberry Pi telemetry sender and the one-node Cluster page are
 documented in [docs/telemetry-milestone.md](docs/telemetry-milestone.md).

@@ -28,6 +28,7 @@ def main() -> int:
             "controller_host",
             "coordinator_port",
             "deskdisplay_enabled",
+            "deskdisplay_ota_ready",
             "deskdisplay_port",
             "deskdisplay_psk_file",
             "node_heartbeat_auth",
@@ -75,6 +76,8 @@ def main() -> int:
         value = settings.deskdisplay.enabled
     elif args.key == "deskdisplay_port":
         value = settings.deskdisplay.port
+    elif args.key == "deskdisplay_ota_ready":
+        value = settings.deskdisplay.display_ota_ready
     elif args.key == "deskdisplay_psk_file":
         value = settings.deskdisplay.psk_file
     else:

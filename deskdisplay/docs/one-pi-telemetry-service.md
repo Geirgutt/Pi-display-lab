@@ -68,15 +68,19 @@ uses the ESP32 inactive OTA app slot. The current lab deployment authenticates
 the controller with the locally generated PSK; independent public-key firmware
 signing and ESP32 flash encryption remain separate hardening work.
 
-The first `scripts/install-cluster.sh` or `scripts/update.sh` run asks whether
-the display is connected over USB data. The answer and selected Pi are stored
-in the ignored `config.local.json`; later updates reuse that choice. The first
+Each interactive `scripts/update.sh` run first asks whether DeskDisplay should
+be updated. If yes, it asks whether the display is connected to the cluster by
+USB cable: yes selects local USB identification/provisioning, while no selects
+OTA. If OTA support has not previously been installed by a USB flash, the
+update stops and tells the operator to connect the display by cable first.
+The selected Pi and display settings are stored in the ignored
+`config.local.json`; no actual keys or passwords are stored in Git. The first
 yes-answer also asks for an optional Wi-Fi SSID; the password is requested
 hidden and is not stored. If the display is assigned to a worker, the installer
 runs the provisioning script on that worker after the worker update and sends
-the PSK (and, when needed, Wi-Fi password) through private SSH stdin pipes. The
-PSK is not installed as a worker credential or written to the worker's
-repository.
+the locally generated PSK (and, when needed, Wi-Fi password) through private
+SSH stdin pipes. The PSK is not installed as a worker credential or written to
+the worker's repository.
 
 The controller listens on TCP port `4567` on all local interfaces. Open that
 port in the controller firewall only if the lab firewall requires it. The

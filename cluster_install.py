@@ -215,12 +215,19 @@ def install(config: str, temp_dir: str, revision: str, workers: list[str], user:
             display_serial_port: str = "", controller_host: str = "",
             display_gateway_port: int = 4567, display_psk_file: str = "",
             configured_wifi_ssid: str = "", display_wifi_configured: bool | None = None,
-            display_identify_pending: bool = False, worker_order: list[str] | None = None) -> int:
+            display_identify_pending: bool = False, worker_order: list[str] | None = None,
+            display_mode: str = "auto") -> int:
+    if display_mode not in {"auto", "none", "cable", "ota"}:
+        raise RuntimeError(f"Ugyldig display-modus: {display_mode}")
     passwords = broker_passwords(sudo_socket, workers) if sudo_socket else collect_passwords(
         user, workers, **({"identity_file": identity_file} if identity_file else {}))
-    if display_attached is None and Path(config).is_file():
+    if display_mode in {"none", "ota"}:
+        display_attached = False
+        display_identify_pending = False
+    elif (display_mode == "cable" or display_attached is None) and Path(config).is_file():
         display_attached, display_host, display_serial_port, configured_wifi_ssid = configure_display_choice(
             config, worker_order or workers, workers, passwords, user, identity_file,
+            ask_attached=display_mode != "cable",
         )
         display_identify_pending = False
     print("Passordkontrollen er ferdig. Installerer controlleren ...", flush=True)
@@ -247,6 +254,8 @@ def install(config: str, temp_dir: str, revision: str, workers: list[str], user:
         )
         if result == 0 and display_attached is True:
             mark_display_wifi_configured(config)
+            if display_mode in {"auto", "cable"}:
+                mark_display_ota_ready(config)
         return result
 
     forks = min(MAX_FORKS, len(workers))
@@ -282,6 +291,8 @@ def install(config: str, temp_dir: str, revision: str, workers: list[str], user:
     )
     if result == 0 and display_attached is True:
         mark_display_wifi_configured(config)
+        if display_mode in {"auto", "cable"}:
+            mark_display_ota_ready(config)
     return result
 
 
@@ -353,11 +364,12 @@ def identify_single_worker(host: str, ordinal: int, password: str, user: str,
 
 
 def configure_display_choice(config: str, worker_order: list[str], selected_workers: list[str],
-                             passwords: dict[str, str], user: str, identity_file: str):
-    print("\nDeskDisplay er ikke konfigurert for USB-provisjonering ennå.")
+                             passwords: dict[str, str], user: str, identity_file: str,
+                             *, ask_attached: bool = True):
+    print("\nKonfigurerer DeskDisplay via USB.")
     print("Når en Pi identifiseres, blinker den røde dioden med sitt worker-nummer.")
     print("Hvis rød LED ikke kan styres av OS-et, brukes grønn ACT-LED som reserve.")
-    if not _terminal_yes_no("Er displayet koblet med USB-data til en Pi nå?"):
+    if ask_attached and not _terminal_yes_no("Er displayet koblet med USB-data til en Pi nå?"):
         update_display_choice(config, False, "", "", "", False)
         return False, "", "", ""
 
@@ -501,6 +513,16 @@ def mark_display_wifi_configured(config: str) -> None:
         os.chmod(path, 0o600)
 
 
+def mark_display_ota_ready(config: str) -> None:
+    path = Path(config)
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    deskdisplay = payload.get("deskdisplay")
+    if isinstance(deskdisplay, dict):
+        deskdisplay["display_ota_ready"] = True
+        path.write_text(json.dumps(payload, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+        os.chmod(path, 0o600)
+
+
 def mark_display_identification_done(config: str) -> None:
     path = Path(config)
     payload = json.loads(path.read_text(encoding="utf-8"))
@@ -523,6 +545,7 @@ def main() -> int:
     parser.add_argument("--display-port", default="")
     parser.add_argument("--display-wifi-ssid", default="")
     parser.add_argument("--display-no-flash", action="store_true")
+    parser.add_argument("--display-mode", choices=("auto", "none", "cable", "ota"), default="auto")
     args = parser.parse_args()
     try:
         settings = validate_controller_config(args.config)
@@ -541,7 +564,8 @@ def main() -> int:
                        configured_wifi_ssid=settings.deskdisplay.display_wifi_ssid,
                        display_wifi_configured=settings.deskdisplay.display_wifi_configured,
                        display_identify_pending=settings.deskdisplay.display_identify_pending,
-                       worker_order=list(settings.worker_hosts))
+                       worker_order=list(settings.worker_hosts),
+                       display_mode=args.display_mode)
     except (ConfigValidationError, RuntimeError, OSError, EOFError) as error:
         print(f"Installasjonen stoppet: {error}", file=sys.stderr)
         return 1
