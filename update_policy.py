@@ -49,10 +49,24 @@ FULL_FILES = {
 }
 FULL_PREFIXES = ("ansible/", "scripts/")
 DISPLAY_NEUTRAL_PREFIXES = ("deskdisplay/docs/",)
+DISPLAY_FILES = {
+    "scripts/build-deskdisplay-firmware.sh",
+    "scripts/install-deskdisplay-service.sh",
+    "scripts/mark-display-ota-ready.py",
+    "scripts/provision-deskdisplay.sh",
+    "scripts/stage-deskdisplay-ota.sh",
+}
 
 
 def _matches(path: str, files: set[str], prefixes: tuple[str, ...]) -> bool:
     return path in files or path.startswith(prefixes)
+
+
+def _is_display_change(path: str) -> bool:
+    return path in DISPLAY_FILES or (
+        path.startswith("deskdisplay/")
+        and not path.startswith(DISPLAY_NEUTRAL_PREFIXES)
+    )
 
 
 def classify_paths(paths: Iterable[str]) -> tuple[str, bool, tuple[str, ...]]:
@@ -67,15 +81,12 @@ def classify_paths(paths: Iterable[str]) -> tuple[str, bool, tuple[str, ...]]:
     if not changed:
         return "none", False, ()
 
-    display_changed = any(
-        path.startswith("deskdisplay/")
-        and not path.startswith(DISPLAY_NEUTRAL_PREFIXES)
-        for path in changed
-    )
+    display_changed = any(_is_display_change(path) for path in changed)
     non_display = tuple(
         path
         for path in changed
-        if not path.startswith("deskdisplay/")
+        if not _is_display_change(path)
+        and not path.startswith("deskdisplay/")
         and not _matches(path, NEUTRAL_FILES, NEUTRAL_PREFIXES)
     )
     if display_changed and not non_display:

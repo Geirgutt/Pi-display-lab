@@ -8,7 +8,12 @@ from update_policy import classify_paths
 class UpdatePolicyTests(unittest.TestCase):
     def test_display_code_with_docs_and_tests_is_display_only(self) -> None:
         self.assertEqual(
-            classify_paths(("deskdisplay/src/ui.cpp", "deskdisplay/docs/ui.md", "tests/test_installation.py")),
+            classify_paths((
+                "deskdisplay/src/ui.cpp",
+                "scripts/stage-deskdisplay-ota.sh",
+                "deskdisplay/docs/ui.md",
+                "tests/test_installation.py",
+            )),
             ("display", True, ()),
         )
 
