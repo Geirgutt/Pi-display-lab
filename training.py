@@ -105,7 +105,10 @@ def normalize_training(raw: Any, *, today: date | None = None, source: str = "lo
     )
     today_text = current.isoformat()
     today_workout = next((item for item in valid_workouts if item["date"] == today_text), None)
-    upcoming = [item for item in valid_workouts if item["date"] > today_text][:5]
+    # A full seven-day display can contain a workout on every day after today.
+    # Keep seven upcoming entries here; the display transport applies its own
+    # seven-item cap after optionally prepending today's workout.
+    upcoming = [item for item in valid_workouts if item["date"] > today_text][:7]
     return {
         "available": True,
         "source": source,

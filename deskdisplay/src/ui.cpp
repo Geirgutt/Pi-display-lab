@@ -213,6 +213,56 @@ void workoutDay(const app_state::Model& model, const secure_protocol::TrainingWo
     else shortDate(workout.date, output, capacity);
 }
 
+bool weekDate(const app_state::Model& model, uint8_t offset, char* iso, size_t isoCapacity,
+              char* caption, size_t captionCapacity)
+{
+    if (!model.timeValid) return false;
+    const time_t now = time(nullptr);
+    struct tm local = {};
+    if (!localtime_r(&now, &local)) return false;
+    local.tm_mday += offset;
+    local.tm_hour = 12;
+    local.tm_min = 0;
+    local.tm_sec = 0;
+    if (mktime(&local) == static_cast<time_t>(-1)) return false;
+    strftime(iso, isoCapacity, "%Y-%m-%d", &local);
+    if (offset == 0) snprintf(caption, captionCapacity, "TODAY");
+    else if (offset == 1) snprintf(caption, captionCapacity, "TOMORROW");
+    else
+    {
+        static const char* days[] = {"SUN", "MON", "TUE", "WED", "THU", "FRI", "SAT"};
+        snprintf(caption, captionCapacity, "%s %02d.%02d", days[local.tm_wday],
+                 local.tm_mday, local.tm_mon + 1);
+    }
+    return true;
+}
+
+int trainingForDate(const secure_protocol::TrainingTelemetry& state, const char* iso)
+{
+    for (size_t index = 0; index < state.count; ++index)
+        if (strcmp(state.workouts[index].date, iso) == 0) return static_cast<int>(index);
+    return -1;
+}
+
+void clippedText(const char* value, int16_t x, int16_t y, int16_t maxWidth)
+{
+    char clipped[64];
+    strncpy(clipped, value, sizeof(clipped) - 1);
+    clipped[sizeof(clipped) - 1] = 0;
+    size_t length = strlen(clipped);
+    while (length > 3 && display().textWidth(clipped) > maxWidth)
+    {
+        clipped[--length] = 0;
+        if (length > 3)
+        {
+            clipped[length - 1] = '.';
+            clipped[length - 2] = '.';
+            clipped[length - 3] = '.';
+        }
+    }
+    display().drawString(clipped, x, y);
+}
+
 void wrappedText(const char* value, int16_t x, int16_t y, int16_t maxWidth,
                  uint8_t size, uint16_t color, uint16_t fill, uint8_t maxLines)
 {
@@ -255,7 +305,7 @@ void trainingTelemetry(const app_state::Model& model, bool force = false)
     lastTraining = state;
     trainingDrawn = true;
     display().fillRoundRect(12, 68, 456, 340, 10, card);
-    label("Garmin training", 28, 80, 2, muted);
+    label("NEXT 7 DAYS", 28, 80, 1, muted);
     if (!state.available)
     {
         label("Not configured", 28, 132, 3, warning);
@@ -263,37 +313,51 @@ void trainingTelemetry(const app_state::Model& model, bool force = false)
         return;
     }
 
-    if (state.count == 0)
-        label("No scheduled workouts", 28, 132, 3, muted);
-    for (size_t index = 0; index < state.count && index < 3; ++index)
+    if (!model.timeValid)
     {
-        const secure_protocol::TrainingWorkout& workout = state.workouts[index];
+        label("Waiting for date and time", 28, 132, 2, muted);
+        return;
+    }
+    for (uint8_t dayOffset = 0; dayOffset < ui_layout::trainingDayCount; ++dayOffset)
+    {
+        char iso[11] = {};
+        char day[16] = {};
+        if (!weekDate(model, dayOffset, iso, sizeof(iso), day, sizeof(day))) continue;
+        const int workoutIndex = trainingForDate(state, iso);
+        const bool hasWorkout = workoutIndex >= 0;
+        const bool pressed = hasWorkout && model.pressedButton == 20 + workoutIndex;
         const int16_t y = static_cast<int16_t>(ui_layout::trainingFirstRowY
-                                             + index * ui_layout::trainingRowStep);
-        const bool pressed = model.pressedButton == 7 + index;
-        const uint16_t fill = pressed ? accent : 0x2104;
+                                             + dayOffset * ui_layout::trainingRowStep);
+        const uint16_t fill = pressed ? accent : (dayOffset == 0 ? 0x2945 : 0x2104);
         display().fillRoundRect(ui_layout::trainingRowX, y, ui_layout::trainingRowWidth,
                                 ui_layout::trainingRowHeight, 6, fill);
-        char day[12];
-        workoutDay(model, workout, day, sizeof(day));
-        display().setTextColor(pressed ? text : (workout.today ? good : accent), fill);
+        display().setTextColor(pressed ? text : (dayOffset == 0 ? good : accent), fill);
         display().setTextSize(2);
-        display().drawString(day, 28, y + 8);
+        display().drawString(day, 28, y + 10);
+        if (!hasWorkout)
+        {
+            display().setTextColor(muted, fill);
+            display().drawString("Rest / no workout", 166, y + 10);
+            continue;
+        }
+
+        const secure_protocol::TrainingWorkout& workout = state.workouts[workoutIndex];
         const char* type = workout.activityType[0] ? workout.activityType : "Workout";
         display().setTextColor(text, fill);
-        display().drawString(type, 452 - display().textWidth(type), y + 8);
-        display().drawString(workout.title[0] ? workout.title : "Workout", 28, y + 34);
-        char details[32];
-        if (workout.distanceTenths)
-            snprintf(details, sizeof(details), "%u min  %u.%u km", workout.durationMinutes,
-                     workout.distanceTenths / 10, workout.distanceTenths % 10);
-        else if (workout.durationMinutes)
-            snprintf(details, sizeof(details), "%u min", workout.durationMinutes);
-        else snprintf(details, sizeof(details), "Scheduled");
-        display().setTextColor(muted, fill);
         display().setTextSize(2);
-        display().drawString(details, 28, y + 59);
-        display().drawString(">", 444 - display().textWidth(">"), y + 59);
+        clippedText(workout.title[0] ? workout.title : "Workout", 166, y + 2, 270);
+        char details[48];
+        if (workout.distanceTenths && workout.durationMinutes)
+            snprintf(details, sizeof(details), "%s  %u min  %u.%u km", type,
+                     workout.durationMinutes, workout.distanceTenths / 10,
+                     workout.distanceTenths % 10);
+        else if (workout.durationMinutes)
+            snprintf(details, sizeof(details), "%s  %u min", type, workout.durationMinutes);
+        else snprintf(details, sizeof(details), "%s  Scheduled", type);
+        display().setTextColor(muted, fill);
+        display().setTextSize(1);
+        clippedText(details, 166, y + 23, 260);
+        display().drawString(">", 444 - display().textWidth(">"), y + 23);
     }
 }
 

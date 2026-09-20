@@ -113,7 +113,8 @@ file can exercise the same normalized state used by the web renderer:
 ```
 
 Point the server at the file with `PI_DISPLAY_TRAINING_FILE`. Mock mode uses
-the same shape with deterministic example data. Live DeskDisplay training
-transport is intentionally deferred because the current verified secure frame
-contains telemetry only; no Garmin authentication or scraping runs on the
-ESP32.
+the same shape with deterministic example data. The controller normalizes up
+to seven workouts and sends them over the existing authenticated TLS session.
+The ESP32 renders a rolling seven-day view, fills dates without a published
+workout as `Rest / no workout`, and opens workout rows for available details.
+No Garmin authentication or scraping runs on the ESP32.

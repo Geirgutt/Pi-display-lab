@@ -195,10 +195,12 @@ markeringen automatisk og neste forsøk bruker 96-byte kompatibilitetsmodus.
 DeskDisplay starter på en klokkeside med dato og snarveier til Cluster,
 Training, Calendar og System. Wi-Fi styres automatisk og vises, sammen med
 ESP32-minne, uptime, signalstyrke og TLS-status, under System. Touch-testen er
-ikke del av den normale navigasjonen. Training viser dagens og kommende
-Garmin-økter. Calendar viser de tre neste hendelsene på tvers av de konfigurerte
-kalenderkildene. Begge mottar bare et lite normalisert datasett over den
-eksisterende TLS-forbindelsen.
+ikke del av den normale navigasjonen. Training viser de neste syv dagene, med
+Garmin-økt på planlagte dager og «Rest / no workout» når kalenderfeeden ikke
+inneholder en økt. Økter kan åpnes for detaljene Garmin faktisk har publisert.
+Calendar viser de tre neste hendelsene på tvers av de konfigurerte
+kalenderkildene. Begge mottar bare et normalisert datasett over den eksisterende
+TLS-forbindelsen.
 
 ### Garmin og kalender
 

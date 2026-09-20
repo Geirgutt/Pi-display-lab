@@ -42,6 +42,20 @@ class TrainingStateTests(unittest.TestCase):
         self.assertEqual(state["source"], "local-json")
         self.assertEqual(state["today"], None)
 
+    def test_normalize_retains_a_full_week_of_upcoming_workouts(self):
+        state = normalize_training(
+            {
+                "workouts": [
+                    {"date": f"2026-09-{day:02d}", "title": f"Workout {day}"}
+                    for day in range(8, 16)
+                ]
+            },
+            today=date(2026, 9, 7),
+        )
+
+        self.assertEqual(len(state["upcoming"]), 7)
+        self.assertEqual(state["upcoming"][-1]["date"], "2026-09-14")
+
     def test_json_provider_preserves_normalized_source_label(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "training.json"

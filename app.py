@@ -115,8 +115,8 @@ def _deskdisplay_state_lines(payload: dict[str, Any], worker_hosts: tuple[str, .
     workouts = []
     if isinstance(training.get("today"), dict):
         workouts.append((training["today"], 1))
-    workouts.extend((item, 0) for item in list(training.get("upcoming") or [])[:3])
-    for workout, is_today in workouts[:3]:
+    workouts.extend((item, 0) for item in list(training.get("upcoming") or [])[:7])
+    for workout, is_today in workouts[:7]:
         lines.append(
             "\t".join(
                 (

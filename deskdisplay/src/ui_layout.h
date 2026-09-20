@@ -20,7 +20,8 @@ constexpr int16_t singleButtonY = 426;
 
 constexpr int16_t trainingRowX = 20;
 constexpr int16_t trainingRowWidth = 440;
-constexpr int16_t trainingFirstRowY = 108;
-constexpr int16_t trainingRowStep = 92;
-constexpr int16_t trainingRowHeight = 82;
+constexpr int16_t trainingFirstRowY = 104;
+constexpr int16_t trainingRowStep = 43;
+constexpr int16_t trainingRowHeight = 39;
+constexpr uint8_t trainingDayCount = 7;
 }

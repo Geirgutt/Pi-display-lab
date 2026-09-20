@@ -19,6 +19,24 @@ uint32_t nextTelemetry = 0;
 bool lastDown = false;
 uint32_t pressedAt = 0;
 
+int trainingIndexForDay(uint8_t dayOffset)
+{
+    if (!model.timeValid) return -1;
+    const time_t now = time(nullptr);
+    struct tm local = {};
+    if (!localtime_r(&now, &local)) return -1;
+    local.tm_mday += dayOffset;
+    local.tm_hour = 12;
+    local.tm_min = 0;
+    local.tm_sec = 0;
+    if (mktime(&local) == static_cast<time_t>(-1)) return -1;
+    char iso[11];
+    strftime(iso, sizeof(iso), "%Y-%m-%d", &local);
+    for (uint8_t index = 0; index < model.trainingTelemetry.count; ++index)
+        if (strcmp(model.trainingTelemetry.workouts[index].date, iso) == 0) return index;
+    return -1;
+}
+
 void refreshState()
 {
     diagnostics::snapshot(model.diagnostics);
@@ -86,14 +104,18 @@ uint8_t hit(int16_t x, int16_t y)
     }
     else if (model.page == app_state::Page::Training)
     {
-        for (uint8_t index = 0; index < model.trainingTelemetry.count; ++index)
+        for (uint8_t dayOffset = 0; dayOffset < ui_layout::trainingDayCount; ++dayOffset)
         {
             const int16_t top = static_cast<int16_t>(ui_layout::trainingFirstRowY
-                                                   + index * ui_layout::trainingRowStep);
+                                                   + dayOffset * ui_layout::trainingRowStep);
             if (x >= ui_layout::trainingRowX
                 && x < ui_layout::trainingRowX + ui_layout::trainingRowWidth
                 && y >= top && y < top + ui_layout::trainingRowHeight)
-                return static_cast<uint8_t>(7 + index);
+            {
+                const int workoutIndex = trainingIndexForDay(dayOffset);
+                if (workoutIndex >= 0) return static_cast<uint8_t>(20 + workoutIndex);
+                return 0;
+            }
         }
         if (inside(x, y, ui_layout::singleButtonX, ui_layout::singleButtonY,
                    ui_layout::singleButtonWidth)) return 5;
@@ -112,6 +134,14 @@ uint8_t hit(int16_t x, int16_t y)
 
 void action(uint8_t button)
 {
+    if (button >= 20 && button < 20 + secure_protocol::trainingItemMax)
+    {
+        model.selectedTraining = static_cast<uint8_t>(button - 20);
+        model.page = app_state::Page::TrainingDetail;
+        model.pressedButton = 0;
+        ui::page(model);
+        return;
+    }
     switch (button)
     {
     case 1: model.page = app_state::Page::Cluster; model.pressedButton = 0; ui::page(model); break;
@@ -122,14 +152,6 @@ void action(uint8_t button)
     case 6:
         model.brightnessPercent = hardware::cycleBrightness();
         ui::brightness(model);
-        break;
-    case 7:
-    case 8:
-    case 9:
-        model.selectedTraining = static_cast<uint8_t>(button - 7);
-        model.page = app_state::Page::TrainingDetail;
-        model.pressedButton = 0;
-        ui::page(model);
         break;
     case 10:
         model.page = app_state::Page::Training;

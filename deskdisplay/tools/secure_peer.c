@@ -60,7 +60,7 @@ static int ota_waiting_reconnect = 0;
 #define CLUSTER_PAYLOAD_SIZE (CLUSTER_METADATA_SIZE + CLUSTER_NODE_MAX_PER_FRAME * CLUSTER_NODE_SIZE)
 #define CLUSTER_FRAME_SIZE (14 + CLUSTER_PAYLOAD_SIZE)
 
-#define TRAINING_ITEM_MAX 3
+#define TRAINING_ITEM_MAX 7
 #define TRAINING_TITLE_MAX 36
 #define TRAINING_TYPE_MAX 14
 #define TRAINING_DESCRIPTION_MAX 240
@@ -77,7 +77,7 @@ static int ota_waiting_reconnect = 0;
 #define CALENDAR_PAYLOAD_SIZE (3 + CALENDAR_EVENT_MAX * CALENDAR_EVENT_SIZE)
 #define CALENDAR_FRAME_SIZE (FRAME_HEADER_SIZE + CALENDAR_PAYLOAD_SIZE)
 
-#define STATE_FRAME_MAX 1024
+#define STATE_FRAME_MAX 4096
 _Static_assert(CLUSTER_FRAME_SIZE <= STATE_FRAME_MAX, "cluster frame exceeds gateway buffer");
 _Static_assert(TRAINING_FRAME_SIZE <= STATE_FRAME_MAX, "training frame exceeds gateway buffer");
 _Static_assert(CALENDAR_FRAME_SIZE <= STATE_FRAME_MAX, "calendar frame exceeds gateway buffer");

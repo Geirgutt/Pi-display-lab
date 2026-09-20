@@ -96,6 +96,10 @@ class InstallationWorkflowTests(unittest.TestCase):
         self.assertNotIn('button(1, "Wi-Fi"', ui)
         self.assertIn("strcmp(lastClockText, model.clockText)", ui)
         self.assertIn("TOMORROW", ui)
+        self.assertIn("NEXT 7 DAYS", ui)
+        self.assertIn("Rest / no workout", ui)
+        self.assertIn("trainingDayCount = 7", self.read("deskdisplay/src/ui_layout.h"))
+        self.assertIn("trainingItemMax = 7", self.read("deskdisplay/src/secure_protocol.h"))
         self.assertIn("Page::TrainingDetail", state + app + ui)
         self.assertIn("putUChar(brightnessKey", self.read("deskdisplay/src/hardware.cpp"))
 
