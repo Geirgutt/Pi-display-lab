@@ -465,6 +465,10 @@ def provision_remote_display(host: str, port: str, wifi_ssid: str, no_flash: boo
         stdin=psk + "\n" + (wifi_password + "\n" if wifi_password else ""), timeout=900,
     )
     if result.returncode:
+        if result.stdout:
+            print(result.stdout, end="", flush=True)
+        if result.stderr:
+            print(result.stderr, end="", file=sys.stderr, flush=True)
         require_ssh(result, host)
         return result.returncode
     print(result.stdout, end="", flush=True)
