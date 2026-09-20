@@ -146,7 +146,8 @@ void ui::page(const app_state::Model& model)
     display().fillScreen(background);
     if (model.page == app_state::Page::Dashboard)
     {
-        header("Home");
+        // Temporary, visible marker for the first end-to-end OTA verification.
+        header("OTA OK");
         display().fillRoundRect(20, 72, 440, 228, 10, card);
         label("Live platform status", 32, 82, 2, muted);
         telemetry(model);
