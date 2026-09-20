@@ -23,6 +23,18 @@ class UpdatePolicyTests(unittest.TestCase):
             ("quick", False, ()),
         )
 
+    def test_controller_and_display_changes_skip_workers(self) -> None:
+        self.assertEqual(
+            classify_paths((
+                "app.py",
+                "integration_sync.py",
+                "deskdisplay/src/ui.cpp",
+                "scripts/stage-deskdisplay-ota.sh",
+                "scripts/update.sh",
+            )),
+            ("controller", True, ()),
+        )
+
     def test_security_install_and_dependency_changes_require_full_update(self) -> None:
         for path in (
             "cluster_pki.py",

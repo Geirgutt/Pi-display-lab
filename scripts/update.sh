@@ -140,6 +140,8 @@ if [[ "$CLUSTER_ENABLED" == "true" ]]; then
     else
       echo "Trygg runtime-endring oppdaget: bruker hurtigoppdatering uten pakke-, PKI- eller credential-distribusjon."
     fi
+  elif [[ "$UPDATE_MODE" == "controller" ]]; then
+    echo "Endringene gjelder controlleren og DeskDisplay; workerne hoppes over."
   else
     echo "Installasjons-, dependency-, konfigurasjons- eller sikkerhetsendring oppdaget: bruker full oppdatering."
   fi
@@ -205,6 +207,15 @@ if [[ "$CLUSTER_ENABLED" == "true" ]]; then
   if [[ "$UPDATE_MODE" == "quick" ]]; then
     echo "Hurtigoppdaterer controller og workers til eksakt commit $REVISION ..."
     bash scripts/install-cluster.sh --quick --display-mode "$DISPLAY_MODE"
+  elif [[ "$UPDATE_MODE" == "controller" ]]; then
+    echo "Hurtigoppdaterer bare controllerens runtime-tjenester ..."
+    bash scripts/quick-update-controller.sh
+    if systemctl cat pi-display-integrations.service >/dev/null 2>&1; then
+      echo "Oppdaterer Garmin-/kalenderdata med den nye parseren ..."
+      if ! sudo systemctl start pi-display-integrations.service; then
+        echo "Garmin-/kalendersynk feilet midlertidig; timeren prøver igjen senere." >&2
+      fi
+    fi
   else
     echo "Fulloppdaterer controller og workers til eksakt commit $REVISION ..."
     bash scripts/install-cluster.sh --display-mode "$DISPLAY_MODE"

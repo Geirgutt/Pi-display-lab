@@ -75,9 +75,9 @@ def _is_display_change(path: str) -> bool:
 def classify_paths(paths: Iterable[str]) -> tuple[str, bool, tuple[str, ...]]:
     """Return ``(mode, display_changed, unknown_paths)``.
 
-    ``mode`` is one of none, display, quick, full or ask. Display changes can
-    accompany quick/full changes; an otherwise display-only revision gets the
-    dedicated display mode.
+    ``mode`` is one of none, display, controller, quick, full or ask. Display
+    changes can accompany controller/quick/full changes; an otherwise
+    display-only revision gets the dedicated display mode.
     """
 
     changed = tuple(dict.fromkeys(path for path in paths if path))
@@ -94,6 +94,18 @@ def classify_paths(paths: Iterable[str]) -> tuple[str, bool, tuple[str, ...]]:
     )
     if display_changed and not non_display:
         return "display", True, ()
+
+    controller_files = {
+        "app.py",
+        "calendar_data.py",
+        "display_state.py",
+        "integration_sync.py",
+        "scripts/update.sh",
+        "training.py",
+        "update_policy.py",
+    }
+    if non_display and all(path in controller_files for path in non_display):
+        return "controller", display_changed, ()
 
     if any(
         _matches(path, FULL_FILES, FULL_PREFIXES)
