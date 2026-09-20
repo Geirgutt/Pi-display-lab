@@ -70,8 +70,13 @@ class InstallationWorkflowTests(unittest.TestCase):
 
     def test_deskdisplay_ota_waits_for_rebooted_tls_reconnect(self) -> None:
         gateway = self.read("deskdisplay/tools/secure_peer.c")
+        protocol = self.read("deskdisplay/src/secure_protocol.h")
         staging = self.read("scripts/stage-deskdisplay-ota.sh")
         self.assertIn("DeskDisplay reconnected after OTA reboot", gateway)
+        self.assertIn("OTA_LEGACY_CHUNK_SIZE 96", gateway)
+        self.assertIn("OTA_FAST_CHUNK_SIZE 4096", gateway)
+        self.assertIn("ota_fast_path", gateway)
+        self.assertIn("otaChunkDataSize = 4096", protocol)
         self.assertIn("OTA_RESULT", staging)
         self.assertIn("PI_DISPLAY_OTA_TIMEOUT", staging)
         self.assertIn("OTA fullført", staging)

@@ -37,6 +37,7 @@ static uint16_t state_port = 0;
 static char ota_file_path[4096] = {0};
 static char ota_progress_path[4096] = {0};
 static char ota_result_path[4096] = {0};
+static char ota_fast_path[4096] = {0};
 static int ota_waiting_reconnect = 0;
 
 #define OTA_OFFER_TYPE 0x80
@@ -47,7 +48,9 @@ static int ota_waiting_reconnect = 0;
 #define OTA_CHUNK_ACCEPTED 2
 #define OTA_COMPLETE 3
 #define OTA_FAILED 0x80
-#define OTA_CHUNK_SIZE 96
+#define OTA_LEGACY_CHUNK_SIZE 96
+#define OTA_FAST_CHUNK_SIZE 4096
+#define FRAME_HEADER_SIZE 14
 
 #define CLUSTER_NODE_MAX_PER_FRAME 3
 #define CLUSTER_STATE_MAX_NODES 128
@@ -471,8 +474,8 @@ static int ota_digest(const char* path, uint32_t* size, unsigned char digest[32]
 static int send_ota_header(SSL* ssl, unsigned char type, uint64_t sequence,
                            const unsigned char* payload, size_t payload_length)
 {
-    unsigned char frame[128] = {0};
-    if (payload_length > sizeof(frame) - 14) return 0;
+    unsigned char frame[FRAME_HEADER_SIZE + 6 + OTA_FAST_CHUNK_SIZE] = {0};
+    if (payload_length > sizeof(frame) - FRAME_HEADER_SIZE) return 0;
     frame[0] = 'D'; frame[1] = 'S'; frame[2] = 1; frame[3] = type;
     frame[4] = (unsigned char)payload_length;
     frame[5] = (unsigned char)(payload_length >> 8);
@@ -497,7 +500,9 @@ static int perform_ota(SSL* ssl)
     offer[2] = (unsigned char)(image_size >> 16);
     offer[3] = (unsigned char)(image_size >> 24);
     memcpy(offer + 4, digest, sizeof(digest));
-    printf("OTA transfer started (%u bytes).\n", image_size);
+    const int fast_mode = ota_fast_path[0] && access(ota_fast_path, F_OK) == 0;
+    const size_t chunk_size = fast_mode ? OTA_FAST_CHUNK_SIZE : OTA_LEGACY_CHUNK_SIZE;
+    printf("OTA transfer started (%u bytes, %zu-byte chunks).\n", image_size, chunk_size);
     write_ota_status(ota_progress_path, "offer", 0, image_size);
     if (!send_ota_header(ssl, OTA_OFFER_TYPE, 1, offer, sizeof(offer))
         || !wait_ota_ack(ssl, "offer", OTA_READY, 0))
@@ -508,15 +513,15 @@ static int perform_ota(SSL* ssl)
 
     FILE* file = fopen(ota_file_path, "rb");
     if (!file) return 0;
-    unsigned char buffer[OTA_CHUNK_SIZE];
-    unsigned char chunk[OTA_CHUNK_SIZE + 6];
+    unsigned char buffer[OTA_FAST_CHUNK_SIZE];
+    unsigned char chunk[OTA_FAST_CHUNK_SIZE + 6];
     uint32_t offset = 0;
     uint32_t next_progress = 64 * 1024;
     uint64_t sequence = 2;
     int ok = 1;
     while (offset < image_size)
     {
-        const size_t amount = fread(buffer, 1, sizeof(buffer), file);
+        const size_t amount = fread(buffer, 1, chunk_size, file);
         if (amount == 0) { ok = 0; break; }
         chunk[0] = (unsigned char)offset;
         chunk[1] = (unsigned char)(offset >> 8);
@@ -543,11 +548,19 @@ static int perform_ota(SSL* ssl)
     if (ok)
     {
         unlink(ota_file_path);
+        write_ota_status(ota_fast_path, "fast-v1", OTA_FAST_CHUNK_SIZE, OTA_FAST_CHUNK_SIZE);
         write_ota_status(ota_progress_path, "delivered", image_size, image_size);
         printf("OTA image delivered successfully (%u bytes).\n", image_size);
+        if (!fast_mode)
+            printf("DeskDisplay is now marked for 4096-byte OTA chunks.\n");
     }
     else
     {
+        if (fast_mode)
+        {
+            unlink(ota_fast_path);
+            fprintf(stderr, "Fast OTA failed; next retry will use legacy 96-byte chunks.\n");
+        }
         write_ota_status(ota_progress_path, "failed", offset, image_size);
         fprintf(stderr, "OTA transfer failed; image retained for retry.\n");
     }
@@ -717,7 +730,9 @@ int main(int argc, char** argv)
         if (snprintf(ota_progress_path, sizeof(ota_progress_path), "%s.progress", ota_file_path)
                 >= (int)sizeof(ota_progress_path)
             || snprintf(ota_result_path, sizeof(ota_result_path), "%s.result", ota_file_path)
-                >= (int)sizeof(ota_result_path))
+                >= (int)sizeof(ota_result_path)
+            || snprintf(ota_fast_path, sizeof(ota_fast_path), "%s.fast", ota_file_path)
+                >= (int)sizeof(ota_fast_path))
         {
             fprintf(stderr, "OTA file path is too long.\n");
             return 2;

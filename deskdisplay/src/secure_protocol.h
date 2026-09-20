@@ -36,7 +36,9 @@ constexpr size_t clusterMetadataSize = 5;
 constexpr size_t clusterPayloadSize = clusterMetadataSize + clusterNodeMax * clusterNodeSize;
 constexpr size_t clusterFrameSize = headerSize + clusterPayloadSize;
 constexpr size_t otaDigestSize = 32;
-constexpr size_t otaChunkDataSize = 96;
+// Legacy firmware accepted 96-byte chunks in a 128-byte receive buffer. New
+// firmware accepts 4 KiB chunks while remaining able to receive legacy chunks.
+constexpr size_t otaChunkDataSize = 4096;
 constexpr size_t otaOfferPayloadSize = 4 + otaDigestSize;
 constexpr size_t otaChunkHeaderSize = 4 + 2;
 constexpr size_t otaOfferFrameSize = headerSize + otaOfferPayloadSize;
@@ -44,8 +46,10 @@ constexpr size_t otaChunkFrameSize = headerSize + otaChunkHeaderSize + otaChunkD
 constexpr size_t otaCompleteFrameSize = headerSize;
 constexpr size_t otaAckPayloadSize = 1 + 4;
 constexpr size_t otaAckFrameSize = headerSize + otaAckPayloadSize;
-constexpr size_t maxFrameSize = 128;
+constexpr size_t maxFrameSize = otaChunkFrameSize > clusterFrameSize
+                              ? otaChunkFrameSize : clusterFrameSize;
 static_assert(clusterFrameSize <= maxFrameSize, "Cluster frame exceeds receive buffer");
+static_assert(otaChunkFrameSize <= maxFrameSize, "OTA frame exceeds receive buffer");
 constexpr int16_t temperatureUnavailable = INT16_MIN;
 
 struct Telemetry

@@ -184,6 +184,13 @@ ikke med suksess før displayet har mottatt hele firmwaren, startet på nytt og
 etablert en ny TLS-forbindelse. Standardgrensen er 15 minutter og kan ved behov
 endres med miljøvariabelen `PI_DISPLAY_OTA_TIMEOUT`.
 
+Eldre firmware mottar 96-byte OTA-blokker. Den første oppgraderingen til den
+nye protokollen bruker derfor fortsatt den kompatible, langsomme overføringen.
+Etter bekreftet levering markerer controlleren lokalt at displayet støtter
+4 KiB-blokker; senere OTA-er går fra omtrent 10 000 til rundt 235 kvitterte
+blokker for en firmware på cirka 960 KiB. Hvis hurtigmodus feiler, fjernes
+markeringen automatisk og neste forsøk bruker 96-byte kompatibilitetsmodus.
+
 Oppdateringsskriptet:
 
 - klassifiserer automatisk endringene og velger minste trygge oppdatering
