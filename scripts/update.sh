@@ -203,6 +203,11 @@ if [[ "$CLUSTER_ENABLED" == "true" ]]; then
     fi
     exit 0
   fi
+  if [[ "$UPDATE_MODE" == "quick" && "$DISPLAY_CHANGED" == "true" \
+        && "$DISPLAY_MODE" != "none" ]]; then
+    echo "Oppdaterer DeskDisplay-gatewayen uten å kjøre full cluster-installasjon ..."
+    bash scripts/install-deskdisplay-service.sh
+  fi
   if [[ "$UPDATE_MODE" == "quick" ]]; then
     echo "Hurtigoppdaterer controller og workers til eksakt commit $REVISION ..."
     bash scripts/install-cluster.sh --quick --display-mode "$DISPLAY_MODE"

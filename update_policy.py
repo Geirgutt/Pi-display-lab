@@ -11,15 +11,24 @@ from collections.abc import Iterable
 
 
 QUICK_FILES = {
+    "ansible/update-workers.yml",
+    "ansible/verify-workers.yml",
     "app.py",
     "cluster_client.py",
     "cluster_coordinator.py",
+    "cluster_install.py",
     "cluster_jobs.py",
     "cluster_worker.py",
     "display_state.py",
     "node_agent.py",
+    "scripts/check-cluster-pki.py",
+    "scripts/classify-update.py",
+    "scripts/install-cluster.sh",
+    "scripts/quick-update-controller.sh",
+    "scripts/update.sh",
     "training.py",
     "transports.py",
+    "update_policy.py",
     "updates.py",
 }
 QUICK_PREFIXES = ("static/", "templates/")
@@ -28,7 +37,6 @@ NEUTRAL_PREFIXES = ("tests/",)
 FULL_FILES = {
     "cluster_auth.py",
     "cluster_bootstrap.py",
-    "cluster_install.py",
     "cluster_pki.py",
     "cluster_ssh.py",
     "cluster_tls.py",
@@ -38,7 +46,6 @@ FULL_FILES = {
     "requirements-ansible.txt",
     "requirements-test.txt",
     "setup_cluster.py",
-    "update_policy.py",
 }
 FULL_PREFIXES = ("ansible/", "scripts/")
 DISPLAY_NEUTRAL_PREFIXES = ("deskdisplay/docs/",)
@@ -74,7 +81,11 @@ def classify_paths(paths: Iterable[str]) -> tuple[str, bool, tuple[str, ...]]:
     if display_changed and not non_display:
         return "display", True, ()
 
-    if any(_matches(path, FULL_FILES, FULL_PREFIXES) for path in non_display):
+    if any(
+        _matches(path, FULL_FILES, FULL_PREFIXES)
+        and not _matches(path, QUICK_FILES, QUICK_PREFIXES)
+        for path in non_display
+    ):
         return "full", display_changed, ()
 
     unknown = tuple(

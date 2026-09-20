@@ -19,9 +19,20 @@ class UpdatePolicyTests(unittest.TestCase):
         )
 
     def test_security_install_and_dependency_changes_require_full_update(self) -> None:
-        for path in ("cluster_pki.py", "requirements.txt", "ansible/install-workers.yml", "scripts/update.sh"):
+        for path in ("cluster_pki.py", "requirements.txt", "ansible/install-workers.yml", "scripts/install-service.sh"):
             with self.subTest(path=path):
                 self.assertEqual(classify_paths((path,))[0], "full")
+
+    def test_update_engine_changes_can_bootstrap_through_quick_path(self) -> None:
+        paths = (
+            "cluster_install.py",
+            "update_policy.py",
+            "scripts/update.sh",
+            "scripts/install-cluster.sh",
+            "ansible/update-workers.yml",
+            "ansible/verify-workers.yml",
+        )
+        self.assertEqual(classify_paths(paths), ("quick", False, ()))
 
     def test_unknown_path_requires_operator_choice(self) -> None:
         self.assertEqual(
