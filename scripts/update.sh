@@ -147,6 +147,7 @@ if [[ "$CLUSTER_ENABLED" == "true" ]]; then
       chmod 0700 "$TEMP_DIR"
       trap 'rm -rf "$TEMP_DIR"; sudo_session_stop' EXIT
       echo "Oppdaterer kun DeskDisplay via USB ..."
+      bash scripts/install-deskdisplay-service.sh
       python3 cluster_install.py "$CONFIG_FILE" "$TEMP_DIR" "$REVISION" \
         --display-mode cable --display-only
     fi

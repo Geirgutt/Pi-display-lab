@@ -50,8 +50,10 @@ static char ota_file_path[4096] = {0};
 #define CLUSTER_STATE_MAX_NODES 128
 #define CLUSTER_NAME_MAX 16
 #define CLUSTER_NODE_SIZE (1 + CLUSTER_NAME_MAX + 2 + 2 + 2 + 4 + 1)
-#define CLUSTER_PAYLOAD_SIZE (4 + CLUSTER_NODE_MAX_PER_FRAME * CLUSTER_NODE_SIZE)
+#define CLUSTER_METADATA_SIZE 5
+#define CLUSTER_PAYLOAD_SIZE (CLUSTER_METADATA_SIZE + CLUSTER_NODE_MAX_PER_FRAME * CLUSTER_NODE_SIZE)
 #define CLUSTER_FRAME_SIZE (14 + CLUSTER_PAYLOAD_SIZE)
+_Static_assert(CLUSTER_FRAME_SIZE <= 128, "cluster frame exceeds display receive buffer");
 
 struct cluster_node {
     char name[CLUSTER_NAME_MAX + 1];
@@ -588,11 +590,11 @@ static size_t make_cluster_frame(unsigned char* frame, uint64_t sequence, int in
     payload[1] = (unsigned char)page_count;
     put16(payload + 2, (uint16_t)current.count);
     payload[4] = (unsigned char)page_nodes;
-    memset(payload + 5, 0, CLUSTER_NODE_MAX_PER_FRAME * CLUSTER_NODE_SIZE);
+    memset(payload + CLUSTER_METADATA_SIZE, 0, CLUSTER_NODE_MAX_PER_FRAME * CLUSTER_NODE_SIZE);
     for (size_t index = 0; index < page_nodes; ++index)
     {
         const struct cluster_node* node = &current.nodes[first + index];
-        unsigned char* encoded = payload + 5 + index * CLUSTER_NODE_SIZE;
+        unsigned char* encoded = payload + CLUSTER_METADATA_SIZE + index * CLUSTER_NODE_SIZE;
         const size_t name_length = strlen(node->name) > CLUSTER_NAME_MAX ? CLUSTER_NAME_MAX : strlen(node->name);
         encoded[0] = (unsigned char)name_length;
         memcpy(encoded + 1, node->name, name_length);

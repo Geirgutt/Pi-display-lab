@@ -31,7 +31,9 @@ constexpr size_t payloadSize = 1 + hostnameMax + 2 + 2 + 2 + 4 + 1;
 constexpr size_t headerSize = 2 + 1 + 1 + 2 + 8;
 constexpr size_t frameSize = headerSize + payloadSize;
 constexpr size_t clusterNodeSize = 1 + clusterNameMax + 2 + 2 + 2 + 4 + 1;
-constexpr size_t clusterPayloadSize = 4 + clusterNodeMax * clusterNodeSize;
+// page index + page count + total node count (uint16) + nodes on this page.
+constexpr size_t clusterMetadataSize = 5;
+constexpr size_t clusterPayloadSize = clusterMetadataSize + clusterNodeMax * clusterNodeSize;
 constexpr size_t clusterFrameSize = headerSize + clusterPayloadSize;
 constexpr size_t otaDigestSize = 32;
 constexpr size_t otaChunkDataSize = 96;
@@ -43,6 +45,7 @@ constexpr size_t otaCompleteFrameSize = headerSize;
 constexpr size_t otaAckPayloadSize = 1 + 4;
 constexpr size_t otaAckFrameSize = headerSize + otaAckPayloadSize;
 constexpr size_t maxFrameSize = 128;
+static_assert(clusterFrameSize <= maxFrameSize, "Cluster frame exceeds receive buffer");
 constexpr int16_t temperatureUnavailable = INT16_MIN;
 
 struct Telemetry
@@ -168,11 +171,11 @@ inline size_t encodeClusterTelemetry(uint8_t* frame, size_t capacity, uint64_t s
     payload[1] = value.pageCount;
     put16(payload + 2, value.totalNodes);
     payload[4] = value.count;
-    memset(payload + 5, 0, clusterNodeMax * clusterNodeSize);
+    memset(payload + clusterMetadataSize, 0, clusterNodeMax * clusterNodeSize);
     for (size_t index = 0; index < value.count; ++index)
     {
         const ClusterNode& node = value.nodes[index];
-        uint8_t* encoded = payload + 5 + index * clusterNodeSize;
+        uint8_t* encoded = payload + clusterMetadataSize + index * clusterNodeSize;
         const size_t nameLength = strnlen(node.name, clusterNameMax);
         encoded[0] = static_cast<uint8_t>(nameLength);
         memcpy(encoded + 1, node.name, nameLength);
@@ -205,7 +208,7 @@ inline bool decodeClusterTelemetry(const uint8_t* frame, size_t length, uint64_t
     value.count = payload[4];
     for (size_t index = 0; index < value.count; ++index)
     {
-        const uint8_t* encoded = payload + 5 + index * clusterNodeSize;
+        const uint8_t* encoded = payload + clusterMetadataSize + index * clusterNodeSize;
         const size_t nameLength = encoded[0];
         if (nameLength > clusterNameMax || encoded[1 + clusterNameMax + 10] > 1) return false;
         ClusterNode& node = value.nodes[index];
