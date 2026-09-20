@@ -481,7 +481,7 @@ def provision_remote_display(host: str, port: str, wifi_ssid: str, no_flash: boo
     print(f"Provisjonerer DeskDisplay på worker {host} ...", flush=True)
     result = ssh_run_stream(
         user, host, remote, identity_file=identity_file,
-        stdin=psk + "\n" + (wifi_password + "\n" if wifi_password else ""), timeout=900,
+        stdin=psk + "\n" + (wifi_password + "\n" if wifi_password else ""), timeout=1800,
     )
     if result.returncode:
         if result.stdout:
