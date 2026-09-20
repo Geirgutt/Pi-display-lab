@@ -158,6 +158,19 @@ cd ~/Pi-display-lab
 bash scripts/update.sh
 ```
 
+Hvis den nye committen bare inneholder endringer under `deskdisplay/`, oppdager
+skriptet dette automatisk og oppdaterer bare DeskDisplay. Du kan også tvinge
+denne korte veien manuelt:
+
+```bash
+bash scripts/update.sh --display-only
+```
+
+Da hoppes controller- og worker-installasjonen over. Skriptet spør fortsatt om
+displayet er koblet med USB (direkte flashing) eller skal oppdateres over OTA.
+Ved USB på en worker hentes den eksakte committen først til workerens lokale
+checkout, slik at firmwarekoden som bygges faktisk er den nye.
+
 Oppdateringsskriptet:
 
 1. stopper hvis prosjektmappen har lokale endringer

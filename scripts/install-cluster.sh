@@ -19,6 +19,7 @@ DISPLAY_PORT=""
 DISPLAY_WIFI_SSID=""
 DISPLAY_NO_FLASH=false
 DISPLAY_MODE="auto"
+DISPLAY_ONLY=false
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --sudo-socket)
@@ -60,6 +61,10 @@ while [[ $# -gt 0 ]]; do
         *) echo "Ugyldig --display-mode: $2" >&2; exit 2 ;;
       esac
       shift 2
+      ;;
+    --display-only)
+      DISPLAY_ONLY=true
+      shift
       ;;
     *)
       echo "Ukjent valg: $1"
@@ -110,6 +115,7 @@ done
 [[ -z "$DISPLAY_WIFI_SSID" ]] || INSTALL_ARGS+=(--display-wifi-ssid "$DISPLAY_WIFI_SSID")
 [[ "$DISPLAY_NO_FLASH" != "true" ]] || INSTALL_ARGS+=(--display-no-flash)
 INSTALL_ARGS+=(--display-mode "$DISPLAY_MODE")
+[[ "$DISPLAY_ONLY" != "true" ]] || INSTALL_ARGS+=(--display-only)
 python3 cluster_install.py "$CONFIG_FILE" "$TEMP_DIR" "$REVISION" "${INSTALL_ARGS[@]}"
 
 echo

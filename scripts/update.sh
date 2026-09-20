@@ -9,6 +9,7 @@ PROJECT_DIR="$(cd -- "${SCRIPT_SOURCE%/*}/.." && pwd)"
 VENV_DIR="$PROJECT_DIR/.venv"
 CONFIG_FILE="$PROJECT_DIR/config.local.json"
 DISPLAY_MODE=""
+DISPLAY_ONLY=false
 
 if [[ $EUID -eq 0 ]]; then
   echo "Kjør oppdateringen som vanlig bruker, ikke som root."
@@ -19,6 +20,10 @@ while [[ $# -gt 0 ]]; do
   case "$1" in
     --display-ota)
       DISPLAY_MODE="ota"
+      shift
+      ;;
+    --display-only)
+      DISPLAY_ONLY=true
       shift
       ;;
     *)
@@ -45,6 +50,8 @@ fi
 source "$PROJECT_DIR/scripts/sudo-session.sh"
 trap 'sudo_session_stop' EXIT
 
+PREVIOUS_REVISION="$(git rev-parse HEAD)"
+
 echo "Kontrollerer lokal sudo-tilgang før Git endres ..."
 if ! sudo_session_start; then
   echo "Oppdateringen trenger vanlig sudo-tilgang for å restarte tjenester."
@@ -66,6 +73,23 @@ if [[ -f "$CONFIG_FILE" ]]; then
   DISPLAY_OTA_READY="$(python3 scripts/config-value.py deskdisplay_ota_ready --config "$CONFIG_FILE")"
 fi
 
+display_revision_only() {
+  local changed=false
+  local path=""
+  while IFS= read -r path; do
+    [[ -z "$path" ]] && continue
+    changed=true
+    [[ "$path" == deskdisplay/* ]] || return 1
+  done < <(git diff --name-only "$PREVIOUS_REVISION" "$REVISION")
+  [[ "$changed" == "true" ]]
+}
+
+if [[ "$CLUSTER_ENABLED" == "true" && "$DISPLAY_ONLY" != "true" \
+      && "$PREVIOUS_REVISION" != "$REVISION" ]] && display_revision_only; then
+  DISPLAY_ONLY=true
+  echo "Committen endrer bare deskdisplay/. Hopper over controller- og worker-oppdateringen."
+fi
+
 prompt_yes_no() {
   local answer=""
   [[ -r /dev/tty ]] || return 1
@@ -76,7 +100,7 @@ prompt_yes_no() {
   esac
 }
 
-if [[ "$CLUSTER_ENABLED" == "true" && -z "$DISPLAY_MODE" ]]; then
+if [[ "$CLUSTER_ENABLED" == "true" && "$DISPLAY_ONLY" != "true" && -z "$DISPLAY_MODE" ]]; then
   if prompt_yes_no "Skal DeskDisplay oppdateres nå?"; then
     if prompt_yes_no "Er DeskDisplay tilkoblet clusteret med USB-kabel nå?"; then
       DISPLAY_MODE="cable"
@@ -101,6 +125,32 @@ if [[ "$CLUSTER_ENABLED" == "true" ]]; then
     echo "Koden er oppdatert, men den lokale cluster-configen må migreres."
     echo "Kjør nå: python3 scripts/setup-cluster.py"
     exit 2
+  fi
+  if [[ "$DISPLAY_ONLY" == "true" ]]; then
+    if [[ -z "$DISPLAY_MODE" ]]; then
+      if prompt_yes_no "Er DeskDisplay tilkoblet clusteret med USB-kabel nå?"; then
+        DISPLAY_MODE="cable"
+      else
+        DISPLAY_MODE="ota"
+      fi
+    fi
+    if [[ "$DISPLAY_MODE" == "ota" && "$DISPLAY_OTA_READY" != "true" ]]; then
+      echo "OTA for DeskDisplay er ikke klargjort ennå. Koble displayet til en Pi med USB-kabel først." >&2
+      exit 2
+    fi
+    if [[ "$DISPLAY_MODE" == "ota" ]]; then
+      echo "Oppdaterer kun DeskDisplay over OTA ..."
+      bash scripts/install-deskdisplay-service.sh
+      bash scripts/stage-deskdisplay-ota.sh
+    else
+      TEMP_DIR="$(mktemp -d)"
+      chmod 0700 "$TEMP_DIR"
+      trap 'rm -rf "$TEMP_DIR"; sudo_session_stop' EXIT
+      echo "Oppdaterer kun DeskDisplay via USB ..."
+      python3 cluster_install.py "$CONFIG_FILE" "$TEMP_DIR" "$REVISION" \
+        --display-mode cable --display-only
+    fi
+    exit 0
   fi
   echo "Oppdaterer controller og workers til eksakt commit $REVISION ..."
   bash scripts/install-cluster.sh --display-mode "$DISPLAY_MODE"

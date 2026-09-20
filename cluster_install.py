@@ -216,7 +216,7 @@ def install(config: str, temp_dir: str, revision: str, workers: list[str], user:
             display_gateway_port: int = 4567, display_psk_file: str = "",
             configured_wifi_ssid: str = "", display_wifi_configured: bool | None = None,
             display_identify_pending: bool = False, worker_order: list[str] | None = None,
-            display_mode: str = "auto") -> int:
+            display_mode: str = "auto", display_only: bool = False) -> int:
     if display_mode not in {"auto", "none", "cable", "ota"}:
         raise RuntimeError(f"Ugyldig display-modus: {display_mode}")
     passwords = broker_passwords(sudo_socket, workers) if sudo_socket else collect_passwords(
@@ -230,6 +230,21 @@ def install(config: str, temp_dir: str, revision: str, workers: list[str], user:
             ask_attached=display_mode != "cable",
         )
         display_identify_pending = False
+    if display_only:
+        if display_mode != "cable":
+            raise RuntimeError("Display-only-installasjon krever display-modus cable")
+        result = provision_configured_display(
+            display_port, display_wifi_ssid or configured_wifi_ssid, display_no_flash,
+            display_attached=display_attached, display_host=display_host,
+            display_serial_port=display_serial_port, controller_host=controller_host,
+            display_gateway_port=display_gateway_port, display_psk_file=display_psk_file,
+            display_wifi_configured=display_wifi_configured,
+            user=user, identity_file=identity_file, workers=workers, revision=revision,
+        )
+        if result == 0 and display_attached is True:
+            mark_display_wifi_configured(config)
+            mark_display_ota_ready(config)
+        return result
     print("Passordkontrollen er ferdig. Installerer controlleren ...", flush=True)
     controller = ["bash", "scripts/install-cluster-controller.sh", config, temp_dir, revision]
     if regenerate:
@@ -461,7 +476,7 @@ def provision_display(port: str, wifi_ssid: str, no_flash: bool) -> int:
 def provision_remote_display(host: str, port: str, wifi_ssid: str, no_flash: bool,
                              *, user: str, identity_file: str, controller_host: str,
                              gateway_port: int, psk_file: str,
-                             wifi_password: str = "") -> int:
+                             wifi_password: str = "", revision: str = "") -> int:
     try:
         psk = Path(psk_file).read_text(encoding="ascii").strip()
     except (OSError, UnicodeError):
@@ -475,7 +490,13 @@ def provision_remote_display(host: str, port: str, wifi_ssid: str, no_flash: boo
                 "--gateway-port", str(gateway_port)]
     if wifi_password:
         command.append("--wifi-password-stdin")
-    remote = "cd \"$HOME/Pi-display-lab\" && " + " ".join(
+    sync = ""
+    if revision:
+        sync = (
+            "git -C \"$HOME/Pi-display-lab\" fetch --quiet origin && "
+            f"git -C \"$HOME/Pi-display-lab\" checkout --detach --quiet {shlex.quote(revision)} && "
+        )
+    remote = sync + "cd \"$HOME/Pi-display-lab\" && " + " ".join(
         shlex.quote(part) for part in command
     )
     print(f"Provisjonerer DeskDisplay på worker {host} ...", flush=True)
@@ -500,7 +521,7 @@ def provision_configured_display(port: str, wifi_ssid: str, no_flash: bool, *,
                                  display_gateway_port: int, display_psk_file: str,
                                  display_wifi_configured: bool | None,
                                  user: str, identity_file: str,
-                                 workers: list[str]) -> int:
+                                 workers: list[str], revision: str = "") -> int:
     if port:
         return provision_display(port, wifi_ssid, no_flash)
     if display_attached is not True:
@@ -523,6 +544,7 @@ def provision_configured_display(port: str, wifi_ssid: str, no_flash: bool, *,
         user=user, identity_file=identity_file, controller_host=controller_host,
         gateway_port=display_gateway_port, psk_file=display_psk_file,
         wifi_password=wifi_password,
+        revision=revision,
     )
 
 
@@ -569,6 +591,7 @@ def main() -> int:
     parser.add_argument("--display-wifi-ssid", default="")
     parser.add_argument("--display-no-flash", action="store_true")
     parser.add_argument("--display-mode", choices=("auto", "none", "cable", "ota"), default="auto")
+    parser.add_argument("--display-only", action="store_true")
     args = parser.parse_args()
     try:
         settings = validate_controller_config(args.config)
@@ -588,7 +611,8 @@ def main() -> int:
                        display_wifi_configured=settings.deskdisplay.display_wifi_configured,
                        display_identify_pending=settings.deskdisplay.display_identify_pending,
                        worker_order=list(settings.worker_hosts),
-                       display_mode=args.display_mode)
+                       display_mode=args.display_mode,
+                       display_only=args.display_only)
     except (ConfigValidationError, RuntimeError, OSError, EOFError) as error:
         print(f"Installasjonen stoppet: {error}", file=sys.stderr)
         return 1
