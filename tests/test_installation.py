@@ -93,6 +93,7 @@ class InstallationWorkflowTests(unittest.TestCase):
         self.assertNotIn("Touch Test", ui)
         self.assertNotIn("Page::TouchTest", state + app + ui)
         self.assertNotIn('button(1, "Wi-Fi"', ui)
+        self.assertIn("strcmp(lastClockText, model.clockText)", ui)
 
     def test_services_are_non_root_and_have_low_risk_hardening(self) -> None:
         playbook = self.read("ansible/install-workers.yml")

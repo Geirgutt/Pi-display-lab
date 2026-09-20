@@ -14,6 +14,10 @@ constexpr uint16_t good = 0x05E8;
 constexpr uint16_t warning = 0xFD20;
 constexpr uint16_t text = TFT_WHITE;
 constexpr uint16_t muted = 0xBDF7;
+char lastClockText[6] = {};
+char lastDateText[16] = {};
+uint16_t lastHomeNodeCount = UINT16_MAX;
+bool lastHomeTimeValid = false;
 
 LGFX& display() { return hardware::display(); }
 
@@ -60,27 +64,46 @@ void header(const char* title)
     display().drawString(title, width - 24 - display().textWidth(title), 19);
 }
 
-void homeClock(const app_state::Model& model)
+void homeClock(const app_state::Model& model, bool force = false)
 {
-    display().fillRoundRect(20, 72, 440, 204, 10, card);
-    display().fillRect(28, 88, 424, 138, card);
-    display().setTextColor(model.timeValid ? text : muted, card);
-    display().setTextSize(7);
-    display().drawString(model.clockText,
-                         (width - display().textWidth(model.clockText)) / 2, 96);
-    display().setTextSize(2);
-    display().drawString(model.dateText,
-                         (width - display().textWidth(model.dateText)) / 2, 190);
+    if (force || strcmp(lastClockText, model.clockText) != 0)
+    {
+        // Clock digits have a stable width. Drawing with an opaque background
+        // replaces the old glyphs without flashing the whole card every second.
+        if (!force && lastHomeTimeValid != model.timeValid)
+            display().fillRect(28, 88, 424, 92, card);
+        display().setTextColor(model.timeValid ? text : muted, card);
+        display().setTextSize(7);
+        display().drawString(model.clockText,
+                             (width - display().textWidth(model.clockText)) / 2, 96);
+        strncpy(lastClockText, model.clockText, sizeof(lastClockText));
+        lastClockText[sizeof(lastClockText) - 1] = 0;
+        lastHomeTimeValid = model.timeValid;
+    }
+    if (force || strcmp(lastDateText, model.dateText) != 0)
+    {
+        if (!force) display().fillRect(28, 188, 424, 32, card);
+        display().setTextColor(model.timeValid ? text : muted, card);
+        display().setTextSize(2);
+        display().drawString(model.dateText,
+                             (width - display().textWidth(model.dateText)) / 2, 190);
+        strncpy(lastDateText, model.dateText, sizeof(lastDateText));
+        lastDateText[sizeof(lastDateText) - 1] = 0;
+    }
 
-    char status[48];
-    if (model.clusterTelemetry.totalNodes > 0)
-        snprintf(status, sizeof(status), "Cluster: %u nodes",
-                 static_cast<unsigned>(model.clusterTelemetry.totalNodes));
-    else snprintf(status, sizeof(status), "Cluster: waiting for data");
-    display().fillRect(28, 234, 424, 28, card);
-    display().setTextColor(model.clusterTelemetry.totalNodes > 0 ? good : warning, card);
-    display().setTextSize(1);
-    display().drawString(status, (width - display().textWidth(status)) / 2, 242);
+    if (force || lastHomeNodeCount != model.clusterTelemetry.totalNodes)
+    {
+        char status[48];
+        if (model.clusterTelemetry.totalNodes > 0)
+            snprintf(status, sizeof(status), "Cluster: %u nodes",
+                     static_cast<unsigned>(model.clusterTelemetry.totalNodes));
+        else snprintf(status, sizeof(status), "Cluster: waiting for data");
+        display().fillRect(28, 234, 424, 28, card);
+        display().setTextColor(model.clusterTelemetry.totalNodes > 0 ? good : warning, card);
+        display().setTextSize(1);
+        display().drawString(status, (width - display().textWidth(status)) / 2, 242);
+        lastHomeNodeCount = model.clusterTelemetry.totalNodes;
+    }
 }
 
 void systemTelemetry(const app_state::Model& model)
@@ -161,7 +184,8 @@ void ui::page(const app_state::Model& model)
     if (model.page == app_state::Page::Home)
     {
         header("Home");
-        homeClock(model);
+        display().fillRoundRect(20, 72, 440, 204, 10, card);
+        homeClock(model, true);
         button(1, "Cluster", 35, 300, model.pressedButton == 1);
         button(2, "Training", 255, 300, model.pressedButton == 2);
         button(3, "Calendar", 35, 374, model.pressedButton == 3);
