@@ -6,6 +6,9 @@
   any_errors_fatal: true
   vars:
     ansible_become_password: "{{ lookup('worker_sudo', inventory_hostname, socket_path=worker_sudo_socket) if worker_sudo_socket is defined else '' }}"
+    # Raspberry Pi 3B+ kan bruke mer enn Ansible sin korte standardgrense når
+    # sudo starter under apt/Python-belastning.
+    ansible_become_timeout: 60
 
   pre_tasks:
     - name: Avvis root som vanlig tjenestebruker
