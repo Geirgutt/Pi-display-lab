@@ -234,8 +234,12 @@ else
 fi
 
 stage "Sender sikker Wi-Fi/controller-konfigurasjon"
-stty -F "$DISPLAY_PORT" 115200 cs8 -cstopb -parenb -ixon -ixoff -icanon min 0 time 5
+stty -F "$DISPLAY_PORT" 115200 cs8 -cstopb -parenb -ixon -ixoff -icanon -echo min 0 time 5
 exec 3<>"$DISPLAY_PORT"
+
+# Opening a CH340/USB serial port can reset the ESP32. Give setup(), display
+# initialisation and the console time to become ready before sending secrets.
+sleep 3
 
 send_command() {
   printf '%s\n' "$1" >&3
@@ -250,17 +254,29 @@ send_command "secure key $PSK"
 send_command "secure peer $CONTROLLER_IP $DESKDISPLAY_PORT_NUMBER"
 send_command "w"
 send_command "secure start"
-send_command "secure status"
 
 STATUS_OUTPUT=""
-while IFS= read -r -t 0.2 line <&3; do
-  STATUS_OUTPUT+="$line"$'\n'
+STATUS_FOUND=false
+for attempt in 1 2 3; do
+  printf '%s\n' "secure status" >&3
+  deadline=$((SECONDS + 4))
+  while (( SECONDS < deadline )); do
+    if IFS= read -r -t 0.5 line <&3; then
+      STATUS_OUTPUT+="$line"$'\n'
+      if [[ "$line" == *"Secure: "* ]]; then
+        STATUS_FOUND=true
+        break
+      fi
+    fi
+  done
+  [[ "$STATUS_FOUND" == "true" ]] && break
 done
 exec 3>&-
 unset PSK WIFI_PASSWORD
 
-if ! grep -q "Secure: " <<<"$STATUS_OUTPUT"; then
+if [[ "$STATUS_FOUND" != "true" ]]; then
   echo "Displayet svarte ikke med secure status. Kontroller seriell port og firmware." >&2
+  [[ -z "$STATUS_OUTPUT" ]] || printf '%s' "$STATUS_OUTPUT" >&2
   exit 1
 fi
 stage "Verifiserer secure-status"
