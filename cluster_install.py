@@ -18,7 +18,7 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 from config import ConfigValidationError, validate_controller_config
-from cluster_ssh import require_ssh, ssh_options, ssh_run
+from cluster_ssh import require_ssh, ssh_options, ssh_run, ssh_run_stream
 
 PROJECT_DIR = Path(__file__).resolve().parent
 MAX_FORKS = 10
@@ -460,7 +460,7 @@ def provision_remote_display(host: str, port: str, wifi_ssid: str, no_flash: boo
         shlex.quote(part) for part in command
     )
     print(f"Provisjonerer DeskDisplay på worker {host} ...", flush=True)
-    result = ssh_run(
+    result = ssh_run_stream(
         user, host, remote, identity_file=identity_file,
         stdin=psk + "\n" + (wifi_password + "\n" if wifi_password else ""), timeout=900,
     )

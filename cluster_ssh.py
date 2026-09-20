@@ -50,6 +50,32 @@ def ssh_run(user: str, host: str, remote: str, *, identity_file: str = "",
             os.close(read_fd)
 
 
+def ssh_run_stream(user: str, host: str, remote: str, *, identity_file: str = "",
+                   stdin: str = "", timeout: int = 30):
+    """Run an SSH command with live remote stdout/stderr and private stdin."""
+
+    command = ssh_options(identity_file) + [f"{user}@{host}", remote]
+    try:
+        process = subprocess.Popen(
+            command, stdin=subprocess.PIPE, text=True,
+            encoding="utf-8", errors="replace",
+        )
+        try:
+            if stdin:
+                process.stdin.write(stdin)
+            process.stdin.close()
+        except BrokenPipeError:
+            pass
+        returncode = process.wait(timeout=timeout)
+        return subprocess.CompletedProcess(command, returncode)
+    except subprocess.TimeoutExpired:
+        process.kill()
+        process.wait()
+        raise RuntimeError(f"{host}: SSH-fjernkommandoen brukte mer enn {timeout} sekunder.") from None
+    except OSError:
+        raise RuntimeError(f"{host}: SSH mislyktes eller kunne ikke startes.") from None
+
+
 def require_ssh(result, host: str) -> None:
     if not result.returncode:
         return

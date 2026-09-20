@@ -16,6 +16,15 @@ REMOTE_PSK_FILE="/etc/pi-display-lab/deskdisplay-peer.psk"
 PSK_STDIN=false
 WIFI_PASSWORD_STDIN=false
 FLASH=true
+STAGE=0
+STAGE_TOTAL=7
+
+stage() {
+  STAGE=$((STAGE + 1))
+  local filled="$(printf '%*s' "$STAGE" '' | tr ' ' '#')"
+  local empty="$(printf '%*s' "$((STAGE_TOTAL - STAGE))" '' | tr ' ' '.')"
+  printf '\n[%s%s] %d/%d %s\n' "$filled" "$empty" "$STAGE" "$STAGE_TOTAL" "$1"
+}
 
 usage() {
   cat <<'EOF'
@@ -117,6 +126,7 @@ if [[ ! -e "$DISPLAY_PORT" ]]; then
   echo "Display-porten finnes ikke: $DISPLAY_PORT" >&2
   exit 1
 fi
+stage "USB-port er funnet: $DISPLAY_PORT"
 if [[ "$PSK_STDIN" == "true" ]]; then
   [[ -n "$CONTROLLER_HOST" ]] || {
     echo "--controller-host kreves sammen med --psk-stdin." >&2
@@ -200,6 +210,7 @@ else
 fi
 
 if [[ "$FLASH" == "true" ]]; then
+  stage "Klargjør PlatformIO"
   PIO_BIN="$(command -v pio || true)"
   if [[ -z "$PIO_BIN" ]]; then
     DISPLAY_VENV="$PROJECT_DIR/.display-venv"
@@ -211,13 +222,18 @@ if [[ "$FLASH" == "true" ]]; then
     "$DISPLAY_VENV/bin/python" -m pip install --disable-pip-version-check platformio
     PIO_BIN="$DISPLAY_VENV/bin/pio"
   fi
-  echo "Bygger og flasher secure-firmware til $DISPLAY_PORT ..."
+  stage "Bygger secure-firmware"
   (cd "$PROJECT_DIR/deskdisplay" && "$PIO_BIN" run -e guition-4848s040-secure)
+  stage "Flasher secure-firmware til $DISPLAY_PORT"
   (cd "$PROJECT_DIR/deskdisplay" && "$PIO_BIN" run -e guition-4848s040-secure -t upload --upload-port "$DISPLAY_PORT")
   # Give the ESP32 time to reboot before opening its console.
+  stage "Venter på at displayet starter på nytt"
   sleep 3
+else
+  stage "Beholder eksisterende firmware"
 fi
 
+stage "Sender sikker Wi-Fi/controller-konfigurasjon"
 stty -F "$DISPLAY_PORT" 115200 cs8 -cstopb -parenb -ixon -ixoff -icanon min 0 time 5
 exec 3<>"$DISPLAY_PORT"
 
@@ -247,6 +263,7 @@ if ! grep -q "Secure: " <<<"$STATUS_OUTPUT"; then
   echo "Displayet svarte ikke med secure status. Kontroller seriell port og firmware." >&2
   exit 1
 fi
+stage "Verifiserer secure-status"
 printf '%s' "$STATUS_OUTPUT"
 echo "DeskDisplay er provisjonert mot $CONTROLLER_IP:$DESKDISPLAY_PORT_NUMBER."
 if [[ -n "$CONTROLLER_SSH" ]]; then
