@@ -367,7 +367,7 @@ def configure_display_choice(config: str, worker_order: list[str], selected_work
                              passwords: dict[str, str], user: str, identity_file: str,
                              *, ask_attached: bool = True):
     print("\nKonfigurerer DeskDisplay via USB.")
-    print("Når en Pi identifiseres, blinker den røde dioden med sitt worker-nummer.")
+    print("Velg Pi med nummer direkte, eller skriv i for å identifisere med rød blinking.")
     print("Hvis rød LED ikke kan styres av OS-et, brukes grønn ACT-LED som reserve.")
     if ask_attached and not _terminal_yes_no("Er displayet koblet med USB-data til en Pi nå?"):
         update_display_choice(config, False, "", "", "", False)
@@ -376,9 +376,28 @@ def configure_display_choice(config: str, worker_order: list[str], selected_work
     candidates = [("controller", "controlleren", 1)]
     candidates.extend(
         (host, host, index)
-        for index, host in enumerate(worker_order, start=1)
+        for index, host in enumerate(worker_order, start=2)
         if host in selected_workers
     )
+
+    print("Velg Pi-en displayet er koblet til:")
+    for index, (_, label, _) in enumerate(candidates, start=1):
+        print(f"  {index}. {label}")
+    while True:
+        selected = _terminal_prompt("Pi-nummer eller i for identifikasjon")
+        if selected.casefold() == "i":
+            break
+        try:
+            candidate_index = int(selected) - 1
+            target, label, _ = candidates[candidate_index]
+            serial_port = _terminal_prompt("Seriell port (tom = finn automatisk)")
+            wifi_ssid = _terminal_prompt("Wi-Fi-SSID (tom = behold lagret Wi-Fi)")
+            update_display_choice(config, True, target, serial_port, wifi_ssid, True)
+            return True, target, serial_port, wifi_ssid
+        except (ValueError, IndexError):
+            print("Skriv et gyldig Pi-nummer eller i.")
+
+    print("Identifiserer Pi-ene én etter én. Svar j når du ser riktig blinking.")
     for target, label, ordinal in candidates:
         if target == "controller":
             result = subprocess.run([
