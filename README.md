@@ -191,6 +191,12 @@ Etter bekreftet levering markerer controlleren lokalt at displayet støtter
 blokker for en firmware på cirka 960 KiB. Hvis hurtigmodus feiler, fjernes
 markeringen automatisk og neste forsøk bruker 96-byte kompatibilitetsmodus.
 
+DeskDisplay starter på en klokkeside med dato og snarveier til Cluster,
+Training, Calendar og System. Wi-Fi styres automatisk og vises, sammen med
+ESP32-minne, uptime, signalstyrke og TLS-status, under System. Touch-testen er
+ikke del av den normale navigasjonen. Training og Calendar er foreløpig tydelig
+merkede plassholdere til controlleren får respektive datakilder.
+
 Oppdateringsskriptet:
 
 - klassifiserer automatisk endringene og velger minste trygge oppdatering

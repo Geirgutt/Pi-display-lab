@@ -5,11 +5,11 @@
 
 namespace app_state
 {
-enum class Page : uint8_t { Dashboard, System, TouchTest, Cluster, Training };
+enum class Page : uint8_t { Home, Cluster, Training, Calendar, System };
 
 struct Model
 {
-    Page page = Page::Dashboard;
+    Page page = Page::Home;
     diagnostics::Snapshot diagnostics{};
     bool wifiActive = false;
     bool wifiConnected = false;
@@ -21,6 +21,9 @@ struct Model
     int16_t touchY = -1;
     uint8_t pressedButton = 0;
     uint8_t brightnessPercent = 100;
+    bool timeValid = false;
+    char clockText[6] = "--:--";
+    char dateText[16] = "--.--.----";
     secure_protocol::Telemetry nodeTelemetry{};
     secure_protocol::ClusterTelemetry clusterTelemetry{};
     uint32_t nodeLastUpdate = 0;

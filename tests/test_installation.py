@@ -81,6 +81,19 @@ class InstallationWorkflowTests(unittest.TestCase):
         self.assertIn("PI_DISPLAY_OTA_TIMEOUT", staging)
         self.assertIn("OTA fullført", staging)
 
+    def test_deskdisplay_home_prioritizes_clock_and_primary_pages(self) -> None:
+        state = self.read("deskdisplay/src/app_state.h")
+        app = self.read("deskdisplay/src/app.cpp")
+        ui = self.read("deskdisplay/src/ui.cpp")
+        self.assertIn("Page::Home", app)
+        self.assertIn("configTzTime", app)
+        for caption in ("Cluster", "Training", "Calendar", "System"):
+            self.assertIn(f'button(', ui)
+            self.assertIn(f'"{caption}"', ui)
+        self.assertNotIn("Touch Test", ui)
+        self.assertNotIn("Page::TouchTest", state + app + ui)
+        self.assertNotIn('button(1, "Wi-Fi"', ui)
+
     def test_services_are_non_root_and_have_low_risk_hardening(self) -> None:
         playbook = self.read("ansible/install-workers.yml")
         controller_units = "".join(

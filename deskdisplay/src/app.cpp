@@ -9,6 +9,7 @@
 #include "ble_test.h"
 #include "secure_transport.h"
 #include <Arduino.h>
+#include <time.h>
 
 namespace
 {
@@ -27,6 +28,19 @@ void refreshState()
     model.wifiStatus = wifi.status;
     model.wifiRssi = wifi.rssi;
     model.brightnessPercent = hardware::brightness();
+    const time_t now = time(nullptr);
+    struct tm localTime = {};
+    model.timeValid = now >= 1700000000 && localtime_r(&now, &localTime) != nullptr;
+    if (model.timeValid)
+    {
+        strftime(model.clockText, sizeof(model.clockText), "%H:%M", &localTime);
+        strftime(model.dateText, sizeof(model.dateText), "%d.%m.%Y", &localTime);
+    }
+    else
+    {
+        strncpy(model.clockText, "--:--", sizeof(model.clockText));
+        strncpy(model.dateText, "Venter pa tid", sizeof(model.dateText));
+    }
     strncpy(model.ip, wifi.ip, sizeof(model.ip));
     model.ip[sizeof(model.ip) - 1] = 0;
     const secure_transport::Counters& secureStats = secure_transport::counters();
@@ -44,19 +58,16 @@ void refreshState()
 
 uint8_t hit(int16_t x, int16_t y)
 {
-    if (model.page == app_state::Page::Dashboard)
+    if (model.page == app_state::Page::Home)
     {
-        if (y >= 325 && y < 379) return x < 240 ? 1 : 2;
-        if (y >= 397 && y < 451) return x < 240 ? 3 : 4;
+        if (y >= 300 && y < 354) return x < 240 ? 1 : 2;
+        if (y >= 374 && y < 428) return x < 240 ? 3 : 4;
     }
-    else if (model.page == app_state::Page::System && y >= 325 && y < 379)
-        return x < 240 ? 5 : 8;
-    else if (model.page == app_state::Page::System && y >= 380 && y < 434 && x >= 145 && x < 335)
-        return 6;
-    else if ((model.page == app_state::Page::Cluster || model.page == app_state::Page::TouchTest
-              || model.page == app_state::Page::Training)
-             && y >= 380 && y < 434 && x >= 145 && x < 335)
-        return 7;
+    else if (model.page == app_state::Page::System && y >= 390 && y < 444)
+        return x < 240 ? 6 : 5;
+    else if (model.page != app_state::Page::Home
+             && y >= 400 && y < 454 && x >= 145 && x < 335)
+        return 5;
     return 0;
 }
 
@@ -64,24 +75,15 @@ void action(uint8_t button)
 {
     switch (button)
     {
-    case 1:
-#if DESKDISPLAY_WIFI
-        if (model.wifiActive) network::stop();
-        else network::startStored();
-#endif
-        refreshState();
-        ui::telemetry(model);
-        break;
-    case 2: model.page = app_state::Page::System; model.pressedButton = 0; ui::page(model); break;
-    case 3:
+    case 1: model.page = app_state::Page::Cluster; model.pressedButton = 0; ui::page(model); break;
+    case 2: model.page = app_state::Page::Training; model.pressedButton = 0; ui::page(model); break;
+    case 3: model.page = app_state::Page::Calendar; model.pressedButton = 0; ui::page(model); break;
+    case 4: model.page = app_state::Page::System; model.pressedButton = 0; ui::page(model); break;
+    case 5: model.page = app_state::Page::Home; model.pressedButton = 0; ui::page(model); break;
+    case 6:
         model.brightnessPercent = hardware::cycleBrightness();
         ui::brightness(model);
         break;
-    case 4: model.page = app_state::Page::TouchTest; model.pressedButton = 0; ui::page(model); break;
-    case 5: model.page = app_state::Page::Cluster; model.pressedButton = 0; ui::page(model); break;
-    case 8: model.page = app_state::Page::Training; model.pressedButton = 0; ui::page(model); break;
-    case 6:
-    case 7: model.page = app_state::Page::Dashboard; model.pressedButton = 0; ui::page(model); break;
     default: break;
     }
 }
@@ -101,10 +103,6 @@ void processTouch()
             pressedAt = millis();
             if (model.pressedButton) ui::pressed(model);
         }
-        else if (model.page == app_state::Page::TouchTest)
-        {
-            ui::touch(model);
-        }
     }
     else if (lastDown)
     {
@@ -116,7 +114,6 @@ void processTouch()
             ui::pressed(model);
             action(button);
         }
-        else if (model.page == app_state::Page::TouchTest) ui::touch(model);
     }
     lastDown = down;
     (void)pressedAt;
@@ -141,6 +138,7 @@ bool app::begin()
     Serial.println(touch::begin() ? "Touch initialized (raw coordinates)." : "Touch initialization failed; display remains available.");
     secure_transport::begin();
 #if DESKDISPLAY_WIFI
+    configTzTime("CET-1CEST,M3.5.0,M10.5.0/3", "pool.ntp.org", "time.nist.gov");
     Serial.println(network::startStored()
         ? "Wi-Fi autostart requested."
         : "Wi-Fi not started; no stored credentials.");
@@ -175,7 +173,7 @@ void app::service()
     {
         nextTelemetry = now + 1000;
         refreshState();
-        if (model.page == app_state::Page::Dashboard
+        if (model.page == app_state::Page::Home
             || model.page == app_state::Page::System
             || model.page == app_state::Page::Cluster)
             ui::telemetry(model);
