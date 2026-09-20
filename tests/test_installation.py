@@ -61,6 +61,13 @@ class InstallationWorkflowTests(unittest.TestCase):
         self.assertIn("service_facts", playbook)
         self.assertIn("DEFAULT_DESKDISPLAY_PSK_FILE", config)
 
+    def test_deskdisplay_ota_consumes_each_received_control_frame(self) -> None:
+        transport = self.read("deskdisplay/src/secure_transport.cpp")
+        control_branch = transport.split(
+            "if (frame[3] >= secure_protocol::controlTypeBase)", 1
+        )[1].split("uint64_t sequence", 1)[0]
+        self.assertIn("if (processed) clearFrame();", control_branch)
+
     def test_services_are_non_root_and_have_low_risk_hardening(self) -> None:
         playbook = self.read("ansible/install-workers.yml")
         controller_units = "".join(

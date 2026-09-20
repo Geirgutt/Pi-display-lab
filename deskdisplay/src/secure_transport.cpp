@@ -293,7 +293,12 @@ bool processFrame()
                           || frame[3] == secure_protocol::otaChunkType
                           || frame[3] == secure_protocol::otaCompleteType;
         if (!handled) ++stats.unauthorized;
-        return handled && processOtaFrame();
+        const bool processed = handled && processOtaFrame();
+        // OTA frames use the same receive buffer as telemetry. Leaving a
+        // successfully handled frame in the buffer makes serviceSession()
+        // process it repeatedly instead of reading the next OTA chunk.
+        if (processed) clearFrame();
+        return processed;
     }
     uint64_t sequence = 0;
     secure_protocol::Telemetry value;

@@ -391,16 +391,32 @@ static int read_frame(SSL* ssl, unsigned char* frame, size_t capacity, size_t* l
     return 1;
 }
 
-static int wait_ota_ack(SSL* ssl, unsigned char expected_status, uint32_t expected_offset)
+static int wait_ota_ack(SSL* ssl, const char* stage,
+                        unsigned char expected_status, uint32_t expected_offset)
 {
     unsigned char frame[128] = {0};
     size_t length = 0;
-    if (!read_frame(ssl, frame, sizeof(frame), &length) || frame[3] != OTA_ACK_TYPE
-        || length != 19 || frame[14] != expected_status)
+    if (!read_frame(ssl, frame, sizeof(frame), &length))
+    {
+        fprintf(stderr, "OTA %s: no valid acknowledgement received.\n", stage);
         return 0;
+    }
+    if (frame[3] != OTA_ACK_TYPE || length != 19 || frame[14] != expected_status)
+    {
+        fprintf(stderr,
+                "OTA %s: unexpected acknowledgement (type=%u status=%u length=%zu).\n",
+                stage, frame[3], length > 14 ? frame[14] : 0, length);
+        return 0;
+    }
     const uint32_t offset = (uint32_t)frame[15] | ((uint32_t)frame[16] << 8)
                           | ((uint32_t)frame[17] << 16) | ((uint32_t)frame[18] << 24);
-    return offset == expected_offset;
+    if (offset != expected_offset)
+    {
+        fprintf(stderr, "OTA %s: offset mismatch (expected=%u received=%u).\n",
+                stage, expected_offset, offset);
+        return 0;
+    }
+    return 1;
 }
 
 static int ota_digest(const char* path, uint32_t* size, unsigned char digest[32])
@@ -467,8 +483,9 @@ static int perform_ota(SSL* ssl)
     offer[2] = (unsigned char)(image_size >> 16);
     offer[3] = (unsigned char)(image_size >> 24);
     memcpy(offer + 4, digest, sizeof(digest));
+    printf("OTA transfer started (%u bytes).\n", image_size);
     if (!send_ota_header(ssl, OTA_OFFER_TYPE, 1, offer, sizeof(offer))
-        || !wait_ota_ack(ssl, OTA_READY, 0))
+        || !wait_ota_ack(ssl, "offer", OTA_READY, 0))
         return 0;
 
     FILE* file = fopen(ota_file_path, "rb");
@@ -490,14 +507,15 @@ static int perform_ota(SSL* ssl)
         chunk[5] = (unsigned char)(amount >> 8);
         memcpy(chunk + 6, buffer, amount);
         if (!send_ota_header(ssl, OTA_CHUNK_TYPE, sequence++, chunk, amount + 6)
-            || !wait_ota_ack(ssl, OTA_CHUNK_ACCEPTED, offset + (uint32_t)amount))
+            || !wait_ota_ack(ssl, "chunk", OTA_CHUNK_ACCEPTED,
+                             offset + (uint32_t)amount))
         { ok = 0; break; }
         offset += (uint32_t)amount;
     }
     fclose(file);
     if (ok)
         ok = send_ota_header(ssl, OTA_COMPLETE_TYPE, sequence++, NULL, 0)
-          && wait_ota_ack(ssl, OTA_COMPLETE, offset);
+          && wait_ota_ack(ssl, "completion", OTA_COMPLETE, offset);
     if (ok)
     {
         unlink(ota_file_path);
@@ -634,6 +652,8 @@ static int make_listener(const char* address, uint16_t port)
 
 int main(int argc, char** argv)
 {
+    setvbuf(stdout, NULL, _IOLBF, 0);
+    setvbuf(stderr, NULL, _IOLBF, 0);
     const char* listen_address = "0.0.0.0";
     const char* psk_path = NULL;
     uint16_t port = 4567;
@@ -699,7 +719,8 @@ int main(int argc, char** argv)
         printf("TLS session established: %s\n", SSL_get_cipher(ssl));
         if (ota_file_path[0] && access(ota_file_path, R_OK) == 0)
         {
-            perform_ota(ssl);
+            const int ota_ok = perform_ota(ssl);
+            if (!ota_ok) sleep(5);
             SSL_shutdown(ssl);
             SSL_free(ssl); close(socket_fd);
             printf("TLS session closed after OTA attempt; waiting for reconnect.\n");
