@@ -15,7 +15,7 @@
 #include <fcntl.h>
 #include <netinet/in.h>
 #include <openssl/err.h>
-#include <openssl/sha.h>
+#include <openssl/evp.h>
 #include <openssl/ssl.h>
 #include <signal.h>
 #include <stdint.h>
@@ -405,21 +405,31 @@ static int ota_digest(const char* path, uint32_t* size, unsigned char digest[32]
 {
     FILE* file = fopen(path, "rb");
     if (!file) return 0;
-    SHA256_CTX context;
-    SHA256_Init(&context);
+    EVP_MD_CTX* context = EVP_MD_CTX_new();
+    if (!context || EVP_DigestInit_ex(context, EVP_sha256(), NULL) != 1)
+    {
+        EVP_MD_CTX_free(context);
+        fclose(file);
+        return 0;
+    }
     unsigned char buffer[4096];
     uint64_t total = 0;
     size_t amount;
     while ((amount = fread(buffer, 1, sizeof(buffer), file)) > 0)
     {
         total += amount;
-        if (total > UINT32_MAX || SHA256_Update(&context, buffer, amount) != 1)
+        if (total > UINT32_MAX || EVP_DigestUpdate(context, buffer, amount) != 1)
         {
+            EVP_MD_CTX_free(context);
             fclose(file);
             return 0;
         }
     }
-    const int ok = !ferror(file) && total > 0 && SHA256_Final(digest, &context) == 1;
+    unsigned int digest_length = 0;
+    const int ok = !ferror(file) && total > 0
+                && EVP_DigestFinal_ex(context, digest, &digest_length) == 1
+                && digest_length == 32;
+    EVP_MD_CTX_free(context);
     fclose(file);
     if (!ok) return 0;
     *size = (uint32_t)total;
