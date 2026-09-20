@@ -175,8 +175,10 @@ Ved USB på en worker hentes den eksakte committen først til workerens lokale
 checkout, slik at firmwarekoden som bygges faktisk er den nye.
 Ved OTA prøves workerne i konfigurert rekkefølge. En utilgjengelig eller belastet
 worker hoppes over, slik at worker 2 kan bygge når worker 1 er opptatt. Bare
-ferdig `firmware.bin` kopieres tilbake til controlleren. Hvis ingen worker er
-tilgjengelig, faller skriptet tilbake til lokal bygging på controlleren.
+ferdig `firmware.bin` kopieres tilbake til controlleren. Når cluster-workers er
+konfigurert, stopper skriptet hvis ingen er tilgjengelige i stedet for å starte
+en svært treg fallback-bygging på controlleren. Lokal bygging brukes fortsatt i
+oppsett uten workers.
 
 Oppdateringsskriptet:
 

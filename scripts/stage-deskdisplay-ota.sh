@@ -96,7 +96,12 @@ if [[ -n "$SSH_USER" && ${#WORKERS[@]} -gt 0 ]]; then
 fi
 
 if [[ "$REMOTE_BUILT" != "true" ]]; then
-  echo "Ingen worker var tilgjengelig for bygging; bygger på controlleren (kan ta lang tid)." >&2
+  if [[ -n "$SSH_USER" && ${#WORKERS[@]} -gt 0 ]]; then
+    echo "Ingen worker var tilgjengelig for firmwarebygging." >&2
+    echo "Controlleren brukes ikke som treg fallback. Vent til en worker er ledig og prøv igjen." >&2
+    exit 1
+  fi
+  echo "Ingen workers er konfigurert; bygger firmware lokalt." >&2
   bash scripts/build-deskdisplay-firmware.sh
   install -m 0600 "$BUILD_DIR/firmware.bin" "$TEMP_BUILD"
 fi
