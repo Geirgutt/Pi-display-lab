@@ -97,10 +97,16 @@ if [[ $EUID -eq 0 ]]; then
 fi
 if [[ -z "$DISPLAY_PORT" ]]; then
   shopt -s nullglob
-  SERIAL_CANDIDATES=(/dev/serial/by-id/* /dev/ttyACM* /dev/ttyUSB*)
+  SERIAL_BY_ID=(/dev/serial/by-id/*)
+  SERIAL_FALLBACK=(/dev/ttyACM* /dev/ttyUSB*)
   shopt -u nullglob
-  if [[ ${#SERIAL_CANDIDATES[@]} -eq 1 ]]; then
-    DISPLAY_PORT="${SERIAL_CANDIDATES[0]}"
+  # A single physical USB device normally appears both as a by-id symlink and
+  # as ttyUSB/ttyACM. Prefer the stable by-id name so we do not count it twice.
+  if [[ ${#SERIAL_BY_ID[@]} -eq 1 ]]; then
+    DISPLAY_PORT="${SERIAL_BY_ID[0]}"
+    echo "Fant display-port automatisk: $DISPLAY_PORT"
+  elif [[ ${#SERIAL_BY_ID[@]} -eq 0 && ${#SERIAL_FALLBACK[@]} -eq 1 ]]; then
+    DISPLAY_PORT="${SERIAL_FALLBACK[0]}"
     echo "Fant display-port automatisk: $DISPLAY_PORT"
   else
     echo "Fant ikke entydig display-port. Bruk --port /dev/serial/by-id/..." >&2
