@@ -1,13 +1,13 @@
 #include "ui.h"
 #include "hardware.h"
+#include "ui_layout.h"
 #include <LovyanGFX.hpp>
 #include <time.h>
 
 namespace
 {
-constexpr int16_t width = 480;
+constexpr int16_t width = ui_layout::screenWidth;
 constexpr int16_t headerHeight = 58;
-constexpr int16_t buttonHeight = 54;
 constexpr uint16_t background = 0x1082;
 constexpr uint16_t card = 0x18E3;
 constexpr uint16_t accent = 0x05BF;
@@ -40,15 +40,16 @@ void valueRow(const char* name, const char* value, int16_t y, uint16_t color = t
     label(value, 178, y + 3, 2, color);
 }
 
-void button(uint8_t id, const char* caption, int16_t x, int16_t y, bool active)
+void button(uint8_t id, const char* caption, int16_t x, int16_t y, int16_t buttonWidth,
+            bool active)
 {
     const uint16_t fill = active ? accent : card;
-    display().fillRoundRect(x, y, 190, buttonHeight, 8, fill);
-    display().drawRoundRect(x, y, 190, buttonHeight, 8, muted);
+    display().fillRoundRect(x, y, buttonWidth, ui_layout::buttonHeight, 8, fill);
+    display().drawRoundRect(x, y, buttonWidth, ui_layout::buttonHeight, 8, muted);
     display().setTextColor(text, fill);
     display().setTextSize(2);
-    const int16_t textX = x + (190 - display().textWidth(caption)) / 2;
-    display().drawString(caption, textX, y + 17);
+    const int16_t textX = x + (buttonWidth - display().textWidth(caption)) / 2;
+    display().drawString(caption, textX, y + 11);
     (void)id;
 }
 
@@ -56,7 +57,8 @@ void brightnessButton(const app_state::Model& model)
 {
     char caption[20];
     snprintf(caption, sizeof(caption), "Bright %u%%", model.brightnessPercent);
-    button(6, caption, 35, 390, model.pressedButton == 6);
+    button(6, caption, ui_layout::leftButtonX, ui_layout::systemButtonY,
+           ui_layout::pairedButtonWidth, model.pressedButton == 6);
 }
 
 void header(const char* title)
@@ -76,22 +78,22 @@ void homeClock(const app_state::Model& model, bool force = false)
         // Clock digits have a stable width. Drawing with an opaque background
         // replaces the old glyphs without flashing the whole card every second.
         if (!force && lastHomeTimeValid != model.timeValid)
-            display().fillRect(28, 88, 424, 92, card);
+            display().fillRect(20, 78, 440, 96, card);
         display().setTextColor(model.timeValid ? text : muted, card);
-        display().setTextSize(7);
+        display().setTextSize(10);
         display().drawString(model.clockText,
-                             (width - display().textWidth(model.clockText)) / 2, 96);
+                             (width - display().textWidth(model.clockText)) / 2, 86);
         strncpy(lastClockText, model.clockText, sizeof(lastClockText));
         lastClockText[sizeof(lastClockText) - 1] = 0;
         lastHomeTimeValid = model.timeValid;
     }
     if (force || strcmp(lastDateText, model.dateText) != 0)
     {
-        if (!force) display().fillRect(28, 188, 424, 32, card);
+        if (!force) display().fillRect(20, 181, 440, 40, card);
         display().setTextColor(model.timeValid ? text : muted, card);
-        display().setTextSize(2);
+        display().setTextSize(4);
         display().drawString(model.dateText,
-                             (width - display().textWidth(model.dateText)) / 2, 190);
+                             (width - display().textWidth(model.dateText)) / 2, 185);
         strncpy(lastDateText, model.dateText, sizeof(lastDateText));
         lastDateText[sizeof(lastDateText) - 1] = 0;
     }
@@ -103,10 +105,11 @@ void homeClock(const app_state::Model& model, bool force = false)
             snprintf(status, sizeof(status), "Cluster: %u nodes",
                      static_cast<unsigned>(model.clusterTelemetry.totalNodes));
         else snprintf(status, sizeof(status), "Cluster: waiting for data");
-        display().fillRect(28, 234, 424, 28, card);
+        display().fillRect(20, 245, 440, 42, card);
         display().setTextColor(model.clusterTelemetry.totalNodes > 0 ? good : warning, card);
-        display().setTextSize(1);
-        display().drawString(status, (width - display().textWidth(status)) / 2, 242);
+        display().setTextSize(model.clusterTelemetry.totalNodes > 0 ? 3 : 2);
+        display().drawString(status, (width - display().textWidth(status)) / 2,
+                             model.clusterTelemetry.totalNodes > 0 ? 250 : 255);
         lastHomeNodeCount = model.clusterTelemetry.totalNodes;
     }
 }
@@ -137,7 +140,7 @@ void clusterTelemetry(const app_state::Model& model)
 {
     if (model.clusterTelemetry.count == 0)
     {
-        label("No controller data", 32, 120, 2, muted);
+        label("No controller data", 28, 120, 3, muted);
         return;
     }
 
@@ -147,36 +150,35 @@ void clusterTelemetry(const app_state::Model& model)
              static_cast<unsigned>(model.clusterTelemetry.pageIndex * secure_protocol::clusterNodeMax
                                   + model.clusterTelemetry.count),
              static_cast<unsigned>(model.clusterTelemetry.totalNodes));
-    label(pageLine, 32, 83, 1, muted);
+    label(pageLine, 28, 80, 2, muted);
     for (size_t index = 0; index < model.clusterTelemetry.count; ++index)
     {
         const secure_protocol::ClusterNode& node = model.clusterTelemetry.nodes[index];
-        const int16_t y = static_cast<int16_t>(101 + index * 77);
+        const int16_t y = static_cast<int16_t>(109 + index * 91);
         const uint16_t fill = node.online ? card : 0x2945;
-        display().fillRoundRect(28, y, 424, 66, 6, fill);
+        display().fillRoundRect(20, y, 440, 82, 6, fill);
         display().setTextColor(text, fill);
         display().setTextSize(2);
-        display().drawString(node.name[0] ? node.name : "node", 38, y + 8);
+        display().drawString(node.name[0] ? node.name : "node", 30, y + 8);
         display().setTextColor(node.online ? good : warning, fill);
-        display().drawString(node.online ? "ONLINE" : "OFFLINE", 330, y + 8);
+        const char* status = node.online ? "ONLINE" : "OFFLINE";
+        display().drawString(status, 450 - display().textWidth(status), y + 8);
 
-        char line[64];
+        char cpu[16];
+        char ram[16];
+        char temperature[16];
+        snprintf(cpu, sizeof(cpu), "CPU %u.%u%%", node.cpuTenths / 10, node.cpuTenths % 10);
+        snprintf(ram, sizeof(ram), "RAM %u.%u%%", node.ramTenths / 10, node.ramTenths % 10);
         if (node.temperatureTenths == secure_protocol::temperatureUnavailable)
-        {
-            snprintf(line, sizeof(line), "CPU %u.%u%%   RAM %u.%u%%   T N/A",
-                     node.cpuTenths / 10, node.cpuTenths % 10,
-                     node.ramTenths / 10, node.ramTenths % 10);
-        }
+            snprintf(temperature, sizeof(temperature), "T N/A");
         else
-        {
-            snprintf(line, sizeof(line), "CPU %u.%u%%   RAM %u.%u%%   T %d.%dC",
-                     node.cpuTenths / 10, node.cpuTenths % 10,
-                     node.ramTenths / 10, node.ramTenths % 10,
+            snprintf(temperature, sizeof(temperature), "T %d.%dC",
                      node.temperatureTenths / 10, abs(node.temperatureTenths % 10));
-        }
         display().setTextColor(node.online ? text : muted, fill);
-        display().setTextSize(1);
-        display().drawString(line, 38, y + 39);
+        display().setTextSize(2);
+        display().drawString(cpu, 30, y + 48);
+        display().drawString(ram, 174, y + 48);
+        display().drawString(temperature, 450 - display().textWidth(temperature), y + 48);
     }
 }
 
@@ -287,40 +289,48 @@ void ui::page(const app_state::Model& model)
     if (model.page == app_state::Page::Home)
     {
         header("Home");
-        display().fillRoundRect(20, 72, 440, 204, 10, card);
+        display().fillRoundRect(12, 68, 456, 272, 10, card);
         homeClock(model, true);
-        button(1, "Cluster", 35, 300, model.pressedButton == 1);
-        button(2, "Training", 255, 300, model.pressedButton == 2);
-        button(3, "Calendar", 35, 374, model.pressedButton == 3);
-        button(4, "System", 255, 374, model.pressedButton == 4);
+        button(1, "Cluster", ui_layout::leftButtonX, ui_layout::homeTopButtonY,
+               ui_layout::pairedButtonWidth, model.pressedButton == 1);
+        button(2, "Training", ui_layout::rightButtonX, ui_layout::homeTopButtonY,
+               ui_layout::pairedButtonWidth, model.pressedButton == 2);
+        button(3, "Calendar", ui_layout::leftButtonX, ui_layout::homeBottomButtonY,
+               ui_layout::pairedButtonWidth, model.pressedButton == 3);
+        button(4, "System", ui_layout::rightButtonX, ui_layout::homeBottomButtonY,
+               ui_layout::pairedButtonWidth, model.pressedButton == 4);
     }
     else if (model.page == app_state::Page::System)
     {
         header("System");
-        display().fillRoundRect(20, 72, 440, 292, 10, card);
+        display().fillRoundRect(12, 68, 456, 340, 10, card);
         label("ESP32 and connection diagnostics", 32, 84, 1, muted);
         systemTelemetry(model);
         brightnessButton(model);
-        button(5, "Home", 255, 390, model.pressedButton == 5);
+        button(5, "Home", ui_layout::rightButtonX, ui_layout::systemButtonY,
+               ui_layout::pairedButtonWidth, model.pressedButton == 5);
     }
     else if (model.page == app_state::Page::Cluster)
     {
         header("Cluster");
-        display().fillRoundRect(20, 72, 440, 270, 10, card);
+        display().fillRoundRect(12, 68, 456, 340, 10, card);
         clusterTelemetry(model);
-        button(5, "Home", 145, 400, model.pressedButton == 5);
+        button(5, "Home", ui_layout::singleButtonX, ui_layout::singleButtonY,
+               ui_layout::singleButtonWidth, model.pressedButton == 5);
     }
     else if (model.page == app_state::Page::Training)
     {
         header("Training");
         trainingTelemetry(model, true);
-        button(5, "Home", 145, 400, model.pressedButton == 5);
+        button(5, "Home", ui_layout::singleButtonX, ui_layout::singleButtonY,
+               ui_layout::singleButtonWidth, model.pressedButton == 5);
     }
     else if (model.page == app_state::Page::Calendar)
     {
         header("Calendar");
         calendarTelemetry(model, true);
-        button(5, "Home", 145, 400, model.pressedButton == 5);
+        button(5, "Home", ui_layout::singleButtonX, ui_layout::singleButtonY,
+               ui_layout::singleButtonWidth, model.pressedButton == 5);
     }
 }
 
@@ -356,17 +366,23 @@ void ui::pressed(const app_state::Model& model)
 {
     if (model.page == app_state::Page::Home)
     {
-        button(1, "Cluster", 35, 300, model.pressedButton == 1);
-        button(2, "Training", 255, 300, model.pressedButton == 2);
-        button(3, "Calendar", 35, 374, model.pressedButton == 3);
-        button(4, "System", 255, 374, model.pressedButton == 4);
+        button(1, "Cluster", ui_layout::leftButtonX, ui_layout::homeTopButtonY,
+               ui_layout::pairedButtonWidth, model.pressedButton == 1);
+        button(2, "Training", ui_layout::rightButtonX, ui_layout::homeTopButtonY,
+               ui_layout::pairedButtonWidth, model.pressedButton == 2);
+        button(3, "Calendar", ui_layout::leftButtonX, ui_layout::homeBottomButtonY,
+               ui_layout::pairedButtonWidth, model.pressedButton == 3);
+        button(4, "System", ui_layout::rightButtonX, ui_layout::homeBottomButtonY,
+               ui_layout::pairedButtonWidth, model.pressedButton == 4);
     }
     else if (model.page == app_state::Page::System)
     {
         brightnessButton(model);
-        button(5, "Home", 255, 390, model.pressedButton == 5);
+        button(5, "Home", ui_layout::rightButtonX, ui_layout::systemButtonY,
+               ui_layout::pairedButtonWidth, model.pressedButton == 5);
     }
-    else button(5, "Home", 145, 400, model.pressedButton == 5);
+    else button(5, "Home", ui_layout::singleButtonX, ui_layout::singleButtonY,
+                ui_layout::singleButtonWidth, model.pressedButton == 5);
 }
 
 void ui::brightness(const app_state::Model& model)

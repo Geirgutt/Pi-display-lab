@@ -8,6 +8,7 @@
 #include "ui.h"
 #include "ble_test.h"
 #include "secure_transport.h"
+#include "ui_layout.h"
 #include <Arduino.h>
 #include <time.h>
 
@@ -60,16 +61,31 @@ void refreshState()
 
 uint8_t hit(int16_t x, int16_t y)
 {
+    const auto inside = [](int16_t px, int16_t py, int16_t left, int16_t top,
+                           int16_t rectWidth) {
+        return px >= left && px < left + rectWidth
+            && py >= top && py < top + ui_layout::buttonHeight;
+    };
     if (model.page == app_state::Page::Home)
     {
-        if (y >= 300 && y < 354) return x < 240 ? 1 : 2;
-        if (y >= 374 && y < 428) return x < 240 ? 3 : 4;
+        if (inside(x, y, ui_layout::leftButtonX, ui_layout::homeTopButtonY,
+                   ui_layout::pairedButtonWidth)) return 1;
+        if (inside(x, y, ui_layout::rightButtonX, ui_layout::homeTopButtonY,
+                   ui_layout::pairedButtonWidth)) return 2;
+        if (inside(x, y, ui_layout::leftButtonX, ui_layout::homeBottomButtonY,
+                   ui_layout::pairedButtonWidth)) return 3;
+        if (inside(x, y, ui_layout::rightButtonX, ui_layout::homeBottomButtonY,
+                   ui_layout::pairedButtonWidth)) return 4;
     }
-    else if (model.page == app_state::Page::System && y >= 390 && y < 444)
-        return x < 240 ? 6 : 5;
-    else if (model.page != app_state::Page::Home
-             && y >= 400 && y < 454 && x >= 145 && x < 335)
-        return 5;
+    else if (model.page == app_state::Page::System)
+    {
+        if (inside(x, y, ui_layout::leftButtonX, ui_layout::systemButtonY,
+                   ui_layout::pairedButtonWidth)) return 6;
+        if (inside(x, y, ui_layout::rightButtonX, ui_layout::systemButtonY,
+                   ui_layout::pairedButtonWidth)) return 5;
+    }
+    else if (inside(x, y, ui_layout::singleButtonX, ui_layout::singleButtonY,
+                    ui_layout::singleButtonWidth)) return 5;
     return 0;
 }
 
