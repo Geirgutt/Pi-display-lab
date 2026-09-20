@@ -140,6 +140,16 @@ bool app::begin()
     Serial.println("Display initialized.");
     Serial.println(touch::begin() ? "Touch initialized (raw coordinates)." : "Touch initialization failed; display remains available.");
     secure_transport::begin();
+#if DESKDISPLAY_WIFI
+    Serial.println(network::startStored()
+        ? "Wi-Fi autostart requested."
+        : "Wi-Fi not started; no stored credentials.");
+#endif
+#if DESKDISPLAY_SECURE && DESKDISPLAY_WIFI
+    Serial.println(secure_transport::start()
+        ? "Secure transport autostart requested."
+        : "Secure transport not started; configure key and peer first.");
+#endif
     refreshState();
     ui::begin(model);
     nextTelemetry = millis() + 1000;

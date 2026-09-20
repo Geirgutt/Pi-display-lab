@@ -33,6 +33,9 @@ PC der displayet er tilkoblet med
 `bash scripts/provision-deskdisplay.sh --port /dev/serial/by-id/...`
 og `--controller-ssh`. Skriptet henter PSK sikkert fra controlleren, flasher
 secure-firmware og legger nøkkelen/controller-adressen i displayets lokale NVS.
+Når disse innstillingene er lagret, starter secure-firmware automatisk Wi-Fi og
+TLS-forbindelsen etter hver omstart. Uten lagrede credentials forblir radioen
+av.
 Se
 `deskdisplay/docs/one-pi-telemetry-service.md` for Wi-Fi- og `--display-no-flash`
 alternativer.
