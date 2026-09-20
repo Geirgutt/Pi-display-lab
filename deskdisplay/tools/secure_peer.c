@@ -35,6 +35,9 @@ static char state_host[16] = {0};
 static char state_path[128] = {0};
 static uint16_t state_port = 0;
 static char ota_file_path[4096] = {0};
+static char ota_progress_path[4096] = {0};
+static char ota_result_path[4096] = {0};
+static int ota_waiting_reconnect = 0;
 
 #define OTA_OFFER_TYPE 0x80
 #define OTA_CHUNK_TYPE 0x81
@@ -419,6 +422,17 @@ static int wait_ota_ack(SSL* ssl, const char* stage,
     return 1;
 }
 
+static void write_ota_status(const char* path, const char* state,
+                             uint32_t offset, uint32_t total)
+{
+    if (!path[0]) return;
+    FILE* file = fopen(path, "w");
+    if (!file) return;
+    fchmod(fileno(file), 0600);
+    fprintf(file, "%s %u %u\n", state, offset, total);
+    fclose(file);
+}
+
 static int ota_digest(const char* path, uint32_t* size, unsigned char digest[32])
 {
     FILE* file = fopen(path, "rb");
@@ -484,15 +498,20 @@ static int perform_ota(SSL* ssl)
     offer[3] = (unsigned char)(image_size >> 24);
     memcpy(offer + 4, digest, sizeof(digest));
     printf("OTA transfer started (%u bytes).\n", image_size);
+    write_ota_status(ota_progress_path, "offer", 0, image_size);
     if (!send_ota_header(ssl, OTA_OFFER_TYPE, 1, offer, sizeof(offer))
         || !wait_ota_ack(ssl, "offer", OTA_READY, 0))
+    {
+        write_ota_status(ota_progress_path, "failed", 0, image_size);
         return 0;
+    }
 
     FILE* file = fopen(ota_file_path, "rb");
     if (!file) return 0;
     unsigned char buffer[OTA_CHUNK_SIZE];
     unsigned char chunk[OTA_CHUNK_SIZE + 6];
     uint32_t offset = 0;
+    uint32_t next_progress = 64 * 1024;
     uint64_t sequence = 2;
     int ok = 1;
     while (offset < image_size)
@@ -511,6 +530,11 @@ static int perform_ota(SSL* ssl)
                              offset + (uint32_t)amount))
         { ok = 0; break; }
         offset += (uint32_t)amount;
+        if (offset >= next_progress || offset == image_size)
+        {
+            write_ota_status(ota_progress_path, "transfer", offset, image_size);
+            while (next_progress <= offset) next_progress += 64 * 1024;
+        }
     }
     fclose(file);
     if (ok)
@@ -519,9 +543,14 @@ static int perform_ota(SSL* ssl)
     if (ok)
     {
         unlink(ota_file_path);
+        write_ota_status(ota_progress_path, "delivered", image_size, image_size);
         printf("OTA image delivered successfully (%u bytes).\n", image_size);
     }
-    else fprintf(stderr, "OTA transfer failed; image retained for retry.\n");
+    else
+    {
+        write_ota_status(ota_progress_path, "failed", offset, image_size);
+        fprintf(stderr, "OTA transfer failed; image retained for retry.\n");
+    }
     return ok;
 }
 
@@ -683,6 +712,17 @@ int main(int argc, char** argv)
         else { fprintf(stderr, "usage: %s --psk-file FILE [--listen IPv4] [--port N] [--state-host IPv4 --state-port N --state-path PATH] [--ota-file FILE] [--replay-once] [--malformed-once]\n", argv[0]); return 2; }
     }
     if (!psk_path || !load_psk(psk_path)) { fprintf(stderr, "PSK file must contain 64 hexadecimal characters.\n"); return 2; }
+    if (ota_file_path[0])
+    {
+        if (snprintf(ota_progress_path, sizeof(ota_progress_path), "%s.progress", ota_file_path)
+                >= (int)sizeof(ota_progress_path)
+            || snprintf(ota_result_path, sizeof(ota_result_path), "%s.result", ota_file_path)
+                >= (int)sizeof(ota_result_path))
+        {
+            fprintf(stderr, "OTA file path is too long.\n");
+            return 2;
+        }
+    }
     if ((state_host[0] || state_port || state_path[0]) && (!state_host[0] || !state_port || !state_path[0]))
     {
         fprintf(stderr, "state-host, state-port and state-path must be supplied together.\n");
@@ -690,6 +730,7 @@ int main(int argc, char** argv)
     }
     signal(SIGINT, stop_handler);
     signal(SIGTERM, stop_handler);
+    signal(SIGPIPE, SIG_IGN);
     SSL_library_init();
     SSL_load_error_strings();
     OpenSSL_add_ssl_algorithms();
@@ -717,10 +758,22 @@ int main(int argc, char** argv)
             SSL_free(ssl); close(socket_fd); continue;
         }
         printf("TLS session established: %s\n", SSL_get_cipher(ssl));
+        if (ota_waiting_reconnect && access(ota_file_path, F_OK) != 0)
+        {
+            write_ota_status(ota_result_path, "success", 1, 1);
+            unlink(ota_progress_path);
+            ota_waiting_reconnect = 0;
+            printf("DeskDisplay reconnected after OTA reboot.\n");
+        }
         if (ota_file_path[0] && access(ota_file_path, R_OK) == 0)
         {
             const int ota_ok = perform_ota(ssl);
-            if (!ota_ok) sleep(5);
+            if (ota_ok)
+            {
+                ota_waiting_reconnect = 1;
+                sleep(2);
+            }
+            else sleep(5);
             SSL_shutdown(ssl);
             SSL_free(ssl); close(socket_fd);
             printf("TLS session closed after OTA attempt; waiting for reconnect.\n");

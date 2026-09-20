@@ -14,6 +14,8 @@ CONFIG_FILE="$PROJECT_DIR/config.local.json"
 BUILD_DIR="$PROJECT_DIR/deskdisplay/.pio/build/guition-4848s040-secure"
 BUILD_RELATIVE="deskdisplay/.pio/build/guition-4848s040-secure/firmware.bin"
 OTA_FILE="/var/lib/pi-display-lab/deskdisplay/firmware.bin"
+OTA_PROGRESS="$OTA_FILE.progress"
+OTA_RESULT="$OTA_FILE.result"
 
 if [[ ! -f "$CONFIG_FILE" ]]; then
   echo "Mangler config.local.json i $PROJECT_DIR" >&2
@@ -117,7 +119,80 @@ TEMP_OTA="$(mktemp "$OTA_DIR/.firmware.bin.XXXXXX")"
 install -m 0600 "$TEMP_BUILD" "$TEMP_OTA"
 mv -f -- "$TEMP_OTA" "$OTA_FILE"
 TEMP_OTA=""
+rm -f -- "$OTA_PROGRESS" "$OTA_RESULT"
 echo "OTA-firmware er lagt i $OTA_FILE."
 echo "Restarter DeskDisplay-gatewayen slik at displayet kan hente den ved neste tilkobling ..."
 sudo systemctl restart deskdisplay-secure-peer.service
-echo "OTA-firmware er klargjort. Displayet må ha OTA-støttet firmware fra USB minst én gang først."
+
+OTA_TIMEOUT="${PI_DISPLAY_OTA_TIMEOUT:-900}"
+if ! [[ "$OTA_TIMEOUT" =~ ^[1-9][0-9]*$ ]]; then
+  echo "PI_DISPLAY_OTA_TIMEOUT må være et positivt antall sekunder." >&2
+  exit 2
+fi
+
+progress_bar() {
+  local percent="$1"
+  local label="$2"
+  local width=30
+  local filled=$((percent * width / 100))
+  local empty=$((width - filled))
+  local left right
+  left="$(printf '%*s' "$filled" '' | tr ' ' '#')"
+  right="$(printf '%*s' "$empty" '' | tr ' ' '.')"
+  printf '\r[%s%s] %3d%% %s' "$left" "$right" "$percent" "$label"
+}
+
+echo "Venter på OTA-overføring, reboot og ny TLS-tilkobling (inntil $OTA_TIMEOUT sekunder) ..."
+STARTED_AT=$SECONDS
+LAST_TEXT=""
+LAST_PLAIN_UPDATE=0
+while (( SECONDS - STARTED_AT < OTA_TIMEOUT )); do
+  if [[ -f "$OTA_RESULT" ]] && read -r result _ <"$OTA_RESULT" && [[ "$result" == "success" ]]; then
+    [[ ! -t 1 ]] || printf '\n'
+    echo "OTA fullført: displayet har mottatt firmware, startet på nytt og koblet til TLS igjen."
+    exit 0
+  fi
+  if ! systemctl is-active --quiet deskdisplay-secure-peer.service; then
+    [[ ! -t 1 ]] || printf '\n'
+    echo "DeskDisplay-gatewayen stoppet under OTA." >&2
+    sudo journalctl -u deskdisplay-secure-peer.service -n 30 --no-pager >&2 || true
+    exit 1
+  fi
+
+  state="waiting"
+  offset=0
+  total=0
+  if [[ -f "$OTA_PROGRESS" ]]; then
+    read -r state offset total <"$OTA_PROGRESS" || true
+  fi
+  percent=0
+  label="venter på displayet"
+  if [[ "$total" =~ ^[1-9][0-9]*$ && "$offset" =~ ^[0-9]+$ ]]; then
+    percent=$((offset * 100 / total))
+    (( percent > 100 )) && percent=100
+  fi
+  case "$state" in
+    offer) label="displayet forbereder OTA" ;;
+    transfer) label="overfører firmware" ;;
+    delivered) percent=100; label="venter på reboot/TLS" ;;
+    failed) label="overføring feilet; gatewayen prøver igjen" ;;
+  esac
+  text="$percent% $label"
+  if [[ -t 1 ]]; then
+    progress_bar "$percent" "$label"
+  elif [[ "$text" != "$LAST_TEXT" || $((SECONDS - LAST_PLAIN_UPDATE)) -ge 30 ]]; then
+    echo "OTA: $text"
+    LAST_TEXT="$text"
+    LAST_PLAIN_UPDATE=$SECONDS
+  fi
+  sleep 1
+done
+
+[[ ! -t 1 ]] || printf '\n'
+if [[ -f "$OTA_FILE" ]]; then
+  echo "OTA ble ikke bekreftet innen $OTA_TIMEOUT sekunder. Firmwarefilen beholdes for ny retry." >&2
+else
+  echo "Firmwaren ble levert, men reboot og ny TLS-tilkobling ble ikke bekreftet innen $OTA_TIMEOUT sekunder." >&2
+fi
+sudo journalctl -u deskdisplay-secure-peer.service -n 30 --no-pager >&2 || true
+exit 1

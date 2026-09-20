@@ -179,7 +179,10 @@ worker hoppes over, slik at worker 2 kan bygge når worker 1 er opptatt. Bare
 ferdig `firmware.bin` kopieres tilbake til controlleren. Når cluster-workers er
 konfigurert, stopper skriptet hvis ingen er tilgjengelige i stedet for å starte
 en svært treg fallback-bygging på controlleren. Lokal bygging brukes fortsatt i
-oppsett uten workers.
+oppsett uten workers. Etter byggingen viser skriptet OTA-fremdrift og avslutter
+ikke med suksess før displayet har mottatt hele firmwaren, startet på nytt og
+etablert en ny TLS-forbindelse. Standardgrensen er 15 minutter og kan ved behov
+endres med miljøvariabelen `PI_DISPLAY_OTA_TIMEOUT`.
 
 Oppdateringsskriptet:
 

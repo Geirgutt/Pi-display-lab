@@ -68,6 +68,14 @@ class InstallationWorkflowTests(unittest.TestCase):
         )[1].split("uint64_t sequence", 1)[0]
         self.assertIn("if (processed) clearFrame();", control_branch)
 
+    def test_deskdisplay_ota_waits_for_rebooted_tls_reconnect(self) -> None:
+        gateway = self.read("deskdisplay/tools/secure_peer.c")
+        staging = self.read("scripts/stage-deskdisplay-ota.sh")
+        self.assertIn("DeskDisplay reconnected after OTA reboot", gateway)
+        self.assertIn("OTA_RESULT", staging)
+        self.assertIn("PI_DISPLAY_OTA_TIMEOUT", staging)
+        self.assertIn("OTA fullført", staging)
+
     def test_services_are_non_root_and_have_low_risk_hardening(self) -> None:
         playbook = self.read("ansible/install-workers.yml")
         controller_units = "".join(
