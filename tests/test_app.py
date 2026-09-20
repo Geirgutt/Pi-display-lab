@@ -120,6 +120,7 @@ class AppSmokeTests(unittest.TestCase):
         self.assertIn(b"training\t1\tmock", state.data)
         self.assertIn(b"calendar\t1\tmock", state.data)
         self.assertIn(b"workout\t", state.data)
+        self.assertIn(b"Easy aerobic run", state.data)
         self.assertIn(b"event\t", state.data)
 
         denied = self.client.get(

@@ -84,6 +84,27 @@ uint8_t hit(int16_t x, int16_t y)
         if (inside(x, y, ui_layout::rightButtonX, ui_layout::systemButtonY,
                    ui_layout::pairedButtonWidth)) return 5;
     }
+    else if (model.page == app_state::Page::Training)
+    {
+        for (uint8_t index = 0; index < model.trainingTelemetry.count; ++index)
+        {
+            const int16_t top = static_cast<int16_t>(ui_layout::trainingFirstRowY
+                                                   + index * ui_layout::trainingRowStep);
+            if (x >= ui_layout::trainingRowX
+                && x < ui_layout::trainingRowX + ui_layout::trainingRowWidth
+                && y >= top && y < top + ui_layout::trainingRowHeight)
+                return static_cast<uint8_t>(7 + index);
+        }
+        if (inside(x, y, ui_layout::singleButtonX, ui_layout::singleButtonY,
+                   ui_layout::singleButtonWidth)) return 5;
+    }
+    else if (model.page == app_state::Page::TrainingDetail)
+    {
+        if (inside(x, y, ui_layout::leftButtonX, ui_layout::systemButtonY,
+                   ui_layout::pairedButtonWidth)) return 10;
+        if (inside(x, y, ui_layout::rightButtonX, ui_layout::systemButtonY,
+                   ui_layout::pairedButtonWidth)) return 5;
+    }
     else if (inside(x, y, ui_layout::singleButtonX, ui_layout::singleButtonY,
                     ui_layout::singleButtonWidth)) return 5;
     return 0;
@@ -101,6 +122,19 @@ void action(uint8_t button)
     case 6:
         model.brightnessPercent = hardware::cycleBrightness();
         ui::brightness(model);
+        break;
+    case 7:
+    case 8:
+    case 9:
+        model.selectedTraining = static_cast<uint8_t>(button - 7);
+        model.page = app_state::Page::TrainingDetail;
+        model.pressedButton = 0;
+        ui::page(model);
+        break;
+    case 10:
+        model.page = app_state::Page::Training;
+        model.pressedButton = 0;
+        ui::page(model);
         break;
     default: break;
     }

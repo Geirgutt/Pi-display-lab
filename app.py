@@ -127,6 +127,7 @@ def _deskdisplay_state_lines(payload: dict[str, Any], worker_hosts: tuple[str, .
                     str(int(workout.get("duration_minutes") or 0)),
                     str(_tenths(workout.get("distance_km"))),
                     str(is_today),
+                    _compact_text(workout.get("description"), 240, "-"),
                 )
             )
         )

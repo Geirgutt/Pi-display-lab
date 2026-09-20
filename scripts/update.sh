@@ -190,7 +190,6 @@ if [[ "$CLUSTER_ENABLED" == "true" ]]; then
     fi
     if [[ "$DISPLAY_MODE" == "ota" ]]; then
       echo "Oppdaterer kun DeskDisplay over OTA ..."
-      bash scripts/install-deskdisplay-service.sh
       bash scripts/stage-deskdisplay-ota.sh
     else
       TEMP_DIR="$(mktemp -d)"
@@ -202,11 +201,6 @@ if [[ "$CLUSTER_ENABLED" == "true" ]]; then
         --display-mode cable --display-only
     fi
     exit 0
-  fi
-  if [[ "$UPDATE_MODE" == "quick" && "$DISPLAY_CHANGED" == "true" \
-        && "$DISPLAY_MODE" != "none" ]]; then
-    echo "Oppdaterer DeskDisplay-gatewayen uten å kjøre full cluster-installasjon ..."
-    bash scripts/install-deskdisplay-service.sh
   fi
   if [[ "$UPDATE_MODE" == "quick" ]]; then
     echo "Hurtigoppdaterer controller og workers til eksakt commit $REVISION ..."

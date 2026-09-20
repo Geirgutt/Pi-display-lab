@@ -32,6 +32,7 @@ constexpr size_t clusterNameMax = 16;
 constexpr size_t trainingItemMax = 3;
 constexpr size_t trainingTitleMax = 36;
 constexpr size_t trainingTypeMax = 14;
+constexpr size_t trainingDescriptionMax = 240;
 constexpr size_t calendarEventMax = 3;
 constexpr size_t calendarTitleMax = 40;
 constexpr size_t calendarLocationMax = 24;
@@ -43,7 +44,8 @@ constexpr size_t clusterNodeSize = 1 + clusterNameMax + 2 + 2 + 2 + 4 + 1;
 constexpr size_t clusterMetadataSize = 5;
 constexpr size_t clusterPayloadSize = clusterMetadataSize + clusterNodeMax * clusterNodeSize;
 constexpr size_t clusterFrameSize = headerSize + clusterPayloadSize;
-constexpr size_t trainingWorkoutSize = 11 + trainingTitleMax + 1 + trainingTypeMax + 1 + 2 + 2 + 1;
+constexpr size_t trainingWorkoutSize = 11 + trainingTitleMax + 1 + trainingTypeMax + 1
+                                     + trainingDescriptionMax + 1 + 2 + 2 + 1;
 constexpr size_t trainingActivitySize = 1 + 11 + trainingTypeMax + 1 + 2 + 4 + 2 + 2;
 constexpr size_t trainingPayloadSize = 3 + trainingItemMax * trainingWorkoutSize + trainingActivitySize;
 constexpr size_t trainingFrameSize = headerSize + trainingPayloadSize;
@@ -105,6 +107,7 @@ struct TrainingWorkout
     char date[11] = {};
     char title[trainingTitleMax + 1] = {};
     char activityType[trainingTypeMax + 1] = {};
+    char description[trainingDescriptionMax + 1] = {};
     uint16_t durationMinutes = 0;
     uint16_t distanceTenths = 0;
     bool today = false;
@@ -309,16 +312,21 @@ inline bool decodeTrainingTelemetry(const uint8_t* frame, size_t length, uint64_
     const uint8_t* encoded = payload + 3;
     for (size_t index = 0; index < trainingItemMax; ++index, encoded += trainingWorkoutSize)
     {
+        constexpr size_t typeOffset = 12 + trainingTitleMax;
+        constexpr size_t descriptionOffset = typeOffset + trainingTypeMax + 1;
+        constexpr size_t durationOffset = descriptionOffset + trainingDescriptionMax + 1;
         if (encoded[10] != 0 || encoded[11 + trainingTitleMax] != 0
-            || encoded[12 + trainingTitleMax + trainingTypeMax] != 0
+            || encoded[typeOffset + trainingTypeMax] != 0
+            || encoded[descriptionOffset + trainingDescriptionMax] != 0
             || encoded[trainingWorkoutSize - 1] > 1) return false;
         if (index >= value.count) continue;
         TrainingWorkout& item = value.workouts[index];
         memcpy(item.date, encoded, 11);
         memcpy(item.title, encoded + 11, trainingTitleMax + 1);
-        memcpy(item.activityType, encoded + 12 + trainingTitleMax, trainingTypeMax + 1);
-        item.durationMinutes = get16(encoded + 13 + trainingTitleMax + trainingTypeMax);
-        item.distanceTenths = get16(encoded + 15 + trainingTitleMax + trainingTypeMax);
+        memcpy(item.activityType, encoded + typeOffset, trainingTypeMax + 1);
+        memcpy(item.description, encoded + descriptionOffset, trainingDescriptionMax + 1);
+        item.durationMinutes = get16(encoded + durationOffset);
+        item.distanceTenths = get16(encoded + durationOffset + 2);
         item.today = encoded[trainingWorkoutSize - 1] != 0;
     }
     const uint8_t* activity = payload + 3 + trainingItemMax * trainingWorkoutSize;

@@ -5,7 +5,7 @@
 
 namespace app_state
 {
-enum class Page : uint8_t { Home, Cluster, Training, Calendar, System };
+enum class Page : uint8_t { Home, Cluster, Training, TrainingDetail, Calendar, System };
 
 struct Model
 {
@@ -20,6 +20,7 @@ struct Model
     int16_t touchX = -1;
     int16_t touchY = -1;
     uint8_t pressedButton = 0;
+    uint8_t selectedTraining = 0;
     uint8_t brightnessPercent = 100;
     bool timeValid = false;
     char clockText[6] = "--:--";

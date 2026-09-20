@@ -121,8 +121,11 @@ mv -f -- "$TEMP_OTA" "$OTA_FILE"
 TEMP_OTA=""
 rm -f -- "$OTA_PROGRESS" "$OTA_RESULT"
 echo "OTA-firmware er lagt i $OTA_FILE."
-echo "Restarter DeskDisplay-gatewayen slik at displayet kan hente den ved neste tilkobling ..."
-sudo systemctl restart deskdisplay-secure-peer.service
+echo "Installerer DeskDisplay-gatewayen nå som OTA-firmwaren ligger klar ..."
+# Keep the currently compatible gateway running while a worker builds. The new
+# binary starts only after the image exists, so its first display session can
+# offer OTA before sending any newly introduced telemetry frame.
+bash scripts/install-deskdisplay-service.sh
 
 OTA_TIMEOUT="${PI_DISPLAY_OTA_TIMEOUT:-900}"
 if ! [[ "$OTA_TIMEOUT" =~ ^[1-9][0-9]*$ ]]; then

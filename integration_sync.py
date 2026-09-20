@@ -4,11 +4,13 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import tempfile
 import urllib.error
 import urllib.request
 from datetime import date, datetime, time, timedelta
 from functools import lru_cache
+from html import unescape
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlsplit
@@ -16,6 +18,16 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 MAX_ICS_BYTES = 4 * 1024 * 1024
 USER_AGENT = "Pi-Display-Lab/1.0"
+
+
+def _plain_description(value: Any) -> str:
+    """Turn optional calendar markup into compact display-friendly text."""
+
+    text = unescape(str(value or ""))
+    text = re.sub(r"<br\s*/?>", "\n", text, flags=re.IGNORECASE)
+    text = re.sub(r"<[^>]+>", " ", text)
+    text = text.replace("•", "-")
+    return " ".join(text.split())
 
 
 @lru_cache(maxsize=1)
@@ -104,6 +116,7 @@ def parse_ics_events(
             continue
         title = str(component.get("SUMMARY") or "Calendar event").strip()
         location = str(component.get("LOCATION") or "").strip()
+        description = _plain_description(component.get("DESCRIPTION"))
         uid = str(component.get("UID") or title)
         identity = (uid, start.isoformat())
         if identity in seen:
@@ -116,6 +129,7 @@ def parse_ics_events(
                 "end": end.isoformat(timespec="minutes"),
                 "all_day": all_day,
                 "location": location,
+                "description": description,
             }
         )
     result.sort(key=lambda event: (event["start"], event["title"]))
@@ -153,6 +167,7 @@ def garmin_training_payload(events: list[dict[str, Any]]) -> dict[str, Any]:
                 "activity_type": _activity_type(str(event.get("title") or "")),
                 "duration_minutes": duration,
                 "distance_km": None,
+                "description": str(event.get("description") or ""),
             }
         )
     return {"source": "garmin", "workouts": workouts}

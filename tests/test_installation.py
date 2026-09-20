@@ -80,6 +80,7 @@ class InstallationWorkflowTests(unittest.TestCase):
         self.assertIn("OTA_RESULT", staging)
         self.assertIn("PI_DISPLAY_OTA_TIMEOUT", staging)
         self.assertIn("OTA fullført", staging)
+        self.assertIn("bash scripts/install-deskdisplay-service.sh", staging)
 
     def test_deskdisplay_home_prioritizes_clock_and_primary_pages(self) -> None:
         state = self.read("deskdisplay/src/app_state.h")
@@ -94,6 +95,9 @@ class InstallationWorkflowTests(unittest.TestCase):
         self.assertNotIn("Page::TouchTest", state + app + ui)
         self.assertNotIn('button(1, "Wi-Fi"', ui)
         self.assertIn("strcmp(lastClockText, model.clockText)", ui)
+        self.assertIn("TOMORROW", ui)
+        self.assertIn("Page::TrainingDetail", state + app + ui)
+        self.assertIn("putUChar(brightnessKey", self.read("deskdisplay/src/hardware.cpp"))
 
     def test_services_are_non_root_and_have_low_risk_hardening(self) -> None:
         playbook = self.read("ansible/install-workers.yml")

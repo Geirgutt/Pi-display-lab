@@ -63,7 +63,9 @@ static int ota_waiting_reconnect = 0;
 #define TRAINING_ITEM_MAX 3
 #define TRAINING_TITLE_MAX 36
 #define TRAINING_TYPE_MAX 14
-#define TRAINING_WORKOUT_SIZE (11 + TRAINING_TITLE_MAX + 1 + TRAINING_TYPE_MAX + 1 + 2 + 2 + 1)
+#define TRAINING_DESCRIPTION_MAX 240
+#define TRAINING_WORKOUT_SIZE (11 + TRAINING_TITLE_MAX + 1 + TRAINING_TYPE_MAX + 1 \
+                              + TRAINING_DESCRIPTION_MAX + 1 + 2 + 2 + 1)
 #define TRAINING_ACTIVITY_SIZE (1 + 11 + TRAINING_TYPE_MAX + 1 + 2 + 4 + 2 + 2)
 #define TRAINING_PAYLOAD_SIZE (3 + TRAINING_ITEM_MAX * TRAINING_WORKOUT_SIZE + TRAINING_ACTIVITY_SIZE)
 #define TRAINING_FRAME_SIZE (FRAME_HEADER_SIZE + TRAINING_PAYLOAD_SIZE)
@@ -75,7 +77,7 @@ static int ota_waiting_reconnect = 0;
 #define CALENDAR_PAYLOAD_SIZE (3 + CALENDAR_EVENT_MAX * CALENDAR_EVENT_SIZE)
 #define CALENDAR_FRAME_SIZE (FRAME_HEADER_SIZE + CALENDAR_PAYLOAD_SIZE)
 
-#define STATE_FRAME_MAX 512
+#define STATE_FRAME_MAX 1024
 _Static_assert(CLUSTER_FRAME_SIZE <= STATE_FRAME_MAX, "cluster frame exceeds gateway buffer");
 _Static_assert(TRAINING_FRAME_SIZE <= STATE_FRAME_MAX, "training frame exceeds gateway buffer");
 _Static_assert(CALENDAR_FRAME_SIZE <= STATE_FRAME_MAX, "calendar frame exceeds gateway buffer");
@@ -98,6 +100,7 @@ struct training_workout {
     char date[11];
     char title[TRAINING_TITLE_MAX + 1];
     char activity_type[TRAINING_TYPE_MAX + 1];
+    char description[TRAINING_DESCRIPTION_MAX + 1];
     uint16_t duration_minutes;
     uint16_t distance_tenths;
     uint8_t today;
@@ -307,8 +310,8 @@ static int fetch_controller_state(struct controller_state* result)
     memset(result, 0, sizeof(*result));
     while ((line = strtok_r(NULL, "\r\n", &save)) != NULL)
     {
-        char* fields[8] = {0};
-        const int field_count = split_fields(line, fields, 8);
+        char* fields[9] = {0};
+        const int field_count = split_fields(line, fields, 9);
         if (field_count < 1) return 0;
         if (!strcmp(fields[0], "node"))
         {
@@ -339,9 +342,10 @@ static int fetch_controller_state(struct controller_state* result)
         }
         else if (!strcmp(fields[0], "workout"))
         {
-            if (field_count != 7 || result->training.count >= TRAINING_ITEM_MAX
+            if (field_count != 8 || result->training.count >= TRAINING_ITEM_MAX
                 || strlen(fields[1]) > 10 || strlen(fields[2]) > TRAINING_TITLE_MAX
-                || strlen(fields[3]) > TRAINING_TYPE_MAX) return 0;
+                || strlen(fields[3]) > TRAINING_TYPE_MAX
+                || strlen(fields[7]) > TRAINING_DESCRIPTION_MAX) return 0;
             unsigned long duration = 0, distance = 0, today = 0;
             if (!parse_unsigned(fields[4], 65535, &duration)
                 || !parse_unsigned(fields[5], 65535, &distance)
@@ -350,6 +354,7 @@ static int fetch_controller_state(struct controller_state* result)
             strcpy(workout->date, fields[1]);
             strcpy(workout->title, fields[2]);
             strcpy(workout->activity_type, fields[3]);
+            if (strcmp(fields[7], "-") != 0) strcpy(workout->description, fields[7]);
             workout->duration_minutes = (uint16_t)duration;
             workout->distance_tenths = (uint16_t)distance;
             workout->today = (uint8_t)today;
@@ -823,10 +828,12 @@ static size_t make_training_frame(unsigned char* frame, uint64_t sequence, int i
         memcpy(encoded + 11, workout->title, strlen(workout->title));
         memcpy(encoded + 12 + TRAINING_TITLE_MAX, workout->activity_type,
                strlen(workout->activity_type));
-        put16(encoded + 13 + TRAINING_TITLE_MAX + TRAINING_TYPE_MAX,
-              workout->duration_minutes);
-        put16(encoded + 15 + TRAINING_TITLE_MAX + TRAINING_TYPE_MAX,
-              workout->distance_tenths);
+        const size_t description_offset = 13 + TRAINING_TITLE_MAX + TRAINING_TYPE_MAX;
+        const size_t duration_offset = description_offset + TRAINING_DESCRIPTION_MAX + 1;
+        memcpy(encoded + description_offset, workout->description,
+               strlen(workout->description));
+        put16(encoded + duration_offset, workout->duration_minutes);
+        put16(encoded + duration_offset + 2, workout->distance_tenths);
         encoded[TRAINING_WORKOUT_SIZE - 1] = workout->today;
     }
     const struct training_activity* activity = &state->last_activity;

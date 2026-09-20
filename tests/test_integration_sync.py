@@ -24,6 +24,7 @@ DTSTART:20260921T060000Z\r
 DTEND:20260921T064500Z\r
 RRULE:FREQ=DAILY;COUNT=2\r
 SUMMARY:Easy Run\r
+DESCRIPTION:Run in Z2\\n&lt;b&gt;Finish with strides&lt;/b&gt;\r
 END:VEVENT\r
 END:VCALENDAR\r
 """
@@ -34,6 +35,7 @@ END:VCALENDAR\r
         )
         self.assertEqual(len(events), 2)
         self.assertEqual(events[0]["title"], "Easy Run")
+        self.assertEqual(events[0]["description"], "Run in Z2 Finish with strides")
 
     def test_garmin_events_become_upcoming_workouts_only(self) -> None:
         payload = garmin_training_payload(
@@ -42,12 +44,14 @@ END:VCALENDAR\r
                     "title": "Easy Run",
                     "start": "2026-09-21T08:00+02:00",
                     "end": "2026-09-21T08:45+02:00",
+                    "description": "Easy aerobic run",
                 }
             ]
         )
         self.assertEqual(payload["source"], "garmin")
         self.assertEqual(payload["workouts"][0]["activity_type"], "Run")
         self.assertEqual(payload["workouts"][0]["duration_minutes"], 45)
+        self.assertEqual(payload["workouts"][0]["description"], "Easy aerobic run")
         self.assertNotIn("last_activity", payload)
 
     def test_multiple_calendar_feeds_are_sorted(self) -> None:

@@ -189,39 +189,100 @@ void shortDate(const char* iso, char* output, size_t capacity)
     else snprintf(output, capacity, "--.--");
 }
 
+bool isTomorrow(const app_state::Model& model, const char* iso)
+{
+    if (!model.timeValid || !iso || strlen(iso) != 10) return false;
+    const time_t now = time(nullptr);
+    struct tm local = {};
+    if (!localtime_r(&now, &local)) return false;
+    local.tm_mday += 1;
+    local.tm_hour = 12;
+    local.tm_min = 0;
+    local.tm_sec = 0;
+    if (mktime(&local) == static_cast<time_t>(-1)) return false;
+    char tomorrow[11];
+    strftime(tomorrow, sizeof(tomorrow), "%Y-%m-%d", &local);
+    return strcmp(iso, tomorrow) == 0;
+}
+
+void workoutDay(const app_state::Model& model, const secure_protocol::TrainingWorkout& workout,
+                char* output, size_t capacity)
+{
+    if (workout.today) snprintf(output, capacity, "TODAY");
+    else if (isTomorrow(model, workout.date)) snprintf(output, capacity, "TOMORROW");
+    else shortDate(workout.date, output, capacity);
+}
+
+void wrappedText(const char* value, int16_t x, int16_t y, int16_t maxWidth,
+                 uint8_t size, uint16_t color, uint16_t fill, uint8_t maxLines)
+{
+    if (!value || !value[0] || maxLines == 0) return;
+    char copy[secure_protocol::trainingDescriptionMax + 1];
+    strncpy(copy, value, sizeof(copy) - 1);
+    copy[sizeof(copy) - 1] = 0;
+    char line[secure_protocol::trainingDescriptionMax + 1] = {};
+    char* save = nullptr;
+    char* word = strtok_r(copy, " ", &save);
+    uint8_t lineNumber = 0;
+    display().setTextColor(color, fill);
+    display().setTextSize(size);
+    while (word && lineNumber < maxLines)
+    {
+        char candidate[sizeof(line)];
+        snprintf(candidate, sizeof(candidate), "%s%s%s", line, line[0] ? " " : "", word);
+        if (line[0] && display().textWidth(candidate) > maxWidth)
+        {
+            display().drawString(line, x, y + lineNumber * (size * 9));
+            ++lineNumber;
+            strncpy(line, word, sizeof(line) - 1);
+            line[sizeof(line) - 1] = 0;
+        }
+        else
+        {
+            strncpy(line, candidate, sizeof(line) - 1);
+            line[sizeof(line) - 1] = 0;
+        }
+        word = strtok_r(nullptr, " ", &save);
+    }
+    if (line[0] && lineNumber < maxLines)
+        display().drawString(line, x, y + lineNumber * (size * 9));
+}
+
 void trainingTelemetry(const app_state::Model& model, bool force = false)
 {
     const secure_protocol::TrainingTelemetry& state = model.trainingTelemetry;
     if (!force && trainingDrawn && memcmp(&lastTraining, &state, sizeof(state)) == 0) return;
     lastTraining = state;
     trainingDrawn = true;
-    display().fillRoundRect(20, 72, 440, 288, 10, card);
-    label("Garmin training", 32, 84, 1, muted);
+    display().fillRoundRect(12, 68, 456, 340, 10, card);
+    label("Garmin training", 28, 80, 2, muted);
     if (!state.available)
     {
-        label("Not configured", 32, 128, 2, warning);
-        label("Configure Garmin on the controller", 32, 166, 1, muted);
+        label("Not configured", 28, 132, 3, warning);
+        label("Configure Garmin on the controller", 28, 180, 2, muted);
         return;
     }
 
     if (state.count == 0)
-        label("No scheduled workouts", 32, 120, 2, muted);
+        label("No scheduled workouts", 28, 132, 3, muted);
     for (size_t index = 0; index < state.count && index < 3; ++index)
     {
         const secure_protocol::TrainingWorkout& workout = state.workouts[index];
-        const int16_t y = static_cast<int16_t>(105 + index * 74);
-        display().fillRoundRect(28, y, 424, 64, 6, 0x2104);
-        char date[12];
-        shortDate(workout.date, date, sizeof(date));
-        char heading[32];
-        snprintf(heading, sizeof(heading), "%s  %s", workout.today ? "TODAY" : date,
-                 workout.activityType[0] ? workout.activityType : "Workout");
-        display().setTextColor(workout.today ? good : accent, 0x2104);
-        display().setTextSize(1);
-        display().drawString(heading, 38, y + 8);
-        display().setTextColor(text, 0x2104);
+        const int16_t y = static_cast<int16_t>(ui_layout::trainingFirstRowY
+                                             + index * ui_layout::trainingRowStep);
+        const bool pressed = model.pressedButton == 7 + index;
+        const uint16_t fill = pressed ? accent : 0x2104;
+        display().fillRoundRect(ui_layout::trainingRowX, y, ui_layout::trainingRowWidth,
+                                ui_layout::trainingRowHeight, 6, fill);
+        char day[12];
+        workoutDay(model, workout, day, sizeof(day));
+        display().setTextColor(pressed ? text : (workout.today ? good : accent), fill);
         display().setTextSize(2);
-        display().drawString(workout.title[0] ? workout.title : "Workout", 38, y + 25);
+        display().drawString(day, 28, y + 8);
+        const char* type = workout.activityType[0] ? workout.activityType : "Workout";
+        display().setTextColor(text, fill);
+        display().drawString(type, 452 - display().textWidth(type), y + 8);
+        display().drawString(workout.title[0] ? workout.title : "Workout", 28, y + 34);
         char details[32];
         if (workout.distanceTenths)
             snprintf(details, sizeof(details), "%u min  %u.%u km", workout.durationMinutes,
@@ -229,11 +290,50 @@ void trainingTelemetry(const app_state::Model& model, bool force = false)
         else if (workout.durationMinutes)
             snprintf(details, sizeof(details), "%u min", workout.durationMinutes);
         else snprintf(details, sizeof(details), "Scheduled");
-        display().setTextColor(muted, 0x2104);
-        display().setTextSize(1);
-        display().drawString(details, 330 - display().textWidth(details), y + 9);
+        display().setTextColor(muted, fill);
+        display().setTextSize(2);
+        display().drawString(details, 28, y + 59);
+        display().drawString(">", 444 - display().textWidth(">"), y + 59);
     }
+}
 
+void trainingDetail(const app_state::Model& model)
+{
+    display().fillRoundRect(12, 68, 456, 340, 10, card);
+    if (model.selectedTraining >= model.trainingTelemetry.count)
+    {
+        label("Workout unavailable", 28, 120, 3, warning);
+        return;
+    }
+    const secure_protocol::TrainingWorkout& workout =
+        model.trainingTelemetry.workouts[model.selectedTraining];
+    char day[12];
+    workoutDay(model, workout, day, sizeof(day));
+    display().setTextColor(workout.today ? good : accent, card);
+    display().setTextSize(2);
+    display().drawString(day, 28, 82);
+    const char* type = workout.activityType[0] ? workout.activityType : "Workout";
+    display().setTextColor(text, card);
+    display().drawString(type, 452 - display().textWidth(type), 82);
+    wrappedText(workout.title[0] ? workout.title : "Workout", 28, 116, 424, 3, text, card, 2);
+
+    char details[40];
+    if (workout.distanceTenths)
+        snprintf(details, sizeof(details), "%u min   %u.%u km", workout.durationMinutes,
+                 workout.distanceTenths / 10, workout.distanceTenths % 10);
+    else if (workout.durationMinutes)
+        snprintf(details, sizeof(details), "%u minutes", workout.durationMinutes);
+    else snprintf(details, sizeof(details), "Scheduled workout");
+    label(details, 28, 178, 2, muted);
+    display().drawFastHLine(28, 210, 424, muted);
+    label("WORKOUT DETAILS", 28, 226, 1, muted);
+    if (workout.description[0])
+        wrappedText(workout.description, 28, 248, 424, 2, text, card, 7);
+    else
+    {
+        label("Garmin did not include the workout", 28, 254, 2, muted);
+        label("steps in the published calendar.", 28, 280, 2, muted);
+    }
 }
 
 void calendarTelemetry(const app_state::Model& model, bool force = false)
@@ -325,6 +425,15 @@ void ui::page(const app_state::Model& model)
         button(5, "Home", ui_layout::singleButtonX, ui_layout::singleButtonY,
                ui_layout::singleButtonWidth, model.pressedButton == 5);
     }
+    else if (model.page == app_state::Page::TrainingDetail)
+    {
+        header("Workout");
+        trainingDetail(model);
+        button(10, "Back", ui_layout::leftButtonX, ui_layout::systemButtonY,
+               ui_layout::pairedButtonWidth, model.pressedButton == 10);
+        button(5, "Home", ui_layout::rightButtonX, ui_layout::systemButtonY,
+               ui_layout::pairedButtonWidth, model.pressedButton == 5);
+    }
     else if (model.page == app_state::Page::Calendar)
     {
         header("Calendar");
@@ -378,6 +487,19 @@ void ui::pressed(const app_state::Model& model)
     else if (model.page == app_state::Page::System)
     {
         brightnessButton(model);
+        button(5, "Home", ui_layout::rightButtonX, ui_layout::systemButtonY,
+               ui_layout::pairedButtonWidth, model.pressedButton == 5);
+    }
+    else if (model.page == app_state::Page::Training)
+    {
+        trainingTelemetry(model, true);
+        button(5, "Home", ui_layout::singleButtonX, ui_layout::singleButtonY,
+               ui_layout::singleButtonWidth, model.pressedButton == 5);
+    }
+    else if (model.page == app_state::Page::TrainingDetail)
+    {
+        button(10, "Back", ui_layout::leftButtonX, ui_layout::systemButtonY,
+               ui_layout::pairedButtonWidth, model.pressedButton == 10);
         button(5, "Home", ui_layout::rightButtonX, ui_layout::systemButtonY,
                ui_layout::pairedButtonWidth, model.pressedButton == 5);
     }

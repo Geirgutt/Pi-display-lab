@@ -69,6 +69,7 @@ def _workout(raw: Any) -> dict[str, Any] | None:
         "activity_type": _text(raw.get("activity_type"), "Workout", 24),
         "duration_minutes": _number(raw.get("duration_minutes"), 1, 1440),
         "distance_km": _number(raw.get("distance_km"), 0, 1000),
+        "description": _text(raw.get("description"), "", 512),
     }
 
 
@@ -135,6 +136,7 @@ class MockTrainingProvider(TrainingProvider):
                         "title": "Base Run",
                         "activity_type": "Run",
                         "duration_minutes": 42,
+                        "description": "Easy aerobic run in zone 2, followed by five relaxed strides.",
                     },
                     {
                         "date": (today + timedelta(days=2)).isoformat(),

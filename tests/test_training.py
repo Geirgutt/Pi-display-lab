@@ -13,7 +13,8 @@ class TrainingStateTests(unittest.TestCase):
         state = normalize_training(
             {
                 "workouts": [
-                    {"date": "2026-09-09", "title": "Long Run", "duration_minutes": 65},
+                    {"date": "2026-09-09", "title": "Long Run", "duration_minutes": 65,
+                     "description": "Progressive finish"},
                     {"date": "2026-09-07", "title": "Base Run", "activity_type": "Run", "duration_minutes": 42},
                     {"date": "invalid", "title": "Ignored"},
                 ],
@@ -31,6 +32,7 @@ class TrainingStateTests(unittest.TestCase):
         self.assertTrue(state["available"])
         self.assertEqual(state["today"]["title"], "Base Run")
         self.assertEqual([item["title"] for item in state["upcoming"]], ["Long Run"])
+        self.assertEqual(state["upcoming"][0]["description"], "Progressive finish")
         self.assertEqual(state["last_activity"]["average_hr"], 148.0)
 
     def test_json_provider_is_safe_when_file_is_missing(self):

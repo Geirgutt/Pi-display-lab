@@ -568,6 +568,7 @@ class DashboardState:
                     "activity_type": "Run",
                     "duration_minutes": 42,
                     "distance_km": None,
+                    "description": "Easy aerobic run in zone 2, followed by five relaxed strides.",
                 },
                 "upcoming": [],
                 "last_activity": None,
