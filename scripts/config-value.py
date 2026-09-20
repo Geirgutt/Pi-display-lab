@@ -34,6 +34,7 @@ def main() -> int:
             "node_heartbeat_auth",
             "node_role",
             "ssh_user",
+            "ssh_identity_file",
             "worker_hosts",
         ),
     )

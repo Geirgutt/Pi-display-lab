@@ -173,6 +173,10 @@ Da hoppes controller- og worker-installasjonen over. Skriptet spør fortsatt om
 displayet er koblet med USB (direkte flashing) eller skal oppdateres over OTA.
 Ved USB på en worker hentes den eksakte committen først til workerens lokale
 checkout, slik at firmwarekoden som bygges faktisk er den nye.
+Ved OTA prøves workerne i konfigurert rekkefølge. En utilgjengelig eller belastet
+worker hoppes over, slik at worker 2 kan bygge når worker 1 er opptatt. Bare
+ferdig `firmware.bin` kopieres tilbake til controlleren. Hvis ingen worker er
+tilgjengelig, faller skriptet tilbake til lokal bygging på controlleren.
 
 Oppdateringsskriptet:
 
