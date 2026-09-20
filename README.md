@@ -161,9 +161,10 @@ cd ~/Pi-display-lab
 bash scripts/update.sh
 ```
 
-Hvis den nye committen bare inneholder endringer under `deskdisplay/`, oppdager
-skriptet dette automatisk og oppdaterer bare DeskDisplay. Du kan også tvinge
-denne korte veien manuelt:
+Hvis den nye revisjonen bare inneholder funksjonelle endringer under
+`deskdisplay/` (dokumentasjon og tester teller ikke), oppdager skriptet dette
+automatisk og oppdaterer bare DeskDisplay. Du kan også velge denne korte veien
+manuelt:
 
 ```bash
 bash scripts/update.sh --display-only
@@ -182,12 +183,20 @@ oppsett uten workers.
 
 Oppdateringsskriptet:
 
-1. stopper hvis prosjektmappen har lokale endringer
-2. henter siste versjon med fast-forward-only, uten å omskrive Git-historikk
-3. oppretter `.venv` hvis den mangler og oppdaterer Python-pakkene
-4. starter Pi Display Lab og coordinatoren på nytt
-5. oppdaterer konfigurerte workers til nøyaktig samme commit som controlleren
-6. starter worker- og node-agenttjenestene på nytt og verifiserer hele clusteret
+- klassifiserer automatisk endringene og velger minste trygge oppdatering
+- bruker en hurtigoppdatering for kjente runtime-/UI-endringer: eksakt Git-commit,
+  omstart og verifisering, uten apt, pip, PKI eller credential-distribusjon
+- bruker full oppdatering automatisk ved endringer i installasjon, dependencies,
+  konfigurasjon, Ansible eller sikkerhetskode
+- spør om full oppdatering når en ny eller ukjent fil ikke kan klassifiseres trygt
+- støtter `--full` for eksplisitt reparasjon eller full reinstallasjon
+
+Alle løp stopper ved lokale Git-endringer og henter bare med fast-forward.
+Hurtigløpet oppdaterer workerne til controllerens eksakte commit, restarter
+runtime-tjenestene og verifiserer clusteret. Full-løpet gjør i tillegg package-,
+Python-, konfigurasjons-, PKI-, credential- og systemd-kontrollene fra
+installasjonen. En oppdatering uten nye commits avslutter uten reinstallasjon;
+`bash scripts/update.sh --full` kan brukes til eksplisitt reparasjon.
 
 Dette er den eneste oppdateringsveien. Du bestemmer dermed selv når en kontrollert
 GitHub-versjon skal installeres på Pi-en, og kommandoen må kjøres over SSH.

@@ -20,6 +20,7 @@ DISPLAY_WIFI_SSID=""
 DISPLAY_NO_FLASH=false
 DISPLAY_MODE="auto"
 DISPLAY_ONLY=false
+QUICK=false
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --sudo-socket)
@@ -64,6 +65,10 @@ while [[ $# -gt 0 ]]; do
       ;;
     --display-only)
       DISPLAY_ONLY=true
+      shift
+      ;;
+    --quick)
+      QUICK=true
       shift
       ;;
     *)
@@ -116,6 +121,7 @@ done
 [[ "$DISPLAY_NO_FLASH" != "true" ]] || INSTALL_ARGS+=(--display-no-flash)
 INSTALL_ARGS+=(--display-mode "$DISPLAY_MODE")
 [[ "$DISPLAY_ONLY" != "true" ]] || INSTALL_ARGS+=(--display-only)
+[[ "$QUICK" != "true" ]] || INSTALL_ARGS+=(--quick)
 python3 cluster_install.py "$CONFIG_FILE" "$TEMP_DIR" "$REVISION" "${INSTALL_ARGS[@]}"
 
 echo

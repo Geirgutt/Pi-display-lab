@@ -10,6 +10,8 @@ VENV_DIR="$PROJECT_DIR/.venv"
 CONFIG_FILE="$PROJECT_DIR/config.local.json"
 DISPLAY_MODE=""
 DISPLAY_ONLY=false
+FORCE_FULL=false
+ORIGINAL_ARGS=("$@")
 
 if [[ $EUID -eq 0 ]]; then
   echo "Kjør oppdateringen som vanlig bruker, ikke som root."
@@ -24,6 +26,10 @@ while [[ $# -gt 0 ]]; do
       ;;
     --display-only)
       DISPLAY_ONLY=true
+      shift
+      ;;
+    --full)
+      FORCE_FULL=true
       shift
       ;;
     *)
@@ -50,7 +56,7 @@ fi
 source "$PROJECT_DIR/scripts/sudo-session.sh"
 trap 'sudo_session_stop' EXIT
 
-PREVIOUS_REVISION="$(git rev-parse HEAD)"
+PREVIOUS_REVISION="${PI_DISPLAY_UPDATE_PREVIOUS_REVISION:-$(git rev-parse HEAD)}"
 
 echo "Kontrollerer lokal sudo-tilgang før Git endres ..."
 if ! sudo_session_start; then
@@ -64,6 +70,18 @@ git merge --ff-only "origin/$BRANCH"
 REVISION="$(git rev-parse HEAD)"
 echo "Lokal checkout er nå commit $REVISION."
 
+# Bash may have buffered the old script before git merge. Re-exec once when
+# update.sh itself changed so the fetched version controls classification.
+if [[ "${PI_DISPLAY_UPDATE_REEXEC:-}" != "$REVISION" ]] \
+    && ! git diff --quiet "$PREVIOUS_REVISION" "$REVISION" -- scripts/update.sh; then
+  echo "Oppdateringsskriptet er endret; starter den nye versjonen ..."
+  sudo_session_stop
+  trap - EXIT
+  export PI_DISPLAY_UPDATE_PREVIOUS_REVISION="$PREVIOUS_REVISION"
+  export PI_DISPLAY_UPDATE_REEXEC="$REVISION"
+  exec bash "$PROJECT_DIR/scripts/update.sh" "${ORIGINAL_ARGS[@]}"
+fi
+
 # Read this only after the fast-forward. The fetched version owns the update
 # flow, including the first-time DeskDisplay selection prompt.
 CLUSTER_ENABLED="false"
@@ -71,23 +89,6 @@ DISPLAY_OTA_READY="false"
 if [[ -f "$CONFIG_FILE" ]]; then
   CLUSTER_ENABLED="$(python3 scripts/config-value.py cluster_enabled --config "$CONFIG_FILE")"
   DISPLAY_OTA_READY="$(python3 scripts/config-value.py deskdisplay_ota_ready --config "$CONFIG_FILE")"
-fi
-
-display_revision_only() {
-  local changed=false
-  local path=""
-  while IFS= read -r path; do
-    [[ -z "$path" ]] && continue
-    changed=true
-    [[ "$path" == deskdisplay/* ]] || return 1
-  done < <(git diff --name-only "$PREVIOUS_REVISION" "$REVISION")
-  [[ "$changed" == "true" ]]
-}
-
-if [[ "$CLUSTER_ENABLED" == "true" && "$DISPLAY_ONLY" != "true" \
-      && "$PREVIOUS_REVISION" != "$REVISION" ]] && display_revision_only; then
-  DISPLAY_ONLY=true
-  echo "Committen endrer bare deskdisplay/. Hopper over controller- og worker-oppdateringen."
 fi
 
 prompt_yes_no() {
@@ -100,7 +101,52 @@ prompt_yes_no() {
   esac
 }
 
-if [[ "$CLUSTER_ENABLED" == "true" && "$DISPLAY_ONLY" != "true" && -z "$DISPLAY_MODE" ]]; then
+UPDATE_MODE="full"
+DISPLAY_CHANGED=false
+if [[ "$CLUSTER_ENABLED" == "true" ]]; then
+  read -r UPDATE_MODE DISPLAY_CHANGED < <(
+    python3 scripts/classify-update.py "$PREVIOUS_REVISION" "$REVISION"
+  )
+  if [[ "$FORCE_FULL" == "true" ]]; then
+    UPDATE_MODE="full"
+    echo "Full oppdatering er eksplisitt valgt."
+  elif [[ "$UPDATE_MODE" == "ask" ]]; then
+    echo "Disse endringene er ikke klassifisert som en kjent hurtigoppdatering:"
+    git diff --name-only "$PREVIOUS_REVISION" "$REVISION" | sed 's/^/  - /'
+    if prompt_yes_no "Kjøre en full og grundig oppdatering?"; then
+      UPDATE_MODE="full"
+    else
+      echo "Oppdateringen stoppet før controller eller workers ble endret."
+      exit 2
+    fi
+  fi
+
+  if [[ "$DISPLAY_ONLY" == "true" ]]; then
+    UPDATE_MODE="display"
+    DISPLAY_CHANGED=true
+  elif [[ "$UPDATE_MODE" == "display" ]]; then
+    DISPLAY_ONLY=true
+    echo "Endringene gjelder bare DeskDisplay. Hopper over vanlig cluster-oppdatering."
+  elif [[ "$UPDATE_MODE" == "none" && -n "$DISPLAY_MODE" ]]; then
+    DISPLAY_ONLY=true
+    DISPLAY_CHANGED=true
+  elif [[ "$UPDATE_MODE" == "none" ]]; then
+    echo "Ingen nye commits å installere. Bruk --full for reparasjon/reinstallasjon."
+    exit 0
+  elif [[ "$UPDATE_MODE" == "quick" ]]; then
+    if ! python3 scripts/check-cluster-pki.py "$CONFIG_FILE"; then
+      echo "Hurtigoppdatering er ikke forsvarlig før PKI er kontrollert. Bytter til full oppdatering."
+      UPDATE_MODE="full"
+    else
+      echo "Trygg runtime-endring oppdaget: bruker hurtigoppdatering uten pakke-, PKI- eller credential-distribusjon."
+    fi
+  else
+    echo "Installasjons-, dependency-, konfigurasjons- eller sikkerhetsendring oppdaget: bruker full oppdatering."
+  fi
+fi
+
+if [[ "$CLUSTER_ENABLED" == "true" && "$DISPLAY_ONLY" != "true" \
+      && "$DISPLAY_CHANGED" == "true" && -z "$DISPLAY_MODE" ]]; then
   if prompt_yes_no "Skal DeskDisplay oppdateres nå?"; then
     if prompt_yes_no "Er DeskDisplay tilkoblet clusteret med USB-kabel nå?"; then
       DISPLAY_MODE="cable"
@@ -111,6 +157,10 @@ if [[ "$CLUSTER_ENABLED" == "true" && "$DISPLAY_ONLY" != "true" && -z "$DISPLAY_
   else
     DISPLAY_MODE="none"
   fi
+fi
+
+if [[ "$CLUSTER_ENABLED" == "true" && "$DISPLAY_ONLY" != "true" && -z "$DISPLAY_MODE" ]]; then
+  DISPLAY_MODE="none"
 fi
 
 if [[ "$DISPLAY_MODE" == "ota" && "$DISPLAY_OTA_READY" != "true" ]]; then
@@ -153,8 +203,13 @@ if [[ "$CLUSTER_ENABLED" == "true" ]]; then
     fi
     exit 0
   fi
-  echo "Oppdaterer controller og workers til eksakt commit $REVISION ..."
-  bash scripts/install-cluster.sh --display-mode "$DISPLAY_MODE"
+  if [[ "$UPDATE_MODE" == "quick" ]]; then
+    echo "Hurtigoppdaterer controller og workers til eksakt commit $REVISION ..."
+    bash scripts/install-cluster.sh --quick --display-mode "$DISPLAY_MODE"
+  else
+    echo "Fulloppdaterer controller og workers til eksakt commit $REVISION ..."
+    bash scripts/install-cluster.sh --display-mode "$DISPLAY_MODE"
+  fi
   if [[ "$DISPLAY_MODE" == "ota" ]]; then
     bash scripts/stage-deskdisplay-ota.sh
   fi

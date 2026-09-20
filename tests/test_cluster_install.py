@@ -165,6 +165,18 @@ class InstallOrchestrationTests(unittest.TestCase):
         command = run.call_args.args[0]
         self.assertEqual(command[command.index("--forks") + 1], "10")
 
+    @patch("cluster_install.subprocess.run", return_value=subprocess.CompletedProcess([], 0))
+    @patch("cluster_install.collect_passwords", return_value={"one.example": "test-private"})
+    def test_quick_update_uses_reduced_controller_and_worker_paths(self, collect, run):
+        result = install(
+            "config", "temp", "a" * 40, ["one.example"], "labuser", False, quick=True
+        )
+        self.assertEqual(result, 0)
+        self.assertEqual(run.call_args_list[0].args[0], ["bash", "scripts/quick-update-controller.sh"])
+        worker_command = run.call_args_list[1].args[0]
+        self.assertIn("ansible/update-workers.yml", worker_command)
+        self.assertNotIn("worker-secrets.json", " ".join(worker_command))
+
 
 @unittest.skipIf(os.name == "nt", "Requires Unix sockets; run in Linux/WSL")
 class PasswordBrokerTests(unittest.TestCase):

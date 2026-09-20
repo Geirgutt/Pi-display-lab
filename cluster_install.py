@@ -216,7 +216,8 @@ def install(config: str, temp_dir: str, revision: str, workers: list[str], user:
             display_gateway_port: int = 4567, display_psk_file: str = "",
             configured_wifi_ssid: str = "", display_wifi_configured: bool | None = None,
             display_identify_pending: bool = False, worker_order: list[str] | None = None,
-            display_mode: str = "auto", display_only: bool = False) -> int:
+            display_mode: str = "auto", display_only: bool = False,
+            quick: bool = False) -> int:
     if display_mode not in {"auto", "none", "cable", "ota"}:
         raise RuntimeError(f"Ugyldig display-modus: {display_mode}")
     passwords = broker_passwords(sudo_socket, workers) if sudo_socket else collect_passwords(
@@ -245,10 +246,16 @@ def install(config: str, temp_dir: str, revision: str, workers: list[str], user:
             mark_display_wifi_configured(config)
             mark_display_ota_ready(config)
         return result
-    print("Passordkontrollen er ferdig. Installerer controlleren ...", flush=True)
-    controller = ["bash", "scripts/install-cluster-controller.sh", config, temp_dir, revision]
-    if regenerate:
-        controller.append("--regenerate-server-cert")
+    if quick and regenerate:
+        raise RuntimeError("Hurtigoppdatering kan ikke regenerere sertifikater")
+    if quick:
+        print("Passordkontrollen er ferdig. Hurtigoppdaterer controlleren ...", flush=True)
+        controller = ["bash", "scripts/quick-update-controller.sh"]
+    else:
+        print("Passordkontrollen er ferdig. Installerer controlleren ...", flush=True)
+        controller = ["bash", "scripts/install-cluster-controller.sh", config, temp_dir, revision]
+        if regenerate:
+            controller.append("--regenerate-server-cert")
     result = subprocess.run(controller, cwd=PROJECT_DIR, stdin=subprocess.DEVNULL)
     if result.returncode:
         return result.returncode
@@ -274,15 +281,18 @@ def install(config: str, temp_dir: str, revision: str, workers: list[str], user:
         return result
 
     forks = min(MAX_FORKS, len(workers))
-    print(f"Installerer {len(workers)} workers, inntil {forks} samtidig, til commit {revision} ...", flush=True)
+    action = "Hurtigoppdaterer" if quick else "Installerer"
+    print(f"{action} {len(workers)} workers, inntil {forks} samtidig, til commit {revision} ...", flush=True)
     command = [
         str(PROJECT_DIR / ".ansible-venv/bin/ansible-playbook")
         if (PROJECT_DIR / ".ansible-venv/bin/ansible-playbook").is_file() else "ansible-playbook",
         "-i", str(Path(temp_dir) / "inventory.ini"),
-        "ansible/install-workers.yml", "--limit", ",".join(workers), "--forks", str(forks),
+        "ansible/update-workers.yml" if quick else "ansible/install-workers.yml",
+        "--limit", ",".join(workers), "--forks", str(forks),
         "--extra-vars", "@" + str(Path(temp_dir) / "vars.json"),
-        "--extra-vars", "@" + str(Path(temp_dir) / "worker-secrets.json"),
     ]
+    if not quick:
+        command += ["--extra-vars", "@" + str(Path(temp_dir) / "worker-secrets.json")]
     # Only the socket path is passed to Ansible; passwords stay in this process.
     with PasswordBroker(Path(temp_dir) / "worker-sudo.sock", passwords) as broker:
         command += ["--extra-vars", json.dumps({"worker_sudo_socket": str(broker.path)})]
@@ -592,6 +602,7 @@ def main() -> int:
     parser.add_argument("--display-no-flash", action="store_true")
     parser.add_argument("--display-mode", choices=("auto", "none", "cable", "ota"), default="auto")
     parser.add_argument("--display-only", action="store_true")
+    parser.add_argument("--quick", action="store_true")
     args = parser.parse_args()
     try:
         settings = validate_controller_config(args.config)
@@ -612,7 +623,8 @@ def main() -> int:
                        display_identify_pending=settings.deskdisplay.display_identify_pending,
                        worker_order=list(settings.worker_hosts),
                        display_mode=args.display_mode,
-                       display_only=args.display_only)
+                       display_only=args.display_only,
+                       quick=args.quick)
     except (ConfigValidationError, RuntimeError, OSError, EOFError) as error:
         print(f"Installasjonen stoppet: {error}", file=sys.stderr)
         return 1

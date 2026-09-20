@@ -103,6 +103,19 @@ class InstallationWorkflowTests(unittest.TestCase):
         self.assertIn("git merge --ff-only", update)
         self.assertIn("git ls-files --others --exclude-standard", update)
         self.assertIn("bash scripts/install-cluster.sh", update)
+        self.assertIn("scripts/classify-update.py", update)
+        self.assertIn("scripts/check-cluster-pki.py", update)
+        self.assertIn("--quick", update)
+        self.assertIn("--full", update)
+
+    def test_quick_worker_update_skips_bootstrap_secrets_and_pki(self) -> None:
+        playbook = self.read("ansible/update-workers.yml")
+        self.assertIn("gather_facts: false", playbook)
+        self.assertIn("ansible.builtin.git", playbook)
+        self.assertIn("state: restarted", playbook)
+        self.assertNotIn("ansible.builtin.package", playbook)
+        self.assertNotIn("cluster_ca_certificate", playbook)
+        self.assertNotIn("worker_credentials", playbook)
 
 
 if __name__ == "__main__":

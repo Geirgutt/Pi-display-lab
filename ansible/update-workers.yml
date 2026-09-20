@@ -1,0 +1,64 @@
+---
+- name: Hurtigoppdater Pi Display Lab cluster-workers
+  hosts: cluster_workers
+  gather_facts: false
+  strategy: linear
+  any_errors_fatal: true
+  vars:
+    ansible_become_password: "{{ lookup('worker_sudo', inventory_hostname, socket_path=worker_sudo_socket) }}"
+    ansible_become_timeout: 60
+
+  pre_tasks:
+    - name: Finn workerens hjemmemappe
+      ansible.builtin.command:
+        argv: [pwd]
+      register: worker_home
+      changed_when: false
+
+    - name: Kontroller sudo før endringer
+      become: true
+      ansible.builtin.command:
+        argv: [/usr/bin/true]
+      changed_when: false
+
+  tasks:
+    - name: Hent eksakt controller-revisjon uten reinstallasjon
+      ansible.builtin.git:
+        repo: "{{ project_repository }}"
+        dest: "{{ worker_home.stdout }}/Pi-display-lab"
+        version: "{{ project_version }}"
+        update: true
+
+    - name: Les installert worker-revisjon
+      ansible.builtin.command:
+        argv:
+          - git
+          - -C
+          - "{{ worker_home.stdout }}/Pi-display-lab"
+          - rev-parse
+          - HEAD
+      register: worker_revision
+      changed_when: false
+
+    - name: Kontroller at worker og controller er identiske
+      ansible.builtin.assert:
+        that:
+          - worker_revision.stdout == project_version
+        fail_msg: "Workeren fikk ikke controllerens eksakte Git-revisjon."
+
+    - name: Restart bare workerens runtime-tjenester
+      become: true
+      ansible.builtin.systemd:
+        name: "{{ item }}"
+        state: restarted
+      loop:
+        - cluster-worker.service
+        - pi-display-node-agent.service
+
+    - name: Verifiser HTTPS, CA og worker-identitet
+      ansible.builtin.command:
+        argv:
+          - "{{ worker_home.stdout }}/Pi-display-lab/.venv/bin/python"
+          - "{{ worker_home.stdout }}/Pi-display-lab/scripts/verify-worker.py"
+          - "{{ worker_home.stdout }}/Pi-display-lab/config.local.json"
+      changed_when: false
