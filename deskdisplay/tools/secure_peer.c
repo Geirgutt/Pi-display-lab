@@ -59,7 +59,26 @@ static int ota_waiting_reconnect = 0;
 #define CLUSTER_METADATA_SIZE 5
 #define CLUSTER_PAYLOAD_SIZE (CLUSTER_METADATA_SIZE + CLUSTER_NODE_MAX_PER_FRAME * CLUSTER_NODE_SIZE)
 #define CLUSTER_FRAME_SIZE (14 + CLUSTER_PAYLOAD_SIZE)
-_Static_assert(CLUSTER_FRAME_SIZE <= 128, "cluster frame exceeds display receive buffer");
+
+#define TRAINING_ITEM_MAX 3
+#define TRAINING_TITLE_MAX 36
+#define TRAINING_TYPE_MAX 14
+#define TRAINING_WORKOUT_SIZE (11 + TRAINING_TITLE_MAX + 1 + TRAINING_TYPE_MAX + 1 + 2 + 2 + 1)
+#define TRAINING_ACTIVITY_SIZE (1 + 11 + TRAINING_TYPE_MAX + 1 + 2 + 4 + 2 + 2)
+#define TRAINING_PAYLOAD_SIZE (3 + TRAINING_ITEM_MAX * TRAINING_WORKOUT_SIZE + TRAINING_ACTIVITY_SIZE)
+#define TRAINING_FRAME_SIZE (FRAME_HEADER_SIZE + TRAINING_PAYLOAD_SIZE)
+
+#define CALENDAR_EVENT_MAX 3
+#define CALENDAR_TITLE_MAX 40
+#define CALENDAR_LOCATION_MAX 24
+#define CALENDAR_EVENT_SIZE (4 + 4 + 1 + CALENDAR_TITLE_MAX + 1 + CALENDAR_LOCATION_MAX + 1)
+#define CALENDAR_PAYLOAD_SIZE (3 + CALENDAR_EVENT_MAX * CALENDAR_EVENT_SIZE)
+#define CALENDAR_FRAME_SIZE (FRAME_HEADER_SIZE + CALENDAR_PAYLOAD_SIZE)
+
+#define STATE_FRAME_MAX 512
+_Static_assert(CLUSTER_FRAME_SIZE <= STATE_FRAME_MAX, "cluster frame exceeds gateway buffer");
+_Static_assert(TRAINING_FRAME_SIZE <= STATE_FRAME_MAX, "training frame exceeds gateway buffer");
+_Static_assert(CALENDAR_FRAME_SIZE <= STATE_FRAME_MAX, "calendar frame exceeds gateway buffer");
 
 struct cluster_node {
     char name[CLUSTER_NAME_MAX + 1];
@@ -73,6 +92,54 @@ struct cluster_node {
 struct cluster_state {
     size_t count;
     struct cluster_node nodes[CLUSTER_STATE_MAX_NODES];
+};
+
+struct training_workout {
+    char date[11];
+    char title[TRAINING_TITLE_MAX + 1];
+    char activity_type[TRAINING_TYPE_MAX + 1];
+    uint16_t duration_minutes;
+    uint16_t distance_tenths;
+    uint8_t today;
+};
+
+struct training_activity {
+    uint8_t present;
+    char date[11];
+    char activity_type[TRAINING_TYPE_MAX + 1];
+    uint16_t distance_tenths;
+    uint32_t duration_seconds;
+    uint16_t pace_hundredths;
+    uint16_t average_hr;
+};
+
+struct training_state {
+    uint8_t available;
+    uint8_t source;
+    size_t count;
+    struct training_workout workouts[TRAINING_ITEM_MAX];
+    struct training_activity last_activity;
+};
+
+struct calendar_event {
+    uint32_t starts_at;
+    uint32_t ends_at;
+    uint8_t all_day;
+    char title[CALENDAR_TITLE_MAX + 1];
+    char location[CALENDAR_LOCATION_MAX + 1];
+};
+
+struct calendar_state {
+    uint8_t available;
+    uint8_t source;
+    size_t count;
+    struct calendar_event events[CALENDAR_EVENT_MAX];
+};
+
+struct controller_state {
+    struct cluster_state cluster;
+    struct training_state training;
+    struct calendar_state calendar;
 };
 
 static void stop_handler(int signal_number)
@@ -166,7 +233,30 @@ static int send_socket_all(int fd, const char* data, size_t length)
     return 1;
 }
 
-static int fetch_controller_state(struct cluster_state* result)
+static uint8_t source_code(const char* source)
+{
+    if (!source) return 0;
+    if (!strcmp(source, "garmin")) return 1;
+    if (!strcmp(source, "ics") || !strcmp(source, "calendar")) return 2;
+    if (!strcmp(source, "local-json")) return 3;
+    if (!strcmp(source, "mock")) return 4;
+    return 0;
+}
+
+static int split_fields(char* line, char** fields, size_t capacity)
+{
+    size_t count = 0;
+    char* save = NULL;
+    char* field = strtok_r(line, "\t", &save);
+    while (field && count < capacity)
+    {
+        fields[count++] = field;
+        field = strtok_r(NULL, "\t", &save);
+    }
+    return field ? -1 : (int)count;
+}
+
+static int fetch_controller_state(struct controller_state* result)
 {
     if (!state_host[0] || !state_path[0] || !result) return 0;
     const int fd = socket(AF_INET, SOCK_STREAM, 0);
@@ -209,43 +299,103 @@ static int fetch_controller_state(struct cluster_state* result)
     char* body = strstr(response, "\r\n\r\n");
     if (!body) return 0;
     body += 4;
-    if (strncmp(body, "DSCLUSTER/1\n", 12) != 0 && strncmp(body, "DSCLUSTER/1\r\n", 13) != 0)
+    if (strncmp(body, "DSSTATE/2\n", 10) != 0 && strncmp(body, "DSSTATE/2\r\n", 11) != 0)
         return 0;
     char* save = NULL;
     char* line = strtok_r(body, "\r\n", &save);
-    if (!line || strcmp(line, "DSCLUSTER/1") != 0) return 0;
+    if (!line || strcmp(line, "DSSTATE/2") != 0) return 0;
     memset(result, 0, sizeof(*result));
     while ((line = strtok_r(NULL, "\r\n", &save)) != NULL)
     {
-        if (result->count >= CLUSTER_STATE_MAX_NODES) return 0;
-        char* fields[7] = {0};
-        size_t field_count = 0;
-        char* field_save = NULL;
-        char* field = strtok_r(line, "\t", &field_save);
-        while (field && field_count < 7)
+        char* fields[8] = {0};
+        const int field_count = split_fields(line, fields, 8);
+        if (field_count < 1) return 0;
+        if (!strcmp(fields[0], "node"))
         {
-            fields[field_count++] = field;
-            field = strtok_r(NULL, "\t", &field_save);
+            if (field_count != 7 || result->cluster.count >= CLUSTER_STATE_MAX_NODES
+                || !fields[1][0] || strlen(fields[1]) > CLUSTER_NAME_MAX) return 0;
+            unsigned long cpu = 0, ram = 0, uptime = 0, online = 0;
+            long temperature = 0;
+            if (!parse_unsigned(fields[2], 1000, &cpu)
+                || !parse_signed(fields[3], -32768, 32767, &temperature)
+                || !parse_unsigned(fields[4], 1000, &ram)
+                || !parse_unsigned(fields[5], 0xFFFFFFFFUL, &uptime)
+                || !parse_unsigned(fields[6], 1, &online)) return 0;
+            struct cluster_node* node = &result->cluster.nodes[result->cluster.count++];
+            strncpy(node->name, fields[1], CLUSTER_NAME_MAX);
+            node->name[CLUSTER_NAME_MAX] = 0;
+            node->cpu_tenths = (uint16_t)cpu;
+            node->temperature_tenths = (int16_t)temperature;
+            node->ram_tenths = (uint16_t)ram;
+            node->uptime_seconds = (uint32_t)uptime;
+            node->online = (uint8_t)online;
         }
-        if (field_count != 7 || strcmp(fields[0], "node") != 0 ||
-            !fields[1][0] || strlen(fields[1]) > CLUSTER_NAME_MAX)
-            return 0;
-        unsigned long cpu = 0, ram = 0, uptime = 0, online = 0;
-        long temperature = 0;
-        if (!parse_unsigned(fields[2], 1000, &cpu) ||
-            !parse_signed(fields[3], -32768, 32767, &temperature) ||
-            !parse_unsigned(fields[4], 1000, &ram) ||
-            !parse_unsigned(fields[5], 0xFFFFFFFFUL, &uptime) ||
-            !parse_unsigned(fields[6], 1, &online))
-            return 0;
-        struct cluster_node* node = &result->nodes[result->count++];
-        strncpy(node->name, fields[1], CLUSTER_NAME_MAX);
-        node->name[CLUSTER_NAME_MAX] = 0;
-        node->cpu_tenths = (uint16_t)cpu;
-        node->temperature_tenths = (int16_t)temperature;
-        node->ram_tenths = (uint16_t)ram;
-        node->uptime_seconds = (uint32_t)uptime;
-        node->online = (uint8_t)online;
+        else if (!strcmp(fields[0], "training"))
+        {
+            unsigned long available = 0;
+            if (field_count != 3 || !parse_unsigned(fields[1], 1, &available)) return 0;
+            result->training.available = (uint8_t)available;
+            result->training.source = source_code(fields[2]);
+        }
+        else if (!strcmp(fields[0], "workout"))
+        {
+            if (field_count != 7 || result->training.count >= TRAINING_ITEM_MAX
+                || strlen(fields[1]) > 10 || strlen(fields[2]) > TRAINING_TITLE_MAX
+                || strlen(fields[3]) > TRAINING_TYPE_MAX) return 0;
+            unsigned long duration = 0, distance = 0, today = 0;
+            if (!parse_unsigned(fields[4], 65535, &duration)
+                || !parse_unsigned(fields[5], 65535, &distance)
+                || !parse_unsigned(fields[6], 1, &today)) return 0;
+            struct training_workout* workout = &result->training.workouts[result->training.count++];
+            strcpy(workout->date, fields[1]);
+            strcpy(workout->title, fields[2]);
+            strcpy(workout->activity_type, fields[3]);
+            workout->duration_minutes = (uint16_t)duration;
+            workout->distance_tenths = (uint16_t)distance;
+            workout->today = (uint8_t)today;
+        }
+        else if (!strcmp(fields[0], "activity"))
+        {
+            if (field_count != 7 || strlen(fields[1]) > 10
+                || strlen(fields[2]) > TRAINING_TYPE_MAX) return 0;
+            unsigned long distance = 0, duration = 0, pace = 0, heart_rate = 0;
+            if (!parse_unsigned(fields[3], 65535, &distance)
+                || !parse_unsigned(fields[4], 0xFFFFFFFFUL, &duration)
+                || !parse_unsigned(fields[5], 65535, &pace)
+                || !parse_unsigned(fields[6], 65535, &heart_rate)) return 0;
+            struct training_activity* activity = &result->training.last_activity;
+            activity->present = 1;
+            strcpy(activity->date, fields[1]);
+            strcpy(activity->activity_type, fields[2]);
+            activity->distance_tenths = (uint16_t)distance;
+            activity->duration_seconds = (uint32_t)duration;
+            activity->pace_hundredths = (uint16_t)pace;
+            activity->average_hr = (uint16_t)heart_rate;
+        }
+        else if (!strcmp(fields[0], "calendar"))
+        {
+            unsigned long available = 0;
+            if (field_count != 3 || !parse_unsigned(fields[1], 1, &available)) return 0;
+            result->calendar.available = (uint8_t)available;
+            result->calendar.source = source_code(fields[2]);
+        }
+        else if (!strcmp(fields[0], "event"))
+        {
+            if (field_count != 6 || result->calendar.count >= CALENDAR_EVENT_MAX
+                || strlen(fields[4]) > CALENDAR_TITLE_MAX
+                || strlen(fields[5]) > CALENDAR_LOCATION_MAX) return 0;
+            unsigned long starts = 0, ends = 0, all_day = 0;
+            if (!parse_unsigned(fields[1], 0xFFFFFFFFUL, &starts)
+                || !parse_unsigned(fields[2], 0xFFFFFFFFUL, &ends)
+                || !parse_unsigned(fields[3], 1, &all_day)) return 0;
+            struct calendar_event* event = &result->calendar.events[result->calendar.count++];
+            event->starts_at = (uint32_t)starts;
+            event->ends_at = (uint32_t)ends;
+            event->all_day = (uint8_t)all_day;
+            strcpy(event->title, fields[4]);
+            if (strcmp(fields[5], "-")) strcpy(event->location, fields[5]);
+        }
+        else return 0;
     }
     return 1;
 }
@@ -612,25 +762,9 @@ static size_t make_local_frame(unsigned char* frame, uint64_t sequence, int inva
     return 58;
 }
 
-static size_t make_cluster_frame(unsigned char* frame, uint64_t sequence, int invalid)
+static size_t make_cluster_frame(unsigned char* frame, uint64_t sequence, int invalid,
+                                 const struct cluster_state* current, size_t page_index)
 {
-    static struct cluster_state latest = {0};
-    static int state_available = 0;
-    static size_t page_index = 0;
-    struct cluster_state current = {0};
-    if (fetch_controller_state(&current))
-    {
-        latest = current;
-        state_available = 1;
-    }
-    else if (state_available)
-    {
-        current = latest;
-        for (size_t index = 0; index < current.count; ++index) current.nodes[index].online = 0;
-        latest = current;
-    }
-    else current.count = 0;
-
     frame[0] = invalid ? 'X' : 'D';
     frame[1] = 'S';
     frame[2] = 1;
@@ -638,22 +772,22 @@ static size_t make_cluster_frame(unsigned char* frame, uint64_t sequence, int in
     put16(frame + 4, CLUSTER_PAYLOAD_SIZE);
     put64(frame + 6, sequence);
     unsigned char* payload = frame + 14;
-    const size_t page_count = current.count == 0
-                            ? 1 : (current.count + CLUSTER_NODE_MAX_PER_FRAME - 1) / CLUSTER_NODE_MAX_PER_FRAME;
+    const size_t page_count = current->count == 0
+                            ? 1 : (current->count + CLUSTER_NODE_MAX_PER_FRAME - 1) / CLUSTER_NODE_MAX_PER_FRAME;
     if (page_index >= page_count) page_index = 0;
     const size_t first = page_index * CLUSTER_NODE_MAX_PER_FRAME;
-    const size_t page_nodes = current.count > first
-                            ? (current.count - first > CLUSTER_NODE_MAX_PER_FRAME
-                               ? CLUSTER_NODE_MAX_PER_FRAME : current.count - first)
+    const size_t page_nodes = current->count > first
+                            ? (current->count - first > CLUSTER_NODE_MAX_PER_FRAME
+                               ? CLUSTER_NODE_MAX_PER_FRAME : current->count - first)
                             : 0;
     payload[0] = (unsigned char)page_index;
     payload[1] = (unsigned char)page_count;
-    put16(payload + 2, (uint16_t)current.count);
+    put16(payload + 2, (uint16_t)current->count);
     payload[4] = (unsigned char)page_nodes;
     memset(payload + CLUSTER_METADATA_SIZE, 0, CLUSTER_NODE_MAX_PER_FRAME * CLUSTER_NODE_SIZE);
     for (size_t index = 0; index < page_nodes; ++index)
     {
-        const struct cluster_node* node = &current.nodes[first + index];
+        const struct cluster_node* node = &current->nodes[first + index];
         unsigned char* encoded = payload + CLUSTER_METADATA_SIZE + index * CLUSTER_NODE_SIZE;
         const size_t name_length = strlen(node->name) > CLUSTER_NAME_MAX ? CLUSTER_NAME_MAX : strlen(node->name);
         encoded[0] = (unsigned char)name_length;
@@ -664,14 +798,113 @@ static size_t make_cluster_frame(unsigned char* frame, uint64_t sequence, int in
         put32(encoded + 1 + CLUSTER_NAME_MAX + 6, node->uptime_seconds);
         encoded[1 + CLUSTER_NAME_MAX + 10] = node->online;
     }
-    page_index = (page_index + 1) % page_count;
     return CLUSTER_FRAME_SIZE;
+}
+
+static size_t make_training_frame(unsigned char* frame, uint64_t sequence, int invalid,
+                                  const struct training_state* state)
+{
+    memset(frame, 0, TRAINING_FRAME_SIZE);
+    frame[0] = invalid ? 'X' : 'D';
+    frame[1] = 'S';
+    frame[2] = 1;
+    frame[3] = 3;
+    put16(frame + 4, TRAINING_PAYLOAD_SIZE);
+    put64(frame + 6, sequence);
+    unsigned char* payload = frame + FRAME_HEADER_SIZE;
+    payload[0] = state->available;
+    payload[1] = state->source;
+    payload[2] = (unsigned char)state->count;
+    for (size_t index = 0; index < state->count; ++index)
+    {
+        const struct training_workout* workout = &state->workouts[index];
+        unsigned char* encoded = payload + 3 + index * TRAINING_WORKOUT_SIZE;
+        memcpy(encoded, workout->date, strlen(workout->date));
+        memcpy(encoded + 11, workout->title, strlen(workout->title));
+        memcpy(encoded + 12 + TRAINING_TITLE_MAX, workout->activity_type,
+               strlen(workout->activity_type));
+        put16(encoded + 13 + TRAINING_TITLE_MAX + TRAINING_TYPE_MAX,
+              workout->duration_minutes);
+        put16(encoded + 15 + TRAINING_TITLE_MAX + TRAINING_TYPE_MAX,
+              workout->distance_tenths);
+        encoded[TRAINING_WORKOUT_SIZE - 1] = workout->today;
+    }
+    const struct training_activity* activity = &state->last_activity;
+    unsigned char* encoded = payload + 3 + TRAINING_ITEM_MAX * TRAINING_WORKOUT_SIZE;
+    encoded[0] = activity->present;
+    if (activity->present)
+    {
+        memcpy(encoded + 1, activity->date, strlen(activity->date));
+        memcpy(encoded + 12, activity->activity_type, strlen(activity->activity_type));
+        put16(encoded + 13 + TRAINING_TYPE_MAX, activity->distance_tenths);
+        put32(encoded + 15 + TRAINING_TYPE_MAX, activity->duration_seconds);
+        put16(encoded + 19 + TRAINING_TYPE_MAX, activity->pace_hundredths);
+        put16(encoded + 21 + TRAINING_TYPE_MAX, activity->average_hr);
+    }
+    return TRAINING_FRAME_SIZE;
+}
+
+static size_t make_calendar_frame(unsigned char* frame, uint64_t sequence, int invalid,
+                                  const struct calendar_state* state)
+{
+    memset(frame, 0, CALENDAR_FRAME_SIZE);
+    frame[0] = invalid ? 'X' : 'D';
+    frame[1] = 'S';
+    frame[2] = 1;
+    frame[3] = 4;
+    put16(frame + 4, CALENDAR_PAYLOAD_SIZE);
+    put64(frame + 6, sequence);
+    unsigned char* payload = frame + FRAME_HEADER_SIZE;
+    payload[0] = state->available;
+    payload[1] = state->source;
+    payload[2] = (unsigned char)state->count;
+    for (size_t index = 0; index < state->count; ++index)
+    {
+        const struct calendar_event* event = &state->events[index];
+        unsigned char* encoded = payload + 3 + index * CALENDAR_EVENT_SIZE;
+        put32(encoded, event->starts_at);
+        put32(encoded + 4, event->ends_at);
+        encoded[8] = event->all_day;
+        memcpy(encoded + 9, event->title, strlen(event->title));
+        memcpy(encoded + 10 + CALENDAR_TITLE_MAX, event->location,
+               strlen(event->location));
+    }
+    return CALENDAR_FRAME_SIZE;
 }
 
 static size_t make_frame(unsigned char* frame, uint64_t sequence, int invalid)
 {
-    return state_path[0] ? make_cluster_frame(frame, sequence, invalid)
-                         : make_local_frame(frame, sequence, invalid);
+    if (!state_path[0]) return make_local_frame(frame, sequence, invalid);
+    static struct controller_state latest = {0};
+    static int state_available = 0;
+    static size_t slot = 0;
+    struct controller_state current = {0};
+    if (fetch_controller_state(&current))
+    {
+        latest = current;
+        state_available = 1;
+    }
+    else if (state_available)
+    {
+        current = latest;
+        for (size_t index = 0; index < current.cluster.count; ++index)
+            current.cluster.nodes[index].online = 0;
+        current.training.available = 0;
+        current.calendar.available = 0;
+    }
+    const size_t cluster_pages = current.cluster.count == 0 ? 1
+        : (current.cluster.count + CLUSTER_NODE_MAX_PER_FRAME - 1) / CLUSTER_NODE_MAX_PER_FRAME;
+    const size_t cycle_size = cluster_pages + 2;
+    if (slot >= cycle_size) slot = 0;
+    size_t length = 0;
+    if (slot < cluster_pages)
+        length = make_cluster_frame(frame, sequence, invalid, &current.cluster, slot);
+    else if (slot == cluster_pages)
+        length = make_training_frame(frame, sequence, invalid, &current.training);
+    else
+        length = make_calendar_frame(frame, sequence, invalid, &current.calendar);
+    slot = (slot + 1) % cycle_size;
+    return length;
 }
 
 static int make_listener(const char* address, uint16_t port)
@@ -798,7 +1031,7 @@ int main(int argc, char** argv)
         int replay_sent = 0, malformed_sent = 0;
         while (running)
         {
-            unsigned char frame[128];
+            unsigned char frame[STATE_FRAME_MAX];
             const uint64_t wire_sequence = sequence;
             const size_t length = make_frame(frame, wire_sequence, malformed_sent == 0 && malformed_once);
             if (!send_all(ssl, frame, length)) break;

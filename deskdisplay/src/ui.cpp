@@ -1,6 +1,7 @@
 #include "ui.h"
 #include "hardware.h"
 #include <LovyanGFX.hpp>
+#include <time.h>
 
 namespace
 {
@@ -18,6 +19,10 @@ char lastClockText[6] = {};
 char lastDateText[16] = {};
 uint16_t lastHomeNodeCount = UINT16_MAX;
 bool lastHomeTimeValid = false;
+secure_protocol::TrainingTelemetry lastTraining{};
+secure_protocol::CalendarTelemetry lastCalendar{};
+bool trainingDrawn = false;
+bool calendarDrawn = false;
 
 LGFX& display() { return hardware::display(); }
 
@@ -174,6 +179,104 @@ void clusterTelemetry(const app_state::Model& model)
         display().drawString(line, 38, y + 39);
     }
 }
+
+void shortDate(const char* iso, char* output, size_t capacity)
+{
+    if (iso && strlen(iso) == 10)
+        snprintf(output, capacity, "%.2s.%.2s", iso + 8, iso + 5);
+    else snprintf(output, capacity, "--.--");
+}
+
+void trainingTelemetry(const app_state::Model& model, bool force = false)
+{
+    const secure_protocol::TrainingTelemetry& state = model.trainingTelemetry;
+    if (!force && trainingDrawn && memcmp(&lastTraining, &state, sizeof(state)) == 0) return;
+    lastTraining = state;
+    trainingDrawn = true;
+    display().fillRoundRect(20, 72, 440, 288, 10, card);
+    label("Garmin training", 32, 84, 1, muted);
+    if (!state.available)
+    {
+        label("Not configured", 32, 128, 2, warning);
+        label("Configure Garmin on the controller", 32, 166, 1, muted);
+        return;
+    }
+
+    if (state.count == 0)
+        label("No scheduled workouts", 32, 120, 2, muted);
+    for (size_t index = 0; index < state.count && index < 3; ++index)
+    {
+        const secure_protocol::TrainingWorkout& workout = state.workouts[index];
+        const int16_t y = static_cast<int16_t>(105 + index * 74);
+        display().fillRoundRect(28, y, 424, 64, 6, 0x2104);
+        char date[12];
+        shortDate(workout.date, date, sizeof(date));
+        char heading[32];
+        snprintf(heading, sizeof(heading), "%s  %s", workout.today ? "TODAY" : date,
+                 workout.activityType[0] ? workout.activityType : "Workout");
+        display().setTextColor(workout.today ? good : accent, 0x2104);
+        display().setTextSize(1);
+        display().drawString(heading, 38, y + 8);
+        display().setTextColor(text, 0x2104);
+        display().setTextSize(2);
+        display().drawString(workout.title[0] ? workout.title : "Workout", 38, y + 25);
+        char details[32];
+        if (workout.distanceTenths)
+            snprintf(details, sizeof(details), "%u min  %u.%u km", workout.durationMinutes,
+                     workout.distanceTenths / 10, workout.distanceTenths % 10);
+        else if (workout.durationMinutes)
+            snprintf(details, sizeof(details), "%u min", workout.durationMinutes);
+        else snprintf(details, sizeof(details), "Scheduled");
+        display().setTextColor(muted, 0x2104);
+        display().setTextSize(1);
+        display().drawString(details, 330 - display().textWidth(details), y + 9);
+    }
+
+}
+
+void calendarTelemetry(const app_state::Model& model, bool force = false)
+{
+    const secure_protocol::CalendarTelemetry& state = model.calendarTelemetry;
+    if (!force && calendarDrawn && memcmp(&lastCalendar, &state, sizeof(state)) == 0) return;
+    lastCalendar = state;
+    calendarDrawn = true;
+    display().fillRoundRect(20, 72, 440, 288, 10, card);
+    label("Upcoming", 32, 84, 1, muted);
+    if (!state.available)
+    {
+        label("Not configured", 32, 128, 2, warning);
+        label("Add an ICS calendar on controller", 32, 166, 1, muted);
+        return;
+    }
+    if (state.count == 0)
+    {
+        label("No upcoming events", 32, 128, 2, muted);
+        return;
+    }
+    for (size_t index = 0; index < state.count; ++index)
+    {
+        const secure_protocol::CalendarEvent& event = state.events[index];
+        const int16_t y = static_cast<int16_t>(104 + index * 78);
+        display().fillRoundRect(28, y, 424, 68, 6, 0x2104);
+        char when[24] = "--.-- --:--";
+        const time_t starts = static_cast<time_t>(event.startsAt);
+        struct tm local = {};
+        if (event.startsAt && localtime_r(&starts, &local))
+            strftime(when, sizeof(when), event.allDay ? "%d.%m ALL DAY" : "%d.%m %H:%M", &local);
+        display().setTextColor(accent, 0x2104);
+        display().setTextSize(1);
+        display().drawString(when, 38, y + 8);
+        display().setTextColor(text, 0x2104);
+        display().setTextSize(2);
+        display().drawString(event.title[0] ? event.title : "Calendar event", 38, y + 25);
+        if (event.location[0])
+        {
+            display().setTextColor(muted, 0x2104);
+            display().setTextSize(1);
+            display().drawString(event.location, 38, y + 50);
+        }
+    }
+}
 }
 
 void ui::begin(const app_state::Model& model) { page(model); }
@@ -210,24 +313,13 @@ void ui::page(const app_state::Model& model)
     else if (model.page == app_state::Page::Training)
     {
         header("Training");
-        display().fillRoundRect(20, 72, 440, 270, 10, card);
-        label("Server-side training state", 32, 84, 2, muted);
-        valueRow("Status", "PLACEHOLDER", 120, warning);
-        valueRow("Source", "WEB PROVIDER", 151, muted);
-        label("Live training data will arrive with", 32, 204, 1, muted);
-        label("a future compact DeskDisplay transport.", 32, 220, 1, muted);
-        label("No Garmin login or scraping runs here.", 32, 252, 1, muted);
+        trainingTelemetry(model, true);
         button(5, "Home", 145, 400, model.pressedButton == 5);
     }
     else if (model.page == app_state::Page::Calendar)
     {
         header("Calendar");
-        display().fillRoundRect(20, 72, 440, 288, 10, card);
-        label("Upcoming events", 32, 84, 2, muted);
-        valueRow("Status", "PLACEHOLDER", 120, warning);
-        valueRow("Source", "NOT CONNECTED", 151, muted);
-        label("Calendar data will be supplied by", 32, 204, 1, muted);
-        label("the controller, not stored here.", 32, 220, 1, muted);
+        calendarTelemetry(model, true);
         button(5, "Home", 145, 400, model.pressedButton == 5);
     }
 }
@@ -247,6 +339,16 @@ void ui::telemetry(const app_state::Model& model)
     if (model.page == app_state::Page::Home)
     {
         homeClock(model);
+        return;
+    }
+    if (model.page == app_state::Page::Training)
+    {
+        trainingTelemetry(model);
+        return;
+    }
+    if (model.page == app_state::Page::Calendar)
+    {
+        calendarTelemetry(model);
         return;
     }
 }

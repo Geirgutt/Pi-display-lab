@@ -26,6 +26,8 @@ struct Model
     char dateText[16] = "--.--.----";
     secure_protocol::Telemetry nodeTelemetry{};
     secure_protocol::ClusterTelemetry clusterTelemetry{};
+    secure_protocol::TrainingTelemetry trainingTelemetry{};
+    secure_protocol::CalendarTelemetry calendarTelemetry{};
     uint32_t nodeLastUpdate = 0;
     uint32_t nodeAccepted = 0;
     bool nodeOnline = false;

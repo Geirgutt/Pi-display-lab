@@ -41,6 +41,8 @@ uint8_t frame[secure_protocol::maxFrameSize] = {};
 size_t frameLength = 0;
 secure_protocol::Telemetry latest;
 secure_protocol::ClusterTelemetry latestCluster;
+secure_protocol::TrainingTelemetry latestTraining;
+secure_protocol::CalendarTelemetry latestCalendar;
 secure_transport::Counters stats;
 bool otaActive = false;
 uint32_t otaSize = 0;
@@ -226,8 +228,13 @@ size_t expectedFrameSize()
     case secure_protocol::otaCompleteType:
         return payloadLength == 0 ? secure_protocol::otaCompleteFrameSize : 0;
     default:
-        return frame[3] == secure_protocol::clusterTelemetryType
-             ? secure_protocol::clusterFrameSize : secure_protocol::frameSize;
+        if (frame[3] == secure_protocol::clusterTelemetryType)
+            return secure_protocol::clusterFrameSize;
+        if (frame[3] == secure_protocol::trainingTelemetryType)
+            return secure_protocol::trainingFrameSize;
+        if (frame[3] == secure_protocol::calendarTelemetryType)
+            return secure_protocol::calendarFrameSize;
+        return frame[3] == secure_protocol::telemetryType ? secure_protocol::frameSize : 0;
     }
 }
 
@@ -303,10 +310,20 @@ bool processFrame()
     uint64_t sequence = 0;
     secure_protocol::Telemetry value;
     secure_protocol::ClusterTelemetry clusterValue;
+    secure_protocol::TrainingTelemetry trainingValue;
+    secure_protocol::CalendarTelemetry calendarValue;
     const bool isCluster = frame[3] == secure_protocol::clusterTelemetryType;
-    const bool decoded = isCluster
-                       ? secure_protocol::decodeClusterTelemetry(frame, frameLength, sequence, clusterValue)
-                       : secure_protocol::decodeTelemetry(frame, frameLength, sequence, value);
+    const bool isTraining = frame[3] == secure_protocol::trainingTelemetryType;
+    const bool isCalendar = frame[3] == secure_protocol::calendarTelemetryType;
+    bool decoded = false;
+    if (isCluster)
+        decoded = secure_protocol::decodeClusterTelemetry(frame, frameLength, sequence, clusterValue);
+    else if (isTraining)
+        decoded = secure_protocol::decodeTrainingTelemetry(frame, frameLength, sequence, trainingValue);
+    else if (isCalendar)
+        decoded = secure_protocol::decodeCalendarTelemetry(frame, frameLength, sequence, calendarValue);
+    else
+        decoded = secure_protocol::decodeTelemetry(frame, frameLength, sequence, value);
     if (!decoded)
     {
         ++stats.malformed;
@@ -321,6 +338,8 @@ bool processFrame()
     }
     lastSequence = sequence;
     if (isCluster) latestCluster = clusterValue;
+    else if (isTraining) latestTraining = trainingValue;
+    else if (isCalendar) latestCalendar = calendarValue;
     else latest = value;
     lastValidTelemetry = millis();
     ++stats.accepted;
@@ -328,6 +347,18 @@ bool processFrame()
     {
         Serial.printf("Secure cluster seq=%llu nodes=%u\n",
                       static_cast<unsigned long long>(sequence), latestCluster.count);
+    }
+    else if (isTraining)
+    {
+        Serial.printf("Secure training seq=%llu workouts=%u available=%u\n",
+                      static_cast<unsigned long long>(sequence), latestTraining.count,
+                      latestTraining.available ? 1 : 0);
+    }
+    else if (isCalendar)
+    {
+        Serial.printf("Secure calendar seq=%llu events=%u available=%u\n",
+                      static_cast<unsigned long long>(sequence), latestCalendar.count,
+                      latestCalendar.available ? 1 : 0);
     }
     else
     {
@@ -501,6 +532,8 @@ bool secure_transport::enabled() { return requested; }
 bool secure_transport::connected() { return sessionActive && client.connected(); }
 const secure_protocol::Telemetry& secure_transport::lastTelemetry() { return latest; }
 const secure_protocol::ClusterTelemetry& secure_transport::lastClusterTelemetry() { return latestCluster; }
+const secure_protocol::TrainingTelemetry& secure_transport::lastTrainingTelemetry() { return latestTraining; }
+const secure_protocol::CalendarTelemetry& secure_transport::lastCalendarTelemetry() { return latestCalendar; }
 uint32_t secure_transport::lastTelemetryAt() { return lastValidTelemetry; }
 const secure_transport::Counters& secure_transport::counters() { return stats; }
 
@@ -555,6 +588,16 @@ const secure_protocol::Telemetry& secure_transport::lastTelemetry()
 const secure_protocol::ClusterTelemetry& secure_transport::lastClusterTelemetry()
 {
     static secure_protocol::ClusterTelemetry value;
+    return value;
+}
+const secure_protocol::TrainingTelemetry& secure_transport::lastTrainingTelemetry()
+{
+    static secure_protocol::TrainingTelemetry value;
+    return value;
+}
+const secure_protocol::CalendarTelemetry& secure_transport::lastCalendarTelemetry()
+{
+    static secure_protocol::CalendarTelemetry value;
     return value;
 }
 uint32_t secure_transport::lastTelemetryAt() { return 0; }

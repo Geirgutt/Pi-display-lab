@@ -47,7 +47,8 @@ alternativer.
 - **Cluster:** ekte Pi-noder samt kø, aktive primtalls- og Monte Carlo-jobber,
   workers og resultathistorikk fra den separate coordinator-tjenesten.
 - **Nerd:** Monte Carlo-estimat av pi med levende sirkelgrafikk for treff og bom.
-- **Training:** lokal/mock treningsstate med dagens økt, kommende økter og siste aktivitet.
+- **Training:** kommende økter fra Garmins offisielle publiserte kalender.
+- **Calendar:** samler valgfritt flere private ICS-kalendere på controlleren.
 - **Developer controls:** permanent nodestatus, valg av clusterkapasitet og
   oppstart av Monte Carlo- og primtallsbatcher på workerne.
 - **Mock-modus:** test hele prosjektet på Windows uten Raspberry Pi.
@@ -194,8 +195,37 @@ markeringen automatisk og neste forsøk bruker 96-byte kompatibilitetsmodus.
 DeskDisplay starter på en klokkeside med dato og snarveier til Cluster,
 Training, Calendar og System. Wi-Fi styres automatisk og vises, sammen med
 ESP32-minne, uptime, signalstyrke og TLS-status, under System. Touch-testen er
-ikke del av den normale navigasjonen. Training og Calendar er foreløpig tydelig
-merkede plassholdere til controlleren får respektive datakilder.
+ikke del av den normale navigasjonen. Training viser dagens og kommende
+Garmin-økter. Calendar viser de tre neste hendelsene på tvers av de konfigurerte
+kalenderkildene. Begge mottar bare et lite normalisert datasett over den
+eksisterende TLS-forbindelsen.
+
+### Garmin og kalender
+
+Garmin-integrasjonen bruker **Publish Calendar** i Garmin Connect Web. Den
+publiserte, unike HTTPS-adressen gir kommende kalenderinnhold uten at prosjektet
+lagrer Garmin-passord eller bruker en uoffisiell innlogging. Utførte aktiviteter
+er med vilje ikke del av integrasjonen.
+
+Vanlig kalender støtter én eller flere private ICS-adresser, for eksempel fra
+Google Calendar eller iCloud. TimeTree avsluttet sitt integrasjons-API og kan
+ikke eksportere eller automatisk speile egne hendelser ut til DeskDisplay. Hvis
+TimeTree er den eneste kalenderkilden, skal Calendar derfor stå deaktivert i
+stedet for å bruke ustabil nettsideskraping.
+
+Første installasjon eller oppdatering spør én gang om integrasjonene. Valget
+lagres i `/etc/pi-display-lab/integrations.json` med modus 0600 og gjenbrukes ved
+senere oppdateringer. Kjør dette for å velge på nytt:
+
+```bash
+cd ~/Pi-display-lab
+bash scripts/configure-integrations.sh --reset
+```
+
+Controlleren oppdaterer kalenderne hvert 15. minutt og skriver bare normaliserte
+cacher under `/var/lib/pi-display-lab/integrations`. Private kalenderadresser og
+cachedata ligger aldri i Git-repositoryet. Ved midlertidig nettfeil beholdes
+siste vellykkede cache til neste forsøk.
 
 Oppdateringsskriptet:
 

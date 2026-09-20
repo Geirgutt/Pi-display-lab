@@ -103,12 +103,24 @@ class InstallationWorkflowTests(unittest.TestCase):
                 "scripts/install-service.sh",
                 "scripts/install-coordinator-service.sh",
                 "scripts/install-deskdisplay-service.sh",
+                "scripts/install-integrations-service.sh",
             )
         )
         self.assertIn("ansible_facts['user_uid'] | int != 0", playbook)
         self.assertIn("NoNewPrivileges=true", playbook)
         self.assertIn("User=$RUN_USER", controller_units)
         self.assertIn("NoNewPrivileges=true", controller_units)
+
+    def test_integrations_keep_private_addresses_outside_the_repository(self) -> None:
+        installer = self.read("scripts/install-integrations-service.sh")
+        configure = self.read("scripts/configure-integrations.py")
+        synchronizer = self.read("scripts/sync-integrations.py")
+        self.assertIn("/etc/pi-display-lab/integrations.json", configure)
+        self.assertIn("0600", configure)
+        self.assertIn("getpass", configure)
+        self.assertIn("/var/lib/pi-display-lab/integrations", installer)
+        self.assertIn("ProtectSystem=strict", installer)
+        self.assertNotIn("GARMIN_PASSWORD", installer + configure + synchronizer)
 
     def test_verification_uses_no_become_for_read_only_service_checks(self) -> None:
         verify = self.read("scripts/verify-cluster.sh")

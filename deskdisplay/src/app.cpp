@@ -48,6 +48,8 @@ void refreshState()
     {
         model.nodeTelemetry = secure_transport::lastTelemetry();
         model.clusterTelemetry = secure_transport::lastClusterTelemetry();
+        model.trainingTelemetry = secure_transport::lastTrainingTelemetry();
+        model.calendarTelemetry = secure_transport::lastCalendarTelemetry();
         model.nodeAccepted = secureStats.accepted;
     }
     model.nodeLastUpdate = secure_transport::lastTelemetryAt();
@@ -173,10 +175,7 @@ void app::service()
     {
         nextTelemetry = now + 1000;
         refreshState();
-        if (model.page == app_state::Page::Home
-            || model.page == app_state::Page::System
-            || model.page == app_state::Page::Cluster)
-            ui::telemetry(model);
+        ui::telemetry(model);
     }
     delay(20);
 }

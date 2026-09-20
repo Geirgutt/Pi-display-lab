@@ -10,6 +10,9 @@ from pathlib import Path
 from typing import Any
 
 
+DEFAULT_TRAINING_CACHE = Path("/var/lib/pi-display-lab/integrations/training.json")
+
+
 def _now() -> datetime:
     return datetime.now().astimezone()
 
@@ -171,7 +174,8 @@ class JsonTrainingProvider(TrainingProvider):
             return _empty_state("local-json", f"Training file not found: {self.path}")
         except (OSError, UnicodeDecodeError, json.JSONDecodeError):
             return _empty_state("local-json", "Training file could not be read")
-        return normalize_training(raw, source="local-json")
+        source = str(raw.get("source") or "local-json") if isinstance(raw, dict) else "local-json"
+        return normalize_training(raw, source=source)
 
 
 class UnconfiguredTrainingProvider(TrainingProvider):
@@ -183,4 +187,6 @@ def load_training_provider(mock_mode: bool = False) -> TrainingProvider:
     configured_path = os.getenv("PI_DISPLAY_TRAINING_FILE", "").strip()
     if configured_path:
         return JsonTrainingProvider(configured_path)
-    return MockTrainingProvider() if mock_mode else UnconfiguredTrainingProvider()
+    if DEFAULT_TRAINING_CACHE.exists() or not mock_mode:
+        return JsonTrainingProvider(DEFAULT_TRAINING_CACHE)
+    return MockTrainingProvider()

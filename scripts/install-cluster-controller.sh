@@ -91,3 +91,4 @@ echo "Installerer controller-tjenestene (controlleren blir ikke worker) ..."
 bash scripts/install-service.sh
 bash scripts/install-coordinator-service.sh
 bash scripts/install-deskdisplay-service.sh
+bash scripts/install-integrations-service.sh

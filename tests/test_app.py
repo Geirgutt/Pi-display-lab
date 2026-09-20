@@ -114,9 +114,13 @@ class AppSmokeTests(unittest.TestCase):
         self.assertEqual(accepted.status_code, 202)
         state = self.client.get("/api/deskdisplay/state")
         self.assertEqual(state.status_code, 200)
-        self.assertTrue(state.data.startswith(b"DSCLUSTER/1\n"))
+        self.assertTrue(state.data.startswith(b"DSSTATE/2\n"))
         self.assertIn(b"node\tPi2\t", state.data)
         self.assertIn(b"node\tworker-01\t274\t482\t391\t123\t1", state.data)
+        self.assertIn(b"training\t1\tmock", state.data)
+        self.assertIn(b"calendar\t1\tmock", state.data)
+        self.assertIn(b"workout\t", state.data)
+        self.assertIn(b"event\t", state.data)
 
         denied = self.client.get(
             "/api/deskdisplay/state", environ_base={"REMOTE_ADDR": "192.0.2.9"}

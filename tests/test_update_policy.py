@@ -24,7 +24,13 @@ class UpdatePolicyTests(unittest.TestCase):
         )
 
     def test_security_install_and_dependency_changes_require_full_update(self) -> None:
-        for path in ("cluster_pki.py", "requirements.txt", "ansible/install-workers.yml", "scripts/install-service.sh"):
+        for path in (
+            "cluster_pki.py",
+            "requirements.txt",
+            "requirements-integrations.txt",
+            "ansible/install-workers.yml",
+            "scripts/install-service.sh",
+        ):
             with self.subTest(path=path):
                 self.assertEqual(classify_paths((path,))[0], "full")
 

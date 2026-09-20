@@ -124,5 +124,9 @@ INSTALL_ARGS+=(--display-mode "$DISPLAY_MODE")
 [[ "$QUICK" != "true" ]] || INSTALL_ARGS+=(--quick)
 python3 cluster_install.py "$CONFIG_FILE" "$TEMP_DIR" "$REVISION" "${INSTALL_ARGS[@]}"
 
+if systemctl cat pi-display-integrations.timer >/dev/null 2>&1; then
+  bash scripts/configure-integrations.sh --if-unconfigured
+fi
+
 echo
 bash scripts/verify-cluster.sh

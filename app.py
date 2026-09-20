@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import os
 import secrets
+from datetime import datetime
 from typing import Any
 
 from flask import Flask, Response, jsonify, render_template, request
@@ -27,8 +28,35 @@ from updates import UpdateManager
 DESKDISPLAY_NAME_MAX = 16
 
 
-def _deskdisplay_node_lines(payload: dict[str, Any], worker_hosts: tuple[str, ...]) -> str:
-    """Render a small loopback-only format for the controller-side gateway."""
+def _compact_text(value: Any, maximum_bytes: int, default: str = "-") -> str:
+    """Return one safe tab-protocol field with a strict UTF-8 byte limit."""
+
+    text = str(value or default).replace("\t", " ").replace("\r", " ").replace("\n", " ").strip()
+    text = text or default
+    encoded = text.encode("utf-8")[:maximum_bytes]
+    while encoded:
+        try:
+            return encoded.decode("utf-8")
+        except UnicodeDecodeError:
+            encoded = encoded[:-1]
+    return default
+
+
+def _tenths(value: Any) -> int:
+    return int(round(float(value) * 10)) if isinstance(value, (int, float)) else 0
+
+
+def _epoch(value: Any) -> int:
+    if not isinstance(value, str):
+        return 0
+    try:
+        return max(0, int(datetime.fromisoformat(value.replace("Z", "+00:00")).timestamp()))
+    except ValueError:
+        return 0
+
+
+def _deskdisplay_state_lines(payload: dict[str, Any], worker_hosts: tuple[str, ...]) -> str:
+    """Render compact controller state for the local DeskDisplay gateway."""
 
     nodes = list(payload.get("nodes") or [])
     local = next((node for node in nodes if node.get("kind") == "local"), None)
@@ -67,7 +95,7 @@ def _deskdisplay_node_lines(payload: dict[str, Any], worker_hosts: tuple[str, ..
     # into display-sized pages before encoding the secure frames.
     ordered.extend(unused)
 
-    lines = ["DSCLUSTER/1"]
+    lines = ["DSSTATE/2"]
     for node in ordered:
         name = str(node.get("name") or node.get("id") or "node")
         name = name.replace("\t", " ").replace("\r", " ").replace("\n", " ")[:DESKDISPLAY_NAME_MAX]
@@ -80,6 +108,46 @@ def _deskdisplay_node_lines(payload: dict[str, Any], worker_hosts: tuple[str, ..
         uptime = int(node.get("uptime_seconds") or 0)
         online = 1 if node.get("online") else 0
         lines.append(f"node\t{name}\t{cpu_tenths}\t{temp_tenths}\t{ram_tenths}\t{uptime}\t{online}")
+
+    training = payload.get("training") if isinstance(payload.get("training"), dict) else {}
+    training_source = _compact_text(training.get("source"), 12, "none")
+    lines.append(f"training\t{1 if training.get('available') else 0}\t{training_source}")
+    workouts = []
+    if isinstance(training.get("today"), dict):
+        workouts.append((training["today"], 1))
+    workouts.extend((item, 0) for item in list(training.get("upcoming") or [])[:3])
+    for workout, is_today in workouts[:3]:
+        lines.append(
+            "\t".join(
+                (
+                    "workout",
+                    _compact_text(workout.get("date"), 10),
+                    _compact_text(workout.get("title"), 36, "Workout"),
+                    _compact_text(workout.get("activity_type"), 14, "Workout"),
+                    str(int(workout.get("duration_minutes") or 0)),
+                    str(_tenths(workout.get("distance_km"))),
+                    str(is_today),
+                )
+            )
+        )
+    calendar = payload.get("calendar") if isinstance(payload.get("calendar"), dict) else {}
+    calendar_source = _compact_text(calendar.get("source"), 12, "none")
+    lines.append(f"calendar\t{1 if calendar.get('available') else 0}\t{calendar_source}")
+    for event in list(calendar.get("events") or [])[:3]:
+        if not isinstance(event, dict):
+            continue
+        lines.append(
+            "\t".join(
+                (
+                    "event",
+                    str(_epoch(event.get("start"))),
+                    str(_epoch(event.get("end"))),
+                    "1" if event.get("all_day") else "0",
+                    _compact_text(event.get("title"), 40, "Calendar event"),
+                    _compact_text(event.get("location"), 24),
+                )
+            )
+        )
     return "\n".join(lines) + "\n"
 
 
@@ -135,13 +203,13 @@ def create_app(
 
     @app.get("/api/deskdisplay/state")
     def deskdisplay_state() -> Any:
-        """Expose only the compact node snapshot to the local secure gateway."""
+        """Expose compact display state only to the local secure gateway."""
 
         if request.remote_addr not in {"127.0.0.1", "::1"}:
             return jsonify({"ok": False, "error": "Kun lokal gateway er tillatt"}), 403
         payload = dashboard.snapshot(cluster_status=cluster_status.snapshot())
         return Response(
-            _deskdisplay_node_lines(payload, settings.worker_hosts),
+            _deskdisplay_state_lines(payload, settings.worker_hosts),
             mimetype="text/plain",
             headers={"Cache-Control": "no-store"},
         )

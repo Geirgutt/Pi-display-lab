@@ -15,6 +15,8 @@ constexpr uint8_t magic1 = 'S';
 constexpr uint8_t version = 1;
 constexpr uint8_t telemetryType = 1;
 constexpr uint8_t clusterTelemetryType = 2;
+constexpr uint8_t trainingTelemetryType = 3;
+constexpr uint8_t calendarTelemetryType = 4;
 constexpr uint8_t controlTypeBase = 0x80;
 constexpr uint8_t otaOfferType = 0x80;
 constexpr uint8_t otaChunkType = 0x81;
@@ -27,6 +29,12 @@ constexpr uint8_t otaFailed = 0x80;
 constexpr size_t hostnameMax = 32;
 constexpr size_t clusterNodeMax = 3;
 constexpr size_t clusterNameMax = 16;
+constexpr size_t trainingItemMax = 3;
+constexpr size_t trainingTitleMax = 36;
+constexpr size_t trainingTypeMax = 14;
+constexpr size_t calendarEventMax = 3;
+constexpr size_t calendarTitleMax = 40;
+constexpr size_t calendarLocationMax = 24;
 constexpr size_t payloadSize = 1 + hostnameMax + 2 + 2 + 2 + 4 + 1;
 constexpr size_t headerSize = 2 + 1 + 1 + 2 + 8;
 constexpr size_t frameSize = headerSize + payloadSize;
@@ -35,6 +43,13 @@ constexpr size_t clusterNodeSize = 1 + clusterNameMax + 2 + 2 + 2 + 4 + 1;
 constexpr size_t clusterMetadataSize = 5;
 constexpr size_t clusterPayloadSize = clusterMetadataSize + clusterNodeMax * clusterNodeSize;
 constexpr size_t clusterFrameSize = headerSize + clusterPayloadSize;
+constexpr size_t trainingWorkoutSize = 11 + trainingTitleMax + 1 + trainingTypeMax + 1 + 2 + 2 + 1;
+constexpr size_t trainingActivitySize = 1 + 11 + trainingTypeMax + 1 + 2 + 4 + 2 + 2;
+constexpr size_t trainingPayloadSize = 3 + trainingItemMax * trainingWorkoutSize + trainingActivitySize;
+constexpr size_t trainingFrameSize = headerSize + trainingPayloadSize;
+constexpr size_t calendarEventSize = 4 + 4 + 1 + calendarTitleMax + 1 + calendarLocationMax + 1;
+constexpr size_t calendarPayloadSize = 3 + calendarEventMax * calendarEventSize;
+constexpr size_t calendarFrameSize = headerSize + calendarPayloadSize;
 constexpr size_t otaDigestSize = 32;
 // Legacy firmware accepted 96-byte chunks in a 128-byte receive buffer. New
 // firmware accepts 4 KiB chunks while remaining able to receive legacy chunks.
@@ -49,6 +64,8 @@ constexpr size_t otaAckFrameSize = headerSize + otaAckPayloadSize;
 constexpr size_t maxFrameSize = otaChunkFrameSize > clusterFrameSize
                               ? otaChunkFrameSize : clusterFrameSize;
 static_assert(clusterFrameSize <= maxFrameSize, "Cluster frame exceeds receive buffer");
+static_assert(trainingFrameSize <= maxFrameSize, "Training frame exceeds receive buffer");
+static_assert(calendarFrameSize <= maxFrameSize, "Calendar frame exceeds receive buffer");
 static_assert(otaChunkFrameSize <= maxFrameSize, "OTA frame exceeds receive buffer");
 constexpr int16_t temperatureUnavailable = INT16_MIN;
 
@@ -79,6 +96,55 @@ struct ClusterTelemetry
     uint8_t pageCount = 1;
     uint16_t totalNodes = 0;
     ClusterNode nodes[clusterNodeMax]{};
+};
+
+enum class DataSource : uint8_t { None = 0, Garmin = 1, Calendar = 2, Local = 3, Mock = 4 };
+
+struct TrainingWorkout
+{
+    char date[11] = {};
+    char title[trainingTitleMax + 1] = {};
+    char activityType[trainingTypeMax + 1] = {};
+    uint16_t durationMinutes = 0;
+    uint16_t distanceTenths = 0;
+    bool today = false;
+};
+
+struct TrainingActivity
+{
+    bool present = false;
+    char date[11] = {};
+    char activityType[trainingTypeMax + 1] = {};
+    uint16_t distanceTenths = 0;
+    uint32_t durationSeconds = 0;
+    uint16_t paceHundredths = 0;
+    uint16_t averageHr = 0;
+};
+
+struct TrainingTelemetry
+{
+    bool available = false;
+    DataSource source = DataSource::None;
+    uint8_t count = 0;
+    TrainingWorkout workouts[trainingItemMax]{};
+    TrainingActivity lastActivity{};
+};
+
+struct CalendarEvent
+{
+    uint32_t startsAt = 0;
+    uint32_t endsAt = 0;
+    bool allDay = false;
+    char title[calendarTitleMax + 1] = {};
+    char location[calendarLocationMax + 1] = {};
+};
+
+struct CalendarTelemetry
+{
+    bool available = false;
+    DataSource source = DataSource::None;
+    uint8_t count = 0;
+    CalendarEvent events[calendarEventMax]{};
 };
 
 inline void put16(uint8_t* p, uint16_t value)
@@ -223,6 +289,76 @@ inline bool decodeClusterTelemetry(const uint8_t* frame, size_t length, uint64_t
         node.ramTenths = get16(encoded + 1 + clusterNameMax + 4);
         node.uptimeSeconds = get32(encoded + 1 + clusterNameMax + 6);
         node.online = encoded[1 + clusterNameMax + 10] != 0;
+    }
+    return true;
+}
+
+inline bool decodeTrainingTelemetry(const uint8_t* frame, size_t length, uint64_t& sequence,
+                                    TrainingTelemetry& value)
+{
+    if (!frame || length != trainingFrameSize || frame[0] != magic0 || frame[1] != magic1
+        || frame[2] != version || frame[3] != trainingTelemetryType
+        || get16(frame + 4) != trainingPayloadSize) return false;
+    const uint8_t* payload = frame + headerSize;
+    if (payload[0] > 1 || payload[2] > trainingItemMax) return false;
+    sequence = get64(frame + 6);
+    memset(&value, 0, sizeof(value));
+    value.available = payload[0] != 0;
+    value.source = static_cast<DataSource>(payload[1]);
+    value.count = payload[2];
+    const uint8_t* encoded = payload + 3;
+    for (size_t index = 0; index < trainingItemMax; ++index, encoded += trainingWorkoutSize)
+    {
+        if (encoded[10] != 0 || encoded[11 + trainingTitleMax] != 0
+            || encoded[12 + trainingTitleMax + trainingTypeMax] != 0
+            || encoded[trainingWorkoutSize - 1] > 1) return false;
+        if (index >= value.count) continue;
+        TrainingWorkout& item = value.workouts[index];
+        memcpy(item.date, encoded, 11);
+        memcpy(item.title, encoded + 11, trainingTitleMax + 1);
+        memcpy(item.activityType, encoded + 12 + trainingTitleMax, trainingTypeMax + 1);
+        item.durationMinutes = get16(encoded + 13 + trainingTitleMax + trainingTypeMax);
+        item.distanceTenths = get16(encoded + 15 + trainingTitleMax + trainingTypeMax);
+        item.today = encoded[trainingWorkoutSize - 1] != 0;
+    }
+    const uint8_t* activity = payload + 3 + trainingItemMax * trainingWorkoutSize;
+    if (activity[0] > 1 || activity[11] != 0 || activity[12 + trainingTypeMax] != 0)
+        return false;
+    value.lastActivity.present = activity[0] != 0;
+    memcpy(value.lastActivity.date, activity + 1, 11);
+    memcpy(value.lastActivity.activityType, activity + 12, trainingTypeMax + 1);
+    value.lastActivity.distanceTenths = get16(activity + 13 + trainingTypeMax);
+    value.lastActivity.durationSeconds = get32(activity + 15 + trainingTypeMax);
+    value.lastActivity.paceHundredths = get16(activity + 19 + trainingTypeMax);
+    value.lastActivity.averageHr = get16(activity + 21 + trainingTypeMax);
+    return true;
+}
+
+inline bool decodeCalendarTelemetry(const uint8_t* frame, size_t length, uint64_t& sequence,
+                                    CalendarTelemetry& value)
+{
+    if (!frame || length != calendarFrameSize || frame[0] != magic0 || frame[1] != magic1
+        || frame[2] != version || frame[3] != calendarTelemetryType
+        || get16(frame + 4) != calendarPayloadSize) return false;
+    const uint8_t* payload = frame + headerSize;
+    if (payload[0] > 1 || payload[2] > calendarEventMax) return false;
+    sequence = get64(frame + 6);
+    memset(&value, 0, sizeof(value));
+    value.available = payload[0] != 0;
+    value.source = static_cast<DataSource>(payload[1]);
+    value.count = payload[2];
+    const uint8_t* encoded = payload + 3;
+    for (size_t index = 0; index < calendarEventMax; ++index, encoded += calendarEventSize)
+    {
+        if (encoded[8] > 1 || encoded[9 + calendarTitleMax] != 0
+            || encoded[10 + calendarTitleMax + calendarLocationMax] != 0) return false;
+        if (index >= value.count) continue;
+        CalendarEvent& event = value.events[index];
+        event.startsAt = get32(encoded);
+        event.endsAt = get32(encoded + 4);
+        event.allDay = encoded[8] != 0;
+        memcpy(event.title, encoded + 9, calendarTitleMax + 1);
+        memcpy(event.location, encoded + 10 + calendarTitleMax, calendarLocationMax + 1);
     }
     return true;
 }

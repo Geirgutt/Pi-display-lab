@@ -40,6 +40,13 @@ class TrainingStateTests(unittest.TestCase):
         self.assertEqual(state["source"], "local-json")
         self.assertEqual(state["today"], None)
 
+    def test_json_provider_preserves_normalized_source_label(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "training.json"
+            path.write_text('{"source":"garmin","workouts":[]}', encoding="utf-8")
+            state = JsonTrainingProvider(path).snapshot()
+        self.assertEqual(state["source"], "garmin")
+
     def test_mock_provider_has_the_same_normalized_shape(self):
         state = MockTrainingProvider().snapshot()
         self.assertEqual(set(state), {"available", "source", "updated_at", "today", "upcoming", "last_activity", "error"})
