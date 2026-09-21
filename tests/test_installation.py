@@ -81,6 +81,15 @@ class InstallationWorkflowTests(unittest.TestCase):
         self.assertIn("PI_DISPLAY_OTA_TIMEOUT", staging)
         self.assertIn("OTA fullført", staging)
         self.assertIn("bash scripts/install-deskdisplay-service.sh", staging)
+        self.assertIn("--resume-staged", staging)
+
+    def test_gateway_build_recovers_from_compiler_crash_without_replacing_live_binary(self) -> None:
+        installer = self.read("scripts/install-deskdisplay-service.sh")
+        self.assertIn("compile_gateway -O2", installer)
+        self.assertIn("internal compiler error", installer)
+        self.assertIn("compile_gateway -O0", installer)
+        self.assertIn('TEMP_INSTALLED="$(sudo mktemp', installer)
+        self.assertIn('sudo mv -f -- "$TEMP_INSTALLED" "$BINARY"', installer)
 
     def test_deskdisplay_home_prioritizes_clock_and_primary_pages(self) -> None:
         state = self.read("deskdisplay/src/app_state.h")

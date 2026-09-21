@@ -59,13 +59,39 @@ sudo chmod 0600 "$PSK_FILE"
 
 sudo install -d -o root -g root -m 0755 "$RUNTIME_DIR"
 sudo install -d -o "$RUN_USER" -g "$RUN_GROUP" -m 0700 "$OTA_DIR"
-sudo gcc -O2 -Wall -Wextra -I"$PROJECT_DIR/deskdisplay/src" \
-  -o "$BINARY" "$PROJECT_DIR/deskdisplay/tools/secure_peer.c" -lssl -lcrypto
-sudo chown root:root "$BINARY"
-sudo chmod 0755 "$BINARY"
+BUILD_DIR="$(mktemp -d)"
+TEMP_INSTALLED=""
+TEMP_UNIT=""
+cleanup() {
+  rm -rf -- "$BUILD_DIR"
+  [[ -z "$TEMP_INSTALLED" ]] || sudo rm -f -- "$TEMP_INSTALLED"
+  [[ -z "$TEMP_UNIT" ]] || rm -f -- "$TEMP_UNIT"
+}
+trap cleanup EXIT
+BUILD_BINARY="$BUILD_DIR/secure_peer"
+BUILD_LOG="$BUILD_DIR/gcc.log"
+compile_gateway() {
+  gcc "$1" -Wall -Wextra -I"$PROJECT_DIR/deskdisplay/src" \
+    -o "$BUILD_BINARY" "$PROJECT_DIR/deskdisplay/tools/secure_peer.c" -lssl -lcrypto
+}
+if ! compile_gateway -O2 >"$BUILD_LOG" 2>&1; then
+  if ! grep -q 'internal compiler error' "$BUILD_LOG"; then
+    cat "$BUILD_LOG" >&2
+    exit 1
+  fi
+  echo "GCC krasjet under optimalisering; prøver tryggere -O0 for DeskDisplay-gatewayen ..." >&2
+  if ! compile_gateway -O0 >"$BUILD_LOG" 2>&1; then
+    cat "$BUILD_LOG" >&2
+    exit 1
+  fi
+fi
+# Keep the running gateway intact until a complete replacement is ready.
+TEMP_INSTALLED="$(sudo mktemp "$RUNTIME_DIR/.secure_peer.XXXXXX")"
+sudo install -o root -g root -m 0755 "$BUILD_BINARY" "$TEMP_INSTALLED"
+sudo mv -f -- "$TEMP_INSTALLED" "$BINARY"
+TEMP_INSTALLED=""
 
 TEMP_UNIT="$(mktemp)"
-trap 'rm -f "$TEMP_UNIT"' EXIT
 cat >"$TEMP_UNIT" <<EOF
 [Unit]
 Description=Pi Display Lab DeskDisplay controller gateway

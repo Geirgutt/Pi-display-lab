@@ -184,6 +184,10 @@ oppsett uten workers. Etter byggingen viser skriptet OTA-fremdrift og avslutter
 ikke med suksess før displayet har mottatt hele firmwaren, startet på nytt og
 etablert en ny TLS-forbindelse. Standardgrensen er 15 minutter og kan ved behov
 endres med miljøvariabelen `PI_DISPLAY_OTA_TIMEOUT`.
+Hvis firmware allerede er klargjort, men gateway-installasjonen feiler, kan
+`bash scripts/stage-deskdisplay-ota.sh --resume-staged` gjenbruke den private
+firmwarefilen uten en ny worker-bygging. Bruk dette bare for samme avbrutte
+oppdatering; vanlig `update.sh` bygger en ny firmware.
 
 Eldre firmware mottar 96-byte OTA-blokker. Den første oppgraderingen til den
 nye protokollen bruker derfor fortsatt den kompatible, langsomme overføringen.

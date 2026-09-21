@@ -16,6 +16,15 @@ BUILD_RELATIVE="deskdisplay/.pio/build/guition-4848s040-secure/firmware.bin"
 OTA_FILE="/var/lib/pi-display-lab/deskdisplay/firmware.bin"
 OTA_PROGRESS="$OTA_FILE.progress"
 OTA_RESULT="$OTA_FILE.result"
+RESUME_STAGED=false
+case "${1:-}" in
+  "") [[ $# -eq 0 ]] || { echo "Ukjente argumenter." >&2; exit 2; } ;;
+  --resume-staged)
+    [[ $# -eq 1 ]] || { echo "Ukjente argumenter." >&2; exit 2; }
+    RESUME_STAGED=true
+    ;;
+  *) echo "Bruk: bash scripts/stage-deskdisplay-ota.sh [--resume-staged]" >&2; exit 2 ;;
+esac
 
 if [[ ! -f "$CONFIG_FILE" ]]; then
   echo "Mangler config.local.json i $PROJECT_DIR" >&2
@@ -23,6 +32,14 @@ if [[ ! -f "$CONFIG_FILE" ]]; then
 fi
 
 cd "$PROJECT_DIR"
+if [[ "$RESUME_STAGED" == "true" ]]; then
+  if [[ ! -s "$OTA_FILE" ]]; then
+    echo "Ingen klargjort OTA-firmware finnes i $OTA_FILE. Kjør vanlig display-oppdatering." >&2
+    exit 1
+  fi
+  rm -f -- "$OTA_PROGRESS" "$OTA_RESULT"
+  echo "Gjenbruker allerede klargjort OTA-firmware i $OTA_FILE; hopper over firmwarebygging."
+else
 REVISION="$(git rev-parse HEAD)"
 [[ "$REVISION" =~ ^[0-9a-f]{40}$ ]] || { echo "Ugyldig Git-revisjon: $REVISION" >&2; exit 1; }
 SSH_USER="$(python3 scripts/config-value.py ssh_user --config "$CONFIG_FILE")"
@@ -121,6 +138,7 @@ mv -f -- "$TEMP_OTA" "$OTA_FILE"
 TEMP_OTA=""
 rm -f -- "$OTA_PROGRESS" "$OTA_RESULT"
 echo "OTA-firmware er lagt i $OTA_FILE."
+fi
 echo "Installerer DeskDisplay-gatewayen nå som OTA-firmwaren ligger klar ..."
 # Keep the currently compatible gateway running while a worker builds. The new
 # binary starts only after the image exists, so its first display session can
