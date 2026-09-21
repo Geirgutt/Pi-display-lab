@@ -103,6 +103,22 @@ class InstallationWorkflowTests(unittest.TestCase):
         self.assertIn("Page::TrainingDetail", state + app + ui)
         self.assertIn("putUChar(brightnessKey", self.read("deskdisplay/src/hardware.cpp"))
 
+    def test_deskdisplay_home_counts_online_nodes_and_hides_offline_metrics(self) -> None:
+        ui = self.read("deskdisplay/src/ui.cpp")
+        protocol = self.read("deskdisplay/src/secure_protocol.h")
+        gateway = self.read("deskdisplay/tools/secure_peer.c")
+        self.assertIn("Cluster: %u/%u online", ui)
+        self.assertIn("model.clusterTelemetry.onlineNodes", ui)
+        self.assertIn('"CPU N/A"', ui)
+        self.assertIn('"RAM N/A"', ui)
+        self.assertIn("const bool online = streamLive && node.online", ui)
+        self.assertIn("if (!online)", ui)
+        self.assertIn("fillRect(20, 245, 440, 42, background)", ui)
+        self.assertNotIn("fillRoundRect(12, 68, 456, 272, 10, card)", ui)
+        self.assertIn("clusterMetadataSize = 7", protocol)
+        self.assertIn("CLUSTER_METADATA_SIZE 7", gateway)
+        self.assertIn("put16(payload + 4, online_nodes)", gateway)
+
     def test_services_are_non_root_and_have_low_risk_hardening(self) -> None:
         playbook = self.read("ansible/install-workers.yml")
         controller_units = "".join(

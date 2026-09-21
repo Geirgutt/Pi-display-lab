@@ -40,8 +40,8 @@ constexpr size_t payloadSize = 1 + hostnameMax + 2 + 2 + 2 + 4 + 1;
 constexpr size_t headerSize = 2 + 1 + 1 + 2 + 8;
 constexpr size_t frameSize = headerSize + payloadSize;
 constexpr size_t clusterNodeSize = 1 + clusterNameMax + 2 + 2 + 2 + 4 + 1;
-// page index + page count + total node count (uint16) + nodes on this page.
-constexpr size_t clusterMetadataSize = 5;
+// page index + page count + total/online node counts (uint16 each) + page size.
+constexpr size_t clusterMetadataSize = 7;
 constexpr size_t clusterPayloadSize = clusterMetadataSize + clusterNodeMax * clusterNodeSize;
 constexpr size_t clusterFrameSize = headerSize + clusterPayloadSize;
 constexpr size_t trainingWorkoutSize = 11 + trainingTitleMax + 1 + trainingTypeMax + 1
@@ -97,6 +97,7 @@ struct ClusterTelemetry
     uint8_t pageIndex = 0;
     uint8_t pageCount = 1;
     uint16_t totalNodes = 0;
+    uint16_t onlineNodes = 0;
     ClusterNode nodes[clusterNodeMax]{};
 };
 
@@ -231,7 +232,8 @@ inline bool decodeTelemetry(const uint8_t* frame, size_t length, uint64_t& seque
 inline size_t encodeClusterTelemetry(uint8_t* frame, size_t capacity, uint64_t sequence,
                                      const ClusterTelemetry& value)
 {
-    if (!frame || capacity < clusterFrameSize || value.count > clusterNodeMax) return 0;
+    if (!frame || capacity < clusterFrameSize || value.count > clusterNodeMax
+        || value.onlineNodes > value.totalNodes) return 0;
     frame[0] = magic0;
     frame[1] = magic1;
     frame[2] = version;
@@ -243,7 +245,8 @@ inline size_t encodeClusterTelemetry(uint8_t* frame, size_t capacity, uint64_t s
     payload[0] = value.pageIndex;
     payload[1] = value.pageCount;
     put16(payload + 2, value.totalNodes);
-    payload[4] = value.count;
+    put16(payload + 4, value.onlineNodes);
+    payload[6] = value.count;
     memset(payload + clusterMetadataSize, 0, clusterNodeMax * clusterNodeSize);
     for (size_t index = 0; index < value.count; ++index)
     {
@@ -268,17 +271,20 @@ inline bool decodeClusterTelemetry(const uint8_t* frame, size_t length, uint64_t
         || frame[2] != version || frame[3] != clusterTelemetryType
         || get16(frame + 4) != clusterPayloadSize) return false;
     const uint8_t* payload = frame + headerSize;
-    if (payload[0] >= payload[1] || payload[1] == 0 || payload[4] > clusterNodeMax)
+    if (payload[0] >= payload[1] || payload[1] == 0 || payload[6] > clusterNodeMax)
         return false;
     const uint16_t totalNodes = get16(payload + 2);
-    if (totalNodes == 0 && (payload[0] != 0 || payload[1] != 1 || payload[4] != 0))
+    const uint16_t onlineNodes = get16(payload + 4);
+    if (onlineNodes > totalNodes
+        || (totalNodes == 0 && (payload[0] != 0 || payload[1] != 1 || payload[6] != 0)))
         return false;
     sequence = get64(frame + 6);
     memset(&value, 0, sizeof(value));
     value.pageIndex = payload[0];
     value.pageCount = payload[1];
     value.totalNodes = totalNodes;
-    value.count = payload[4];
+    value.onlineNodes = onlineNodes;
+    value.count = payload[6];
     for (size_t index = 0; index < value.count; ++index)
     {
         const uint8_t* encoded = payload + clusterMetadataSize + index * clusterNodeSize;

@@ -192,10 +192,12 @@ Etter bekreftet levering markerer controlleren lokalt at displayet støtter
 blokker for en firmware på cirka 960 KiB. Hvis hurtigmodus feiler, fjernes
 markeringen automatisk og neste forsøk bruker 96-byte kompatibilitetsmodus.
 
-DeskDisplay starter på en klokkeside med dato og snarveier til Cluster,
+DeskDisplay starter på en klokkeside med dato, antall noder på nett av totalt
+antall noder, og snarveier til Cluster,
 Training, Calendar og System. Wi-Fi styres automatisk og vises, sammen med
 ESP32-minne, uptime, signalstyrke og TLS-status, under System. Touch-testen er
-ikke del av den normale navigasjonen. Training viser de neste syv dagene, med
+ikke del av den normale navigasjonen. Offline-noder viser N/A i stedet for
+gamle CPU-, RAM- og temperaturverdier. Training viser de neste syv dagene, med
 Garmin-økt på planlagte dager og «Rest / no workout» når kalenderfeeden ikke
 inneholder en økt. Økter kan åpnes for detaljene Garmin faktisk har publisert.
 Calendar viser de tre neste hendelsene på tvers av de konfigurerte

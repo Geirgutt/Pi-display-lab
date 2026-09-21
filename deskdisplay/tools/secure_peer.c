@@ -56,7 +56,7 @@ static int ota_waiting_reconnect = 0;
 #define CLUSTER_STATE_MAX_NODES 128
 #define CLUSTER_NAME_MAX 16
 #define CLUSTER_NODE_SIZE (1 + CLUSTER_NAME_MAX + 2 + 2 + 2 + 4 + 1)
-#define CLUSTER_METADATA_SIZE 5
+#define CLUSTER_METADATA_SIZE 7
 #define CLUSTER_PAYLOAD_SIZE (CLUSTER_METADATA_SIZE + CLUSTER_NODE_MAX_PER_FRAME * CLUSTER_NODE_SIZE)
 #define CLUSTER_FRAME_SIZE (14 + CLUSTER_PAYLOAD_SIZE)
 
@@ -788,7 +788,11 @@ static size_t make_cluster_frame(unsigned char* frame, uint64_t sequence, int in
     payload[0] = (unsigned char)page_index;
     payload[1] = (unsigned char)page_count;
     put16(payload + 2, (uint16_t)current->count);
-    payload[4] = (unsigned char)page_nodes;
+    uint16_t online_nodes = 0;
+    for (size_t index = 0; index < current->count; ++index)
+        if (current->nodes[index].online) ++online_nodes;
+    put16(payload + 4, online_nodes);
+    payload[6] = (unsigned char)page_nodes;
     memset(payload + CLUSTER_METADATA_SIZE, 0, CLUSTER_NODE_MAX_PER_FRAME * CLUSTER_NODE_SIZE);
     for (size_t index = 0; index < page_nodes; ++index)
     {

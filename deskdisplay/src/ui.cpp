@@ -18,6 +18,8 @@ constexpr uint16_t muted = 0xBDF7;
 char lastClockText[6] = {};
 char lastDateText[16] = {};
 uint16_t lastHomeNodeCount = UINT16_MAX;
+uint16_t lastHomeOnlineCount = UINT16_MAX;
+bool lastHomeStreamLive = false;
 bool lastHomeTimeValid = false;
 secure_protocol::TrainingTelemetry lastTraining{};
 secure_protocol::CalendarTelemetry lastCalendar{};
@@ -76,10 +78,10 @@ void homeClock(const app_state::Model& model, bool force = false)
     if (force || strcmp(lastClockText, model.clockText) != 0)
     {
         // Clock digits have a stable width. Drawing with an opaque background
-        // replaces the old glyphs without flashing the whole card every second.
+        // replaces the old glyphs without flashing the whole screen every second.
         if (!force && lastHomeTimeValid != model.timeValid)
-            display().fillRect(20, 78, 440, 96, card);
-        display().setTextColor(model.timeValid ? text : muted, card);
+            display().fillRect(20, 78, 440, 96, background);
+        display().setTextColor(model.timeValid ? text : muted, background);
         display().setTextSize(10);
         display().drawString(model.clockText,
                              (width - display().textWidth(model.clockText)) / 2, 86);
@@ -89,8 +91,8 @@ void homeClock(const app_state::Model& model, bool force = false)
     }
     if (force || strcmp(lastDateText, model.dateText) != 0)
     {
-        if (!force) display().fillRect(20, 181, 440, 40, card);
-        display().setTextColor(model.timeValid ? text : muted, card);
+        if (!force) display().fillRect(20, 181, 440, 40, background);
+        display().setTextColor(model.timeValid ? text : muted, background);
         display().setTextSize(4);
         display().drawString(model.dateText,
                              (width - display().textWidth(model.dateText)) / 2, 185);
@@ -98,19 +100,27 @@ void homeClock(const app_state::Model& model, bool force = false)
         lastDateText[sizeof(lastDateText) - 1] = 0;
     }
 
-    if (force || lastHomeNodeCount != model.clusterTelemetry.totalNodes)
+    const bool streamLive = model.nodeLastUpdate != 0
+                         && uint32_t(millis() - model.nodeLastUpdate) < 5000;
+    if (force || lastHomeNodeCount != model.clusterTelemetry.totalNodes
+        || lastHomeOnlineCount != model.clusterTelemetry.onlineNodes
+        || lastHomeStreamLive != streamLive)
     {
         char status[48];
-        if (model.clusterTelemetry.totalNodes > 0)
-            snprintf(status, sizeof(status), "Cluster: %u nodes",
-                     static_cast<unsigned>(model.clusterTelemetry.totalNodes));
-        else snprintf(status, sizeof(status), "Cluster: waiting for data");
-        display().fillRect(20, 245, 440, 42, card);
-        display().setTextColor(model.clusterTelemetry.totalNodes > 0 ? good : warning, card);
-        display().setTextSize(model.clusterTelemetry.totalNodes > 0 ? 3 : 2);
+        if (!streamLive || model.clusterTelemetry.totalNodes == 0)
+            snprintf(status, sizeof(status), "Cluster: waiting for data");
+        else snprintf(status, sizeof(status), "Cluster: %u/%u online",
+                      static_cast<unsigned>(model.clusterTelemetry.onlineNodes),
+                      static_cast<unsigned>(model.clusterTelemetry.totalNodes));
+        display().fillRect(20, 245, 440, 42, background);
+        display().setTextColor(streamLive && model.clusterTelemetry.onlineNodes
+                               == model.clusterTelemetry.totalNodes ? good : warning, background);
+        display().setTextSize(streamLive && model.clusterTelemetry.totalNodes > 0 ? 3 : 2);
         display().drawString(status, (width - display().textWidth(status)) / 2,
-                             model.clusterTelemetry.totalNodes > 0 ? 250 : 255);
+                             streamLive && model.clusterTelemetry.totalNodes > 0 ? 250 : 255);
         lastHomeNodeCount = model.clusterTelemetry.totalNodes;
+        lastHomeOnlineCount = model.clusterTelemetry.onlineNodes;
+        lastHomeStreamLive = streamLive;
     }
 }
 
@@ -151,30 +161,42 @@ void clusterTelemetry(const app_state::Model& model)
                                   + model.clusterTelemetry.count),
              static_cast<unsigned>(model.clusterTelemetry.totalNodes));
     label(pageLine, 28, 80, 2, muted);
+    const bool streamLive = model.nodeLastUpdate != 0
+                         && uint32_t(millis() - model.nodeLastUpdate) < 5000;
     for (size_t index = 0; index < model.clusterTelemetry.count; ++index)
     {
         const secure_protocol::ClusterNode& node = model.clusterTelemetry.nodes[index];
+        const bool online = streamLive && node.online;
         const int16_t y = static_cast<int16_t>(109 + index * 91);
-        const uint16_t fill = node.online ? card : 0x2945;
+        const uint16_t fill = online ? card : 0x2945;
         display().fillRoundRect(20, y, 440, 82, 6, fill);
         display().setTextColor(text, fill);
         display().setTextSize(2);
         display().drawString(node.name[0] ? node.name : "node", 30, y + 8);
-        display().setTextColor(node.online ? good : warning, fill);
-        const char* status = node.online ? "ONLINE" : "OFFLINE";
+        display().setTextColor(online ? good : warning, fill);
+        const char* status = online ? "ONLINE" : "OFFLINE";
         display().drawString(status, 450 - display().textWidth(status), y + 8);
 
         char cpu[16];
         char ram[16];
         char temperature[16];
-        snprintf(cpu, sizeof(cpu), "CPU %u.%u%%", node.cpuTenths / 10, node.cpuTenths % 10);
-        snprintf(ram, sizeof(ram), "RAM %u.%u%%", node.ramTenths / 10, node.ramTenths % 10);
-        if (node.temperatureTenths == secure_protocol::temperatureUnavailable)
+        if (!online)
+        {
+            snprintf(cpu, sizeof(cpu), "CPU N/A");
+            snprintf(ram, sizeof(ram), "RAM N/A");
             snprintf(temperature, sizeof(temperature), "T N/A");
+        }
         else
+        {
+            snprintf(cpu, sizeof(cpu), "CPU %u.%u%%", node.cpuTenths / 10, node.cpuTenths % 10);
+            snprintf(ram, sizeof(ram), "RAM %u.%u%%", node.ramTenths / 10, node.ramTenths % 10);
+        }
+        if (online && node.temperatureTenths == secure_protocol::temperatureUnavailable)
+            snprintf(temperature, sizeof(temperature), "T N/A");
+        else if (online)
             snprintf(temperature, sizeof(temperature), "T %d.%dC",
                      node.temperatureTenths / 10, abs(node.temperatureTenths % 10));
-        display().setTextColor(node.online ? text : muted, fill);
+        display().setTextColor(online ? text : muted, fill);
         display().setTextSize(2);
         display().drawString(cpu, 30, y + 48);
         display().drawString(ram, 174, y + 48);
@@ -453,7 +475,6 @@ void ui::page(const app_state::Model& model)
     if (model.page == app_state::Page::Home)
     {
         header("Home");
-        display().fillRoundRect(12, 68, 456, 272, 10, card);
         homeClock(model, true);
         button(1, "Cluster", ui_layout::leftButtonX, ui_layout::homeTopButtonY,
                ui_layout::pairedButtonWidth, model.pressedButton == 1);
