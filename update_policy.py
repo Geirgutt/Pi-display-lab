@@ -34,7 +34,7 @@ QUICK_FILES = {
     "updates.py",
 }
 QUICK_PREFIXES = ("static/", "templates/")
-NEUTRAL_FILES = {"LICENSE", "README.md", "SECURITY.md"}
+NEUTRAL_FILES = {"LICENSE", "README.md", "SECURITY.md", "requirements-test.txt"}
 NEUTRAL_PREFIXES = ("tests/",)
 FULL_FILES = {
     "cluster_auth.py",
@@ -47,7 +47,6 @@ FULL_FILES = {
     "requirements.txt",
     "requirements-integrations.txt",
     "requirements-ansible.txt",
-    "requirements-test.txt",
     "setup_cluster.py",
 }
 FULL_PREFIXES = ("ansible/", "scripts/")
@@ -92,8 +91,8 @@ def classify_paths(paths: Iterable[str]) -> tuple[str, bool, tuple[str, ...]]:
         and not path.startswith("deskdisplay/")
         and not _matches(path, NEUTRAL_FILES, NEUTRAL_PREFIXES)
     )
-    if display_changed and not non_display:
-        return "display", True, ()
+    if not non_display:
+        return ("display" if display_changed else "none"), display_changed, ()
 
     controller_files = {
         "app.py",

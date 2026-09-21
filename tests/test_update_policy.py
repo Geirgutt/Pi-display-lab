@@ -23,6 +23,14 @@ class UpdatePolicyTests(unittest.TestCase):
             ("quick", False, ()),
         )
 
+    def test_test_only_dependencies_do_not_reinstall_cluster(self) -> None:
+        self.assertEqual(classify_paths(("requirements-test.txt",)), ("none", False, ()))
+        self.assertEqual(classify_paths(("README.md", "tests/test_training.py")), ("none", False, ()))
+        self.assertEqual(
+            classify_paths(("requirements-test.txt", "deskdisplay/src/ui.cpp")),
+            ("display", True, ()),
+        )
+
     def test_controller_and_display_changes_skip_workers(self) -> None:
         self.assertEqual(
             classify_paths((
