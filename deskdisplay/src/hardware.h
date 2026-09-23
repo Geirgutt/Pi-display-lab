@@ -5,7 +5,7 @@
 // One board, one display. Application drawing uses LovyanGFX directly.
 namespace hardware
 {
-constexpr uint8_t minimumBrightness = 25;
+constexpr uint8_t minimumBrightness = 10;
 constexpr uint8_t maximumBrightness = 100;
 LGFX& display();
 bool beginDisplay(); // Backlight remains off until application draws its image.

@@ -8,7 +8,7 @@ LGFX displayInstance;
 constexpr uint8_t backlightPin = 38; // Preserved from baseline main.cpp.
 // Try high-frequency dimming to move backlight-driver noise above hearing.
 // Set before the first analogWrite(), so LEDC attaches at this frequency.
-constexpr uint32_t backlightFrequency = 25000;
+constexpr uint32_t backlightFrequency = 20000;
 bool displayReady = false;
 uint8_t currentBrightness = 100;
 bool currentNightMode = false;
