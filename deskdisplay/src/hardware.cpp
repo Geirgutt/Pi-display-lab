@@ -6,9 +6,9 @@ namespace
 {
 LGFX displayInstance;
 constexpr uint8_t backlightPin = 38; // Preserved from baseline main.cpp.
-// Keep the Arduino core's previously working 1 kHz PWM. Very low frequencies
-// can fail LEDC timer setup at 8-bit resolution on the ESP32-S3's 40 MHz clock.
-constexpr uint32_t backlightFrequency = 1000;
+// Try high-frequency dimming to move backlight-driver noise above hearing.
+// Set before the first analogWrite(), so LEDC attaches at this frequency.
+constexpr uint32_t backlightFrequency = 25000;
 bool displayReady = false;
 uint8_t currentBrightness = 100;
 bool currentNightMode = false;

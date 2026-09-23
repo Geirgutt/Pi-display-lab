@@ -131,7 +131,7 @@ class InstallationWorkflowTests(unittest.TestCase):
         hardware = self.read("deskdisplay/src/hardware.cpp")
         self.assertIn("putUChar(brightnessKey", hardware)
         self.assertIn("putBool(nightModeKey", hardware)
-        self.assertIn("constexpr uint32_t backlightFrequency = 1000", hardware)
+        self.assertIn("constexpr uint32_t backlightFrequency = 25000", hardware)
         self.assertIn("analogWriteFrequency(backlightFrequency)", hardware)
         self.assertIn("analogWrite(backlightPin, duty)", hardware)
         self.assertIn("previewBrightness", app + hardware)

@@ -210,8 +210,10 @@ TLS-forbindelsen.
 
 System-siden har en lysstyrkeslider fra 25 til 100 prosent. Verdien lagres når
 fingeren slippes og gjenbrukes etter omstart. Baklyset styres med Arduino-kjernens
-LEDC-baserte `analogWrite` ved 1 kHz. Nattmodus kan også slås på der; den lagres
-lokalt og viser Home-siden med røde tegn og mørke konturer på svart bakgrunn.
+LEDC-baserte `analogWrite` ved 25 kHz som et forsøk på å unngå hørbar lyd fra
+baklysdriveren. Lysstyrken varierer mellom skjermrevisjoner; 25 prosent beholdes
+som nedre grense. Nattmodus kan også slås på der; den lagres lokalt og viser
+Home-siden med røde tegn og mørke konturer på svart bakgrunn.
 
 ### Garmin og kalender
 
