@@ -152,17 +152,18 @@ void homeClock(const app_state::Model& model, bool force = false)
         // Clock digits have a stable width. Drawing with an opaque background
         // replaces the old glyphs without flashing the whole screen every second.
         if (!force && lastHomeTimeValid != model.timeValid)
-            display().fillRect(8, 26, 464, 158, homeBackground);
+            display().fillRect(8, 20, 464, 154, homeBackground);
         display().setTextColor(model.timeValid ? primary : muted, homeBackground);
-        display().setFont(&fonts::Font7);
-        uint8_t clockSize = 3;
+        display().setFont(&fonts::Font8);
+        float clockSize = 1.8f;
         display().setTextSize(clockSize);
-        while (clockSize > 1 && display().textWidth(model.clockText) > width - 32)
+        while (clockSize > 1.0f && display().textWidth(model.clockText) > width - 32)
         {
-            display().setTextSize(--clockSize);
+            clockSize -= 0.1f;
+            display().setTextSize(clockSize);
         }
         display().drawString(model.clockText,
-                             (width - display().textWidth(model.clockText)) / 2, 34);
+                             (width - display().textWidth(model.clockText)) / 2, 26);
         display().setFont(&fonts::Font0);
         strncpy(lastClockText, model.clockText, sizeof(lastClockText));
         lastClockText[sizeof(lastClockText) - 1] = 0;
@@ -170,14 +171,21 @@ void homeClock(const app_state::Model& model, bool force = false)
     }
     if (force || strcmp(lastDateText, model.dateText) != 0)
     {
-        if (!force) display().fillRect(8, 188, 464, 72, homeBackground);
+        if (!force) display().fillRect(8, 170, 464, 80, homeBackground);
         display().setTextColor(model.timeValid ? primary : muted, homeBackground);
-        uint8_t dateSize = 6;
+        float dateSize = model.timeValid ? 0.88f : 6.0f;
+        if (model.timeValid) display().setFont(&fonts::Font8);
+        else display().setFont(&fonts::Font0);
         display().setTextSize(dateSize);
-        while (dateSize > 2 && display().textWidth(model.dateText) > width - 32)
-            display().setTextSize(--dateSize);
+        while (dateSize > (model.timeValid ? 0.6f : 2.0f)
+               && display().textWidth(model.dateText) > width - 32)
+        {
+            dateSize -= model.timeValid ? 0.04f : 1.0f;
+            display().setTextSize(dateSize);
+        }
         display().drawString(model.dateText,
-                             (width - display().textWidth(model.dateText)) / 2, 194);
+                             (width - display().textWidth(model.dateText)) / 2, 178);
+        display().setFont(&fonts::Font0);
         strncpy(lastDateText, model.dateText, sizeof(lastDateText));
         lastDateText[sizeof(lastDateText) - 1] = 0;
     }
@@ -194,7 +202,7 @@ void homeClock(const app_state::Model& model, bool force = false)
         else snprintf(status, sizeof(status), "Cluster: %u/%u online",
                       static_cast<unsigned>(model.clusterTelemetry.onlineNodes),
                       static_cast<unsigned>(model.clusterTelemetry.totalNodes));
-        display().fillRect(20, 270, 440, 42, homeBackground);
+        display().fillRect(20, 258, 440, 42, homeBackground);
         const uint16_t statusColor = model.nightMode ? nightRed
             : (streamLive && model.clusterTelemetry.onlineNodes
                == model.clusterTelemetry.totalNodes ? good : warning);
@@ -202,7 +210,7 @@ void homeClock(const app_state::Model& model, bool force = false)
         display().setTextSize(streamLive && model.clusterTelemetry.totalNodes > 0 ? 3 : 2);
         display().setFont(&fonts::Font0);
         display().drawString(status, (width - display().textWidth(status)) / 2,
-                             streamLive && model.clusterTelemetry.totalNodes > 0 ? 276 : 281);
+                             streamLive && model.clusterTelemetry.totalNodes > 0 ? 264 : 269);
         lastHomeNodeCount = model.clusterTelemetry.totalNodes;
         lastHomeOnlineCount = model.clusterTelemetry.onlineNodes;
         lastHomeStreamLive = streamLive;

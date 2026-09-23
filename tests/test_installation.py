@@ -131,7 +131,7 @@ class InstallationWorkflowTests(unittest.TestCase):
         self.assertIn("const bool online = streamLive && node.online", ui)
         self.assertIn("if (!online)", ui)
         self.assertIn("constexpr uint16_t homeBackground = TFT_BLACK", ui)
-        self.assertIn("fillRect(20, 270, 440, 42, homeBackground)", ui)
+        self.assertIn("fillRect(20, 258, 440, 42, homeBackground)", ui)
         self.assertNotIn('header("Home"', ui)
         self.assertIn("model.page == app_state::Page::Home ? homeBackground : background", ui)
         self.assertNotIn("fillRoundRect(12, 68, 456, 272, 10, card)", ui)
