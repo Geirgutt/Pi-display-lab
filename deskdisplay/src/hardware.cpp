@@ -6,14 +6,10 @@ namespace
 {
 LGFX displayInstance;
 constexpr uint8_t backlightPin = 38; // Preserved from baseline main.cpp.
-constexpr uint8_t backlightChannel = 7;
-// The Guition 4848S040 backlight driver needs comparatively long PWM pulses.
-// Higher frequencies are valid for the ESP32-S3 LEDC peripheral, but can make
-// most of the useful dimming range appear off on this particular display.
-constexpr uint32_t backlightFrequency = 150;
-constexpr uint8_t backlightResolution = 8;
+// Keep the Arduino core's previously working 1 kHz PWM. Very low frequencies
+// can fail LEDC timer setup at 8-bit resolution on the ESP32-S3's 40 MHz clock.
+constexpr uint32_t backlightFrequency = 1000;
 bool displayReady = false;
-bool backlightPwmReady = false;
 uint8_t currentBrightness = 100;
 bool currentNightMode = false;
 constexpr char preferenceNamespace[] = "dd-ui";
@@ -34,9 +30,9 @@ uint8_t clampBrightness(uint8_t value)
 
 void applyBrightness(uint8_t percent)
 {
-    if (!displayReady || !backlightPwmReady) return;
+    if (!displayReady) return;
     const uint8_t duty = static_cast<uint8_t>((static_cast<uint16_t>(percent) * 255u) / 100u);
-    ledcWrite(backlightChannel, duty);
+    analogWrite(backlightPin, duty);
 }
 }
 
@@ -57,11 +53,9 @@ bool beginDisplay()
     pinMode(backlightPin, OUTPUT);
     digitalWrite(backlightPin, LOW);
     displayReady = displayInstance.init();
-    backlightPwmReady = ledcSetup(backlightChannel, backlightFrequency,
-                                  backlightResolution) != 0;
-    if (backlightPwmReady) ledcAttachPin(backlightPin, backlightChannel);
+    analogWriteFrequency(backlightFrequency);
     setBrightness(currentBrightness);
-    return displayReady && backlightPwmReady;
+    return displayReady;
 }
 
 void setBrightness(uint8_t percent)
