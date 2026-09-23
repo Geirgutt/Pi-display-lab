@@ -10,6 +10,9 @@ constexpr int16_t width = ui_layout::screenWidth;
 constexpr int16_t headerHeight = 58;
 constexpr uint16_t homeBackground = TFT_BLACK;
 constexpr uint16_t homeButtonOutline = 0x1082;
+constexpr uint16_t nightRed = 0xF800;
+constexpr uint16_t nightOutline = 0x3000;
+constexpr uint16_t nightPressed = 0x6000;
 constexpr uint16_t background = 0x1082;
 constexpr uint16_t card = 0x18E3;
 constexpr uint16_t accent = 0x05BF;
@@ -45,30 +48,61 @@ void valueRow(const char* name, const char* value, int16_t y, uint16_t color = t
 }
 
 void button(uint8_t id, const char* caption, int16_t x, int16_t y, int16_t buttonWidth,
-            bool active, uint16_t idleFill = card, uint16_t outline = muted)
+            bool active, uint16_t idleFill = card, uint16_t outline = muted,
+            uint16_t captionColor = text, uint16_t activeFill = accent)
 {
-    const uint16_t fill = active ? accent : idleFill;
+    const uint16_t fill = active ? activeFill : idleFill;
     display().fillRoundRect(x, y, buttonWidth, ui_layout::buttonHeight, 8, fill);
     display().drawRoundRect(x, y, buttonWidth, ui_layout::buttonHeight, 8, outline);
-    display().setTextColor(text, fill);
+    display().setTextColor(captionColor, fill);
     display().setTextSize(2);
     const int16_t textX = x + (buttonWidth - display().textWidth(caption)) / 2;
     display().drawString(caption, textX, y + 11);
     (void)id;
 }
 
-void brightnessButton(const app_state::Model& model)
+void homeButton(uint8_t id, const char* caption, int16_t x, int16_t y,
+                const app_state::Model& model)
 {
-    char caption[20];
-    snprintf(caption, sizeof(caption), "Bright %u%%", model.brightnessPercent);
-    button(6, caption, ui_layout::leftButtonX, ui_layout::systemButtonY,
-           ui_layout::pairedButtonWidth, model.pressedButton == 6);
+    button(id, caption, x, y, ui_layout::pairedButtonWidth, model.pressedButton == id,
+           homeBackground, model.nightMode ? nightOutline : homeButtonOutline,
+           model.nightMode ? nightRed : text, model.nightMode ? nightPressed : accent);
 }
 
-void header(const char* title, uint16_t fill = 0x0841)
+void brightnessSlider(const app_state::Model& model)
+{
+    display().fillRect(28, 330, 424, 78, card);
+    char caption[24];
+    snprintf(caption, sizeof(caption), "Brightness  %u%%", model.brightnessPercent);
+    display().setTextColor(text, card);
+    display().setTextSize(2);
+    display().drawString(caption, ui_layout::brightnessSliderX, 338);
+
+    constexpr int16_t trackY = 382;
+    constexpr int16_t trackHeight = 8;
+    const int16_t travel = ui_layout::brightnessSliderWidth - 1;
+    const int16_t knobX = static_cast<int16_t>(ui_layout::brightnessSliderX
+        + (model.brightnessPercent - hardware::minimumBrightness) * travel
+          / (hardware::maximumBrightness - hardware::minimumBrightness));
+    display().fillRoundRect(ui_layout::brightnessSliderX, trackY,
+                            ui_layout::brightnessSliderWidth, trackHeight, 4, 0x4208);
+    display().fillRoundRect(ui_layout::brightnessSliderX, trackY,
+                            knobX - ui_layout::brightnessSliderX + 1, trackHeight, 4, accent);
+    display().fillCircle(knobX, trackY + trackHeight / 2, 11, accent);
+    display().drawCircle(knobX, trackY + trackHeight / 2, 11, text);
+}
+
+void nightModeButton(const app_state::Model& model)
+{
+    button(6, model.nightMode ? "Night ON" : "Night OFF", ui_layout::leftButtonX,
+           ui_layout::systemButtonY, ui_layout::pairedButtonWidth,
+           model.pressedButton == 6);
+}
+
+void header(const char* title, uint16_t fill = 0x0841, uint16_t foreground = text)
 {
     display().fillRect(0, 0, width, headerHeight, fill);
-    display().setTextColor(text, fill);
+    display().setTextColor(foreground, fill);
     display().setTextSize(3);
     display().drawString("DeskDisplay", 24, 12);
     display().setTextSize(2);
@@ -77,13 +111,14 @@ void header(const char* title, uint16_t fill = 0x0841)
 
 void homeClock(const app_state::Model& model, bool force = false)
 {
+    const uint16_t primary = model.nightMode ? nightRed : text;
     if (force || strcmp(lastClockText, model.clockText) != 0)
     {
         // Clock digits have a stable width. Drawing with an opaque background
         // replaces the old glyphs without flashing the whole screen every second.
         if (!force && lastHomeTimeValid != model.timeValid)
             display().fillRect(20, 78, 440, 96, homeBackground);
-        display().setTextColor(model.timeValid ? text : muted, homeBackground);
+        display().setTextColor(model.timeValid ? primary : muted, homeBackground);
         display().setTextSize(10);
         display().drawString(model.clockText,
                              (width - display().textWidth(model.clockText)) / 2, 86);
@@ -94,7 +129,7 @@ void homeClock(const app_state::Model& model, bool force = false)
     if (force || strcmp(lastDateText, model.dateText) != 0)
     {
         if (!force) display().fillRect(20, 181, 440, 40, homeBackground);
-        display().setTextColor(model.timeValid ? text : muted, homeBackground);
+        display().setTextColor(model.timeValid ? primary : muted, homeBackground);
         display().setTextSize(4);
         display().drawString(model.dateText,
                              (width - display().textWidth(model.dateText)) / 2, 185);
@@ -115,9 +150,10 @@ void homeClock(const app_state::Model& model, bool force = false)
                       static_cast<unsigned>(model.clusterTelemetry.onlineNodes),
                       static_cast<unsigned>(model.clusterTelemetry.totalNodes));
         display().fillRect(20, 245, 440, 42, homeBackground);
-        display().setTextColor(streamLive && model.clusterTelemetry.onlineNodes
-                               == model.clusterTelemetry.totalNodes ? good : warning,
-                               homeBackground);
+        const uint16_t statusColor = model.nightMode ? nightRed
+            : (streamLive && model.clusterTelemetry.onlineNodes
+               == model.clusterTelemetry.totalNodes ? good : warning);
+        display().setTextColor(statusColor, homeBackground);
         display().setTextSize(streamLive && model.clusterTelemetry.totalNodes > 0 ? 3 : 2);
         display().drawString(status, (width - display().textWidth(status)) / 2,
                              streamLive && model.clusterTelemetry.totalNodes > 0 ? 250 : 255);
@@ -477,20 +513,12 @@ void ui::page(const app_state::Model& model)
     display().fillScreen(model.page == app_state::Page::Home ? homeBackground : background);
     if (model.page == app_state::Page::Home)
     {
-        header("Home", homeBackground);
+        header("Home", homeBackground, model.nightMode ? nightRed : text);
         homeClock(model, true);
-        button(1, "Cluster", ui_layout::leftButtonX, ui_layout::homeTopButtonY,
-               ui_layout::pairedButtonWidth, model.pressedButton == 1,
-               homeBackground, homeButtonOutline);
-        button(2, "Training", ui_layout::rightButtonX, ui_layout::homeTopButtonY,
-               ui_layout::pairedButtonWidth, model.pressedButton == 2,
-               homeBackground, homeButtonOutline);
-        button(3, "Calendar", ui_layout::leftButtonX, ui_layout::homeBottomButtonY,
-               ui_layout::pairedButtonWidth, model.pressedButton == 3,
-               homeBackground, homeButtonOutline);
-        button(4, "System", ui_layout::rightButtonX, ui_layout::homeBottomButtonY,
-               ui_layout::pairedButtonWidth, model.pressedButton == 4,
-               homeBackground, homeButtonOutline);
+        homeButton(1, "Cluster", ui_layout::leftButtonX, ui_layout::homeTopButtonY, model);
+        homeButton(2, "Training", ui_layout::rightButtonX, ui_layout::homeTopButtonY, model);
+        homeButton(3, "Calendar", ui_layout::leftButtonX, ui_layout::homeBottomButtonY, model);
+        homeButton(4, "System", ui_layout::rightButtonX, ui_layout::homeBottomButtonY, model);
     }
     else if (model.page == app_state::Page::System)
     {
@@ -498,7 +526,8 @@ void ui::page(const app_state::Model& model)
         display().fillRoundRect(12, 68, 456, 340, 10, card);
         label("ESP32 and connection diagnostics", 32, 84, 1, muted);
         systemTelemetry(model);
-        brightnessButton(model);
+        brightnessSlider(model);
+        nightModeButton(model);
         button(5, "Home", ui_layout::rightButtonX, ui_layout::systemButtonY,
                ui_layout::pairedButtonWidth, model.pressedButton == 5);
     }
@@ -567,22 +596,15 @@ void ui::pressed(const app_state::Model& model)
 {
     if (model.page == app_state::Page::Home)
     {
-        button(1, "Cluster", ui_layout::leftButtonX, ui_layout::homeTopButtonY,
-               ui_layout::pairedButtonWidth, model.pressedButton == 1,
-               homeBackground, homeButtonOutline);
-        button(2, "Training", ui_layout::rightButtonX, ui_layout::homeTopButtonY,
-               ui_layout::pairedButtonWidth, model.pressedButton == 2,
-               homeBackground, homeButtonOutline);
-        button(3, "Calendar", ui_layout::leftButtonX, ui_layout::homeBottomButtonY,
-               ui_layout::pairedButtonWidth, model.pressedButton == 3,
-               homeBackground, homeButtonOutline);
-        button(4, "System", ui_layout::rightButtonX, ui_layout::homeBottomButtonY,
-               ui_layout::pairedButtonWidth, model.pressedButton == 4,
-               homeBackground, homeButtonOutline);
+        homeButton(1, "Cluster", ui_layout::leftButtonX, ui_layout::homeTopButtonY, model);
+        homeButton(2, "Training", ui_layout::rightButtonX, ui_layout::homeTopButtonY, model);
+        homeButton(3, "Calendar", ui_layout::leftButtonX, ui_layout::homeBottomButtonY, model);
+        homeButton(4, "System", ui_layout::rightButtonX, ui_layout::homeBottomButtonY, model);
     }
     else if (model.page == app_state::Page::System)
     {
-        brightnessButton(model);
+        brightnessSlider(model);
+        nightModeButton(model);
         button(5, "Home", ui_layout::rightButtonX, ui_layout::systemButtonY,
                ui_layout::pairedButtonWidth, model.pressedButton == 5);
     }
@@ -605,5 +627,5 @@ void ui::pressed(const app_state::Model& model)
 
 void ui::brightness(const app_state::Model& model)
 {
-    brightnessButton(model);
+    brightnessSlider(model);
 }

@@ -22,6 +22,7 @@ struct Model
     uint8_t pressedButton = 0;
     uint8_t selectedTraining = 0;
     uint8_t brightnessPercent = 100;
+    bool nightMode = false;
     bool timeValid = false;
     char clockText[6] = "--:--";
     char dateText[16] = "--.--.----";

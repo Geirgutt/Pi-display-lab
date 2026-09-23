@@ -47,6 +47,7 @@ void refreshState()
     model.wifiStatus = wifi.status;
     model.wifiRssi = wifi.rssi;
     model.brightnessPercent = hardware::brightness();
+    model.nightMode = hardware::nightMode();
     const time_t now = time(nullptr);
     struct tm localTime = {};
     model.timeValid = now >= 1700000000 && localtime_r(&now, &localTime) != nullptr;
@@ -97,6 +98,11 @@ uint8_t hit(int16_t x, int16_t y)
     }
     else if (model.page == app_state::Page::System)
     {
+        if (x >= ui_layout::brightnessSliderX
+            && x < ui_layout::brightnessSliderX + ui_layout::brightnessSliderWidth
+            && y >= ui_layout::brightnessSliderY
+            && y < ui_layout::brightnessSliderY + ui_layout::brightnessSliderHeight)
+            return 11;
         if (inside(x, y, ui_layout::leftButtonX, ui_layout::systemButtonY,
                    ui_layout::pairedButtonWidth)) return 6;
         if (inside(x, y, ui_layout::rightButtonX, ui_layout::systemButtonY,
@@ -150,8 +156,8 @@ void action(uint8_t button)
     case 4: model.page = app_state::Page::System; model.pressedButton = 0; ui::page(model); break;
     case 5: model.page = app_state::Page::Home; model.pressedButton = 0; ui::page(model); break;
     case 6:
-        model.brightnessPercent = hardware::cycleBrightness();
-        ui::brightness(model);
+        model.nightMode = hardware::toggleNightMode();
+        ui::page(model);
         break;
     case 10:
         model.page = app_state::Page::Training;
@@ -160,6 +166,21 @@ void action(uint8_t button)
         break;
     default: break;
     }
+}
+
+void updateBrightnessSlider(int16_t x)
+{
+    const int16_t first = ui_layout::brightnessSliderX;
+    const int16_t last = static_cast<int16_t>(first + ui_layout::brightnessSliderWidth - 1);
+    if (x < first) x = first;
+    if (x > last) x = last;
+    const uint8_t percent = static_cast<uint8_t>(hardware::minimumBrightness
+        + (x - first) * (hardware::maximumBrightness - hardware::minimumBrightness)
+          / (ui_layout::brightnessSliderWidth - 1));
+    if (percent == model.brightnessPercent) return;
+    model.brightnessPercent = percent;
+    hardware::previewBrightness(percent);
+    ui::brightness(model);
 }
 
 void processTouch()
@@ -175,8 +196,10 @@ void processTouch()
         {
             model.pressedButton = hit(point.x, point.y);
             pressedAt = millis();
-            if (model.pressedButton) ui::pressed(model);
+            if (model.pressedButton == 11) updateBrightnessSlider(point.x);
+            else if (model.pressedButton) ui::pressed(model);
         }
+        else if (model.pressedButton == 11) updateBrightnessSlider(point.x);
     }
     else if (lastDown)
     {
@@ -184,9 +207,17 @@ void processTouch()
         model.pressedButton = 0;
         if (button)
         {
-            // The pressed visual is held until release; actions are click-on-up.
-            ui::pressed(model);
-            action(button);
+            if (button == 11)
+            {
+                hardware::saveBrightness();
+                ui::brightness(model);
+            }
+            else
+            {
+                // The pressed visual is held until release; actions are click-on-up.
+                ui::pressed(model);
+                action(button);
+            }
         }
     }
     lastDown = down;

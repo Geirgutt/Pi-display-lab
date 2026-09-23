@@ -110,7 +110,13 @@ class InstallationWorkflowTests(unittest.TestCase):
         self.assertIn("trainingDayCount = 7", self.read("deskdisplay/src/ui_layout.h"))
         self.assertIn("trainingItemMax = 7", self.read("deskdisplay/src/secure_protocol.h"))
         self.assertIn("Page::TrainingDetail", state + app + ui)
-        self.assertIn("putUChar(brightnessKey", self.read("deskdisplay/src/hardware.cpp"))
+        hardware = self.read("deskdisplay/src/hardware.cpp")
+        self.assertIn("putUChar(brightnessKey", hardware)
+        self.assertIn("putBool(nightModeKey", hardware)
+        self.assertIn("constexpr uint32_t backlightFrequency = 150", hardware)
+        self.assertIn("previewBrightness", app + hardware)
+        self.assertIn("brightnessSlider", ui)
+        self.assertIn('"Night ON"', ui)
 
     def test_deskdisplay_home_counts_online_nodes_and_hides_offline_metrics(self) -> None:
         ui = self.read("deskdisplay/src/ui.cpp")
@@ -124,7 +130,7 @@ class InstallationWorkflowTests(unittest.TestCase):
         self.assertIn("if (!online)", ui)
         self.assertIn("constexpr uint16_t homeBackground = TFT_BLACK", ui)
         self.assertIn("fillRect(20, 245, 440, 42, homeBackground)", ui)
-        self.assertIn("header(\"Home\", homeBackground)", ui)
+        self.assertIn("header(\"Home\", homeBackground", ui)
         self.assertIn("model.page == app_state::Page::Home ? homeBackground : background", ui)
         self.assertNotIn("fillRoundRect(12, 68, 456, 272, 10, card)", ui)
         self.assertIn("clusterMetadataSize = 7", protocol)

@@ -208,6 +208,12 @@ Calendar viser de tre neste hendelsene på tvers av de konfigurerte
 kalenderkildene. Begge mottar bare et normalisert datasett over den eksisterende
 TLS-forbindelsen.
 
+System-siden har en lysstyrkeslider fra 25 til 100 prosent. Verdien lagres når
+fingeren slippes og gjenbrukes etter omstart. Baklyset bruker 150 Hz PWM, som er
+tilpasset baklysdriveren i Guition ESP32-S3-4848S040. Nattmodus kan også slås på
+der; den lagres lokalt og viser Home-siden med røde tegn og mørke konturer på
+svart bakgrunn.
+
 ### Garmin og kalender
 
 Garmin-integrasjonen bruker **Publish Calendar** i Garmin Connect Web. Den

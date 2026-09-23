@@ -13,6 +13,10 @@ constexpr int16_t rightButtonX = 288;
 constexpr int16_t homeTopButtonY = 360;
 constexpr int16_t homeBottomButtonY = 420;
 constexpr int16_t systemButtonY = 426;
+constexpr int16_t brightnessSliderX = 32;
+constexpr int16_t brightnessSliderY = 342;
+constexpr int16_t brightnessSliderWidth = 416;
+constexpr int16_t brightnessSliderHeight = 64;
 
 constexpr int16_t singleButtonWidth = 140;
 constexpr int16_t singleButtonX = 170;
