@@ -202,7 +202,7 @@ void homeClock(const app_state::Model& model, bool force = false)
         else snprintf(status, sizeof(status), "Cluster: %u/%u online",
                       static_cast<unsigned>(model.clusterTelemetry.onlineNodes),
                       static_cast<unsigned>(model.clusterTelemetry.totalNodes));
-        display().fillRect(20, 258, 440, 42, homeBackground);
+        display().fillRect(20, 272, 440, 42, homeBackground);
         const uint16_t statusColor = model.nightMode ? nightRed
             : (streamLive && model.clusterTelemetry.onlineNodes
                == model.clusterTelemetry.totalNodes ? good : warning);
@@ -210,7 +210,7 @@ void homeClock(const app_state::Model& model, bool force = false)
         display().setTextSize(streamLive && model.clusterTelemetry.totalNodes > 0 ? 3 : 2);
         display().setFont(&fonts::Font0);
         display().drawString(status, (width - display().textWidth(status)) / 2,
-                             streamLive && model.clusterTelemetry.totalNodes > 0 ? 264 : 269);
+                             streamLive && model.clusterTelemetry.totalNodes > 0 ? 278 : 283);
         lastHomeNodeCount = model.clusterTelemetry.totalNodes;
         lastHomeOnlineCount = model.clusterTelemetry.onlineNodes;
         lastHomeStreamLive = streamLive;
