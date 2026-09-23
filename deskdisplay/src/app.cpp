@@ -99,8 +99,9 @@ uint8_t hit(int16_t x, int16_t y)
     }
     else if (model.page == app_state::Page::System)
     {
-        if (x >= ui_layout::brightnessSliderX
+        if (x >= ui_layout::brightnessSliderX - ui_layout::brightnessSliderHitPadding
             && x < ui_layout::brightnessSliderX + ui_layout::brightnessSliderWidth
+                            + ui_layout::brightnessSliderHitPadding
             && y >= ui_layout::brightnessSliderY
             && y < ui_layout::brightnessSliderY + ui_layout::brightnessSliderHeight)
             return 11;
