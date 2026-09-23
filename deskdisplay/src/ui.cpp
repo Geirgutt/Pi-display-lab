@@ -21,7 +21,7 @@ constexpr uint16_t warning = 0xFD20;
 constexpr uint16_t text = TFT_WHITE;
 constexpr uint16_t muted = 0xBDF7;
 char lastClockText[6] = {};
-char lastDateText[16] = {};
+char lastDateText[24] = {};
 uint16_t lastHomeNodeCount = UINT16_MAX;
 uint16_t lastHomeOnlineCount = UINT16_MAX;
 bool lastHomeStreamLive = false;
@@ -32,6 +32,42 @@ bool trainingDrawn = false;
 bool calendarDrawn = false;
 
 LGFX& display() { return hardware::display(); }
+
+void copyDisplayText(const char* source, char* destination, size_t capacity)
+{
+    if (!capacity) return;
+    if (!source) source = "";
+    size_t input = 0;
+    size_t output = 0;
+    while (source[input] && output + 1 < capacity)
+    {
+        const unsigned char first = static_cast<unsigned char>(source[input]);
+        if (first == 0xC3 && source[input + 1])
+        {
+            const unsigned char second = static_cast<unsigned char>(source[input + 1]);
+            const char* replacement = nullptr;
+            switch (second)
+            {
+            case 0x86: replacement = "Ae"; break; // Latin capital AE
+            case 0xA6: replacement = "ae"; break; // Latin small ae
+            case 0x98: replacement = "O"; break;  // O with stroke
+            case 0xB8: replacement = "o"; break;  // o with stroke
+            case 0x85: replacement = "A"; break;  // A with ring
+            case 0xA5: replacement = "a"; break;  // a with ring
+            default: break;
+            }
+            if (replacement)
+            {
+                for (size_t index = 0; replacement[index] && output + 1 < capacity; ++index)
+                    destination[output++] = replacement[index];
+                input += 2;
+                continue;
+            }
+        }
+        destination[output++] = source[input++];
+    }
+    destination[output] = 0;
+}
 
 void label(const char* value, int16_t x, int16_t y, uint8_t size = 2, uint16_t color = text)
 {
@@ -103,10 +139,9 @@ void header(const char* title, uint16_t fill = 0x0841, uint16_t foreground = tex
 {
     display().fillRect(0, 0, width, headerHeight, fill);
     display().setTextColor(foreground, fill);
-    display().setTextSize(3);
-    display().drawString("DeskDisplay", 24, 12);
     display().setTextSize(2);
-    display().drawString(title, width - 24 - display().textWidth(title), 19);
+    display().setFont(&fonts::Font0);
+    display().drawString(title, (width - display().textWidth(title)) / 2, 19);
 }
 
 void homeClock(const app_state::Model& model, bool force = false)
@@ -117,22 +152,32 @@ void homeClock(const app_state::Model& model, bool force = false)
         // Clock digits have a stable width. Drawing with an opaque background
         // replaces the old glyphs without flashing the whole screen every second.
         if (!force && lastHomeTimeValid != model.timeValid)
-            display().fillRect(20, 78, 440, 96, homeBackground);
+            display().fillRect(8, 26, 464, 158, homeBackground);
         display().setTextColor(model.timeValid ? primary : muted, homeBackground);
-        display().setTextSize(10);
+        display().setFont(&fonts::Font7);
+        uint8_t clockSize = 3;
+        display().setTextSize(clockSize);
+        while (clockSize > 1 && display().textWidth(model.clockText) > width - 32)
+        {
+            display().setTextSize(--clockSize);
+        }
         display().drawString(model.clockText,
-                             (width - display().textWidth(model.clockText)) / 2, 86);
+                             (width - display().textWidth(model.clockText)) / 2, 34);
+        display().setFont(&fonts::Font0);
         strncpy(lastClockText, model.clockText, sizeof(lastClockText));
         lastClockText[sizeof(lastClockText) - 1] = 0;
         lastHomeTimeValid = model.timeValid;
     }
     if (force || strcmp(lastDateText, model.dateText) != 0)
     {
-        if (!force) display().fillRect(20, 181, 440, 40, homeBackground);
+        if (!force) display().fillRect(8, 188, 464, 72, homeBackground);
         display().setTextColor(model.timeValid ? primary : muted, homeBackground);
-        display().setTextSize(4);
+        uint8_t dateSize = 6;
+        display().setTextSize(dateSize);
+        while (dateSize > 2 && display().textWidth(model.dateText) > width - 32)
+            display().setTextSize(--dateSize);
         display().drawString(model.dateText,
-                             (width - display().textWidth(model.dateText)) / 2, 185);
+                             (width - display().textWidth(model.dateText)) / 2, 194);
         strncpy(lastDateText, model.dateText, sizeof(lastDateText));
         lastDateText[sizeof(lastDateText) - 1] = 0;
     }
@@ -149,14 +194,15 @@ void homeClock(const app_state::Model& model, bool force = false)
         else snprintf(status, sizeof(status), "Cluster: %u/%u online",
                       static_cast<unsigned>(model.clusterTelemetry.onlineNodes),
                       static_cast<unsigned>(model.clusterTelemetry.totalNodes));
-        display().fillRect(20, 245, 440, 42, homeBackground);
+        display().fillRect(20, 270, 440, 42, homeBackground);
         const uint16_t statusColor = model.nightMode ? nightRed
             : (streamLive && model.clusterTelemetry.onlineNodes
                == model.clusterTelemetry.totalNodes ? good : warning);
         display().setTextColor(statusColor, homeBackground);
         display().setTextSize(streamLive && model.clusterTelemetry.totalNodes > 0 ? 3 : 2);
+        display().setFont(&fonts::Font0);
         display().drawString(status, (width - display().textWidth(status)) / 2,
-                             streamLive && model.clusterTelemetry.totalNodes > 0 ? 250 : 255);
+                             streamLive && model.clusterTelemetry.totalNodes > 0 ? 276 : 281);
         lastHomeNodeCount = model.clusterTelemetry.totalNodes;
         lastHomeOnlineCount = model.clusterTelemetry.onlineNodes;
         lastHomeStreamLive = streamLive;
@@ -211,7 +257,9 @@ void clusterTelemetry(const app_state::Model& model)
         display().fillRoundRect(20, y, 440, 82, 6, fill);
         display().setTextColor(text, fill);
         display().setTextSize(2);
-        display().drawString(node.name[0] ? node.name : "node", 30, y + 8);
+        char nodeName[secure_protocol::clusterNameMax * 2 + 2];
+        copyDisplayText(node.name[0] ? node.name : "node", nodeName, sizeof(nodeName));
+        display().drawString(nodeName, 30, y + 8);
         display().setTextColor(online ? good : warning, fill);
         const char* status = online ? "ONLINE" : "OFFLINE";
         display().drawString(status, 450 - display().textWidth(status), y + 8);
@@ -308,8 +356,7 @@ int trainingForDate(const secure_protocol::TrainingTelemetry& state, const char*
 void clippedText(const char* value, int16_t x, int16_t y, int16_t maxWidth)
 {
     char clipped[64];
-    strncpy(clipped, value, sizeof(clipped) - 1);
-    clipped[sizeof(clipped) - 1] = 0;
+    copyDisplayText(value, clipped, sizeof(clipped));
     size_t length = strlen(clipped);
     while (length > 3 && display().textWidth(clipped) > maxWidth)
     {
@@ -329,8 +376,7 @@ void wrappedText(const char* value, int16_t x, int16_t y, int16_t maxWidth,
 {
     if (!value || !value[0] || maxLines == 0) return;
     char copy[secure_protocol::trainingDescriptionMax + 1];
-    strncpy(copy, value, sizeof(copy) - 1);
-    copy[sizeof(copy) - 1] = 0;
+    copyDisplayText(value, copy, sizeof(copy));
     char line[secure_protocol::trainingDescriptionMax + 1] = {};
     char* save = nullptr;
     char* word = strtok_r(copy, " ", &save);
@@ -403,7 +449,9 @@ void trainingTelemetry(const app_state::Model& model, bool force = false)
         }
 
         const secure_protocol::TrainingWorkout& workout = state.workouts[workoutIndex];
-        const char* type = workout.activityType[0] ? workout.activityType : "Workout";
+        char type[secure_protocol::trainingTypeMax * 2 + 2];
+        copyDisplayText(workout.activityType[0] ? workout.activityType : "Workout",
+                        type, sizeof(type));
         display().setTextColor(text, fill);
         display().setTextSize(2);
         clippedText(workout.title[0] ? workout.title : "Workout", 166, y + 2, 270);
@@ -437,7 +485,9 @@ void trainingDetail(const app_state::Model& model)
     display().setTextColor(workout.today ? good : accent, card);
     display().setTextSize(2);
     display().drawString(day, 28, 82);
-    const char* type = workout.activityType[0] ? workout.activityType : "Workout";
+    char type[secure_protocol::trainingTypeMax * 2 + 2];
+    copyDisplayText(workout.activityType[0] ? workout.activityType : "Workout",
+                    type, sizeof(type));
     display().setTextColor(text, card);
     display().drawString(type, 452 - display().textWidth(type), 82);
     wrappedText(workout.title[0] ? workout.title : "Workout", 28, 116, 424, 3, text, card, 2);
@@ -495,12 +545,16 @@ void calendarTelemetry(const app_state::Model& model, bool force = false)
         display().drawString(when, 38, y + 8);
         display().setTextColor(text, 0x2104);
         display().setTextSize(2);
-        display().drawString(event.title[0] ? event.title : "Calendar event", 38, y + 25);
+        char title[secure_protocol::calendarTitleMax * 2 + 2];
+        copyDisplayText(event.title[0] ? event.title : "Calendar event", title, sizeof(title));
+        display().drawString(title, 38, y + 25);
         if (event.location[0])
         {
             display().setTextColor(muted, 0x2104);
             display().setTextSize(1);
-            display().drawString(event.location, 38, y + 50);
+            char location[secure_protocol::calendarLocationMax * 2 + 2];
+            copyDisplayText(event.location, location, sizeof(location));
+            display().drawString(location, 38, y + 50);
         }
     }
 }
@@ -513,7 +567,6 @@ void ui::page(const app_state::Model& model)
     display().fillScreen(model.page == app_state::Page::Home ? homeBackground : background);
     if (model.page == app_state::Page::Home)
     {
-        header("Home", homeBackground, model.nightMode ? nightRed : text);
         homeClock(model, true);
         homeButton(1, "Cluster", ui_layout::leftButtonX, ui_layout::homeTopButtonY, model);
         homeButton(2, "Training", ui_layout::rightButtonX, ui_layout::homeTopButtonY, model);

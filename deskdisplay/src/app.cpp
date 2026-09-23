@@ -59,7 +59,8 @@ void refreshState()
     else
     {
         strncpy(model.clockText, "--:--", sizeof(model.clockText));
-        strncpy(model.dateText, "Venter pa tid", sizeof(model.dateText));
+        strncpy(model.dateText, "Waiting for time", sizeof(model.dateText) - 1);
+        model.dateText[sizeof(model.dateText) - 1] = 0;
     }
     strncpy(model.ip, wifi.ip, sizeof(model.ip));
     model.ip[sizeof(model.ip) - 1] = 0;

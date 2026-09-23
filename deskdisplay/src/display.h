@@ -14,19 +14,19 @@ public:
 
     LGFX()
     {
-        // RGB-bussen
+        // RGB bus
         auto bus_cfg = _bus_instance.config();
 
         bus_cfg.panel = &_panel_instance;
 
-        // Blå: 5 bit
+        // Blue: 5 bits
         bus_cfg.pin_d0 = GPIO_NUM_4;
         bus_cfg.pin_d1 = GPIO_NUM_5;
         bus_cfg.pin_d2 = GPIO_NUM_6;
         bus_cfg.pin_d3 = GPIO_NUM_7;
         bus_cfg.pin_d4 = GPIO_NUM_15;
 
-        // Grønn: 6 bit
+        // Green: 6 bits
         bus_cfg.pin_d5  = GPIO_NUM_8;
         bus_cfg.pin_d6  = GPIO_NUM_20;
         bus_cfg.pin_d7  = GPIO_NUM_3;
@@ -34,14 +34,14 @@ public:
         bus_cfg.pin_d9  = GPIO_NUM_9;
         bus_cfg.pin_d10 = GPIO_NUM_10;
 
-        // Rød: 5 bit
+        // Red: 5 bits
         bus_cfg.pin_d11 = GPIO_NUM_11;
         bus_cfg.pin_d12 = GPIO_NUM_12;
         bus_cfg.pin_d13 = GPIO_NUM_13;
         bus_cfg.pin_d14 = GPIO_NUM_14;
         bus_cfg.pin_d15 = GPIO_NUM_0;
 
-        // RGB styresignaler
+        // RGB control signals
         bus_cfg.pin_henable = GPIO_NUM_18;
         bus_cfg.pin_vsync   = GPIO_NUM_17;
         bus_cfg.pin_hsync   = GPIO_NUM_16;
@@ -67,7 +67,7 @@ public:
         _bus_instance.config(bus_cfg);
         _panel_instance.setBus(&_bus_instance);
 
-        // Panelstørrelse
+        // Panel size
         auto panel_cfg = _panel_instance.config();
 
         panel_cfg.memory_width  = 480;
@@ -77,14 +77,14 @@ public:
 
         _panel_instance.config(panel_cfg);
 
-        // ST7701S initialiseres via 3-wire SPI
+        // Initialize ST7701S via 3-wire SPI
         auto detail_cfg = _panel_instance.config_detail();
 
         detail_cfg.pin_cs   = GPIO_NUM_39;
         detail_cfg.pin_sclk = GPIO_NUM_48;
         detail_cfg.pin_mosi = GPIO_NUM_47;
 
-        // Legg framebuffer i PSRAM
+        // Place the framebuffer in PSRAM
         detail_cfg.use_psram = 2;
 
         _panel_instance.config_detail(detail_cfg);

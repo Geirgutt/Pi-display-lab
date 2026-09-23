@@ -25,7 +25,7 @@ struct Model
     bool nightMode = false;
     bool timeValid = false;
     char clockText[6] = "--:--";
-    char dateText[16] = "--.--.----";
+    char dateText[24] = "--.--.----";
     secure_protocol::Telemetry nodeTelemetry{};
     secure_protocol::ClusterTelemetry clusterTelemetry{};
     secure_protocol::TrainingTelemetry trainingTelemetry{};
