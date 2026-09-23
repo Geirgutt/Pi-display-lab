@@ -152,18 +152,17 @@ void homeClock(const app_state::Model& model, bool force = false)
         // Clock digits have a stable width. Drawing with an opaque background
         // replaces the old glyphs without flashing the whole screen every second.
         if (!force && lastHomeTimeValid != model.timeValid)
-            display().fillRect(8, 20, 464, 154, homeBackground);
+            display().fillRect(20, 78, 440, 96, homeBackground);
         display().setTextColor(model.timeValid ? primary : muted, homeBackground);
-        display().setFont(&fonts::Font8);
-        float clockSize = 1.8f;
+        display().setFont(&fonts::Font0);
+        uint8_t clockSize = 11;
         display().setTextSize(clockSize);
-        while (clockSize > 1.0f && display().textWidth(model.clockText) > width - 32)
+        while (clockSize > 1 && display().textWidth(model.clockText) > width - 32)
         {
-            clockSize -= 0.1f;
-            display().setTextSize(clockSize);
+            display().setTextSize(--clockSize);
         }
         display().drawString(model.clockText,
-                             (width - display().textWidth(model.clockText)) / 2, 26);
+                             (width - display().textWidth(model.clockText)) / 2, 86);
         display().setFont(&fonts::Font0);
         strncpy(lastClockText, model.clockText, sizeof(lastClockText));
         lastClockText[sizeof(lastClockText) - 1] = 0;
@@ -171,20 +170,17 @@ void homeClock(const app_state::Model& model, bool force = false)
     }
     if (force || strcmp(lastDateText, model.dateText) != 0)
     {
-        if (!force) display().fillRect(8, 170, 464, 80, homeBackground);
+        if (!force) display().fillRect(20, 181, 440, 40, homeBackground);
         display().setTextColor(model.timeValid ? primary : muted, homeBackground);
-        float dateSize = model.timeValid ? 0.88f : 6.0f;
-        if (model.timeValid) display().setFont(&fonts::Font8);
-        else display().setFont(&fonts::Font0);
+        display().setFont(&fonts::Font0);
+        uint8_t dateSize = 4;
         display().setTextSize(dateSize);
-        while (dateSize > (model.timeValid ? 0.6f : 2.0f)
-               && display().textWidth(model.dateText) > width - 32)
+        while (dateSize > 2 && display().textWidth(model.dateText) > width - 32)
         {
-            dateSize -= model.timeValid ? 0.04f : 1.0f;
-            display().setTextSize(dateSize);
+            display().setTextSize(--dateSize);
         }
         display().drawString(model.dateText,
-                             (width - display().textWidth(model.dateText)) / 2, 178);
+                             (width - display().textWidth(model.dateText)) / 2, 185);
         display().setFont(&fonts::Font0);
         strncpy(lastDateText, model.dateText, sizeof(lastDateText));
         lastDateText[sizeof(lastDateText) - 1] = 0;
