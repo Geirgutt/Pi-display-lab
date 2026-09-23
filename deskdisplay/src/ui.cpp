@@ -570,6 +570,25 @@ void calendarTelemetry(const app_state::Model& model, bool force = false)
 
 void ui::begin(const app_state::Model& model) { page(model); }
 
+void ui::showSystemUpdate()
+{
+    display().fillScreen(TFT_BLACK);
+    display().setFont(&fonts::Font0);
+    display().setTextColor(TFT_WHITE, TFT_BLACK);
+
+    const char* title = "SYSTEM UPDATE";
+    display().setTextSize(3);
+    display().drawString(title, (width - display().textWidth(title)) / 2, 168);
+
+    const char* message = "Updating firmware...";
+    display().setTextSize(2);
+    display().drawString(message, (width - display().textWidth(message)) / 2, 222);
+
+    const char* warning = "Do not power off";
+    display().setTextSize(2);
+    display().drawString(warning, (width - display().textWidth(warning)) / 2, 268);
+}
+
 void ui::page(const app_state::Model& model)
 {
     display().fillScreen(model.page == app_state::Page::Home ? homeBackground : background);

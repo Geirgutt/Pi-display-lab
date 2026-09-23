@@ -5,6 +5,7 @@ namespace ui
 {
 void begin(const app_state::Model& model);
 void page(const app_state::Model& model);
+void showSystemUpdate();
 void telemetry(const app_state::Model& model);
 void pressed(const app_state::Model& model);
 void brightness(const app_state::Model& model);

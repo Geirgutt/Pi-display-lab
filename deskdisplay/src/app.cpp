@@ -263,10 +263,13 @@ bool app::begin()
 
 void app::service()
 {
-    processTouch();
-    console::service();
+    if (!secure_transport::displaySuppressed())
+    {
+        processTouch();
+        console::service();
+    }
 #if DESKDISPLAY_BLE
-    ble_test::service();
+    if (!secure_transport::displaySuppressed()) ble_test::service();
 #endif
 #if DESKDISPLAY_WIFI
     network::service();
@@ -274,6 +277,8 @@ void app::service()
 #if DESKDISPLAY_SECURE && DESKDISPLAY_WIFI
     secure_transport::service();
 #endif
+    if (secure_transport::takeDisplayRestoreRequest()) ui::page(model);
+    if (secure_transport::displaySuppressed()) return;
     const uint32_t now = millis();
     if (static_cast<int32_t>(now - nextTelemetry) >= 0)
     {

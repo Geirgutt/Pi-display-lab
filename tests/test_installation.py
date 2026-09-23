@@ -68,6 +68,19 @@ class InstallationWorkflowTests(unittest.TestCase):
         )[1].split("uint64_t sequence", 1)[0]
         self.assertIn("if (processed) clearFrame();", control_branch)
 
+    def test_deskdisplay_ota_hides_unreliable_rgb_scanout_and_restores_after_failure(self) -> None:
+        transport = self.read("deskdisplay/src/secure_transport.cpp")
+        app = self.read("deskdisplay/src/app.cpp")
+        ui_header = self.read("deskdisplay/src/ui.h")
+        self.assertIn('"SYSTEM UPDATE"', self.read("deskdisplay/src/ui.cpp"))
+        self.assertIn("prepareOtaDisplay();", transport)
+        self.assertIn("hardware::setBacklight(false)", transport)
+        self.assertIn("hardware::setBacklight(true)", transport)
+        self.assertIn("if (otaDisplayIsSuppressed && otaRebootAt == 0)", transport)
+        self.assertIn("if (secure_transport::takeDisplayRestoreRequest()) ui::page(model);", app)
+        self.assertIn("if (secure_transport::displaySuppressed()) return;", app)
+        self.assertIn("void showSystemUpdate();", ui_header)
+
     def test_deskdisplay_ota_waits_for_rebooted_tls_reconnect(self) -> None:
         gateway = self.read("deskdisplay/tools/secure_peer.c")
         protocol = self.read("deskdisplay/src/secure_protocol.h")

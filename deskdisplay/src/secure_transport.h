@@ -18,6 +18,8 @@ struct Counters
 
 void begin();
 void service();
+bool displaySuppressed();
+bool takeDisplayRestoreRequest();
 bool start();
 void stop();
 bool setKeyHex(const char* hex);

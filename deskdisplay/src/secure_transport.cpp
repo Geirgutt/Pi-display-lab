@@ -1,5 +1,7 @@
 #include "secure_transport.h"
 #include "network.h"
+#include "hardware.h"
+#include "ui.h"
 
 #ifndef DESKDISPLAY_SECURE
 #define DESKDISPLAY_SECURE 0
@@ -51,6 +53,27 @@ uint8_t otaDigest[secure_protocol::otaDigestSize] = {};
 mbedtls_sha256_context otaHash;
 bool otaHashInitialized = false;
 uint32_t otaRebootAt = 0;
+bool otaDisplayIsSuppressed = false;
+bool otaDisplayRestorePending = false;
+
+void resetOta();
+
+void restoreOtaDisplay()
+{
+    if (!otaDisplayIsSuppressed) return;
+    hardware::setBacklight(true);
+    otaDisplayIsSuppressed = false;
+    otaDisplayRestorePending = true;
+}
+
+void prepareOtaDisplay()
+{
+    if (otaDisplayIsSuppressed) return;
+    ui::showSystemUpdate();
+    delay(1200); // Keep the warning readable before flash access begins.
+    hardware::setBacklight(false);
+    otaDisplayIsSuppressed = true;
+}
 
 int hexValue(char c)
 {
@@ -82,6 +105,11 @@ void clearFrame()
 
 void closeSession(bool countReconnect)
 {
+    if (otaDisplayIsSuppressed && otaRebootAt == 0)
+    {
+        resetOta();
+        restoreOtaDisplay();
+    }
     if (sessionActive || client.connected()) client.stop();
     sessionActive = false;
     lastSequence = 0;
@@ -124,6 +152,7 @@ bool startOta(const uint8_t* payload, size_t length)
     otaSize = secure_protocol::get32(payload);
     if (otaSize == 0) return false;
     memcpy(otaDigest, payload + 4, sizeof(otaDigest));
+    prepareOtaDisplay();
     if (!Update.begin(otaSize, U_FLASH)) return false;
     mbedtls_sha256_init(&otaHash);
     if (mbedtls_sha256_starts_ret(&otaHash, 0) != 0)
@@ -481,6 +510,15 @@ void secure_transport::service()
     Serial.println("Secure TLS session established.");
 }
 
+bool secure_transport::displaySuppressed() { return otaDisplayIsSuppressed; }
+
+bool secure_transport::takeDisplayRestoreRequest()
+{
+    const bool pending = otaDisplayRestorePending;
+    otaDisplayRestorePending = false;
+    return pending;
+}
+
 bool secure_transport::start()
 {
     if (!keyAvailable || !peerAddress[0]) return false;
@@ -573,6 +611,8 @@ void secure_transport::printStatus(Print& out)
 
 void secure_transport::begin() {}
 void secure_transport::service() {}
+bool secure_transport::displaySuppressed() { return false; }
+bool secure_transport::takeDisplayRestoreRequest() { return false; }
 bool secure_transport::start() { return false; }
 void secure_transport::stop() {}
 bool secure_transport::setKeyHex(const char*) { return false; }
