@@ -22,10 +22,26 @@ namespace
 constexpr char identity[] = "DeskDisplay-peer";
 constexpr char preferenceNamespace[] = "dd-secure";
 constexpr uint16_t defaultPort = 4567;
-constexpr uint32_t reconnectMs = 5000;
+constexpr uint32_t initialReconnectMs = 5000;
+constexpr uint32_t maximumReconnectMs = 30000;
+constexpr int32_t connectTimeoutMs = 1000;
+constexpr unsigned long handshakeTimeoutSeconds = 5;
+constexpr uint32_t sessionTimeoutSeconds = 50;
 constexpr uint32_t offlineMs = 5000;
 
-WiFiClientSecure client;
+class DeskDisplaySecureClient : public WiFiClientSecure
+{
+public:
+    void useSessionTimeout(uint32_t seconds)
+    {
+        setTimeout(seconds);
+        // Arduino-ESP32 also uses this internal value for TLS writes; its
+        // setTimeout() method does not update it after a connection succeeds.
+        sslclient->socket_timeout = seconds * 1000UL;
+    }
+};
+
+DeskDisplaySecureClient client;
 Preferences preferences;
 uint8_t psk[32] = {};
 char pskHex[65] = {};
@@ -35,6 +51,7 @@ bool keyAvailable = false;
 bool requested = false;
 bool sessionActive = false;
 uint32_t nextConnect = 0;
+uint32_t reconnectDelayMs = initialReconnectMs;
 uint32_t lastRx = 0;
 uint32_t lastValidTelemetry = 0;
 uint64_t lastSequence = 0;
@@ -455,7 +472,7 @@ void serviceSession()
 void secure_transport::begin()
 {
     loadConfiguration();
-    client.setTimeout(50);
+    client.setHandshakeTimeout(handshakeTimeoutSeconds);
     Serial.printf("Secure transport: %s, peer=%s:%u\n",
                   keyAvailable && peerAddress[0] ? "configured" : "not configured",
                   peerAddress[0] ? peerAddress : "-", peerPort);
@@ -471,6 +488,8 @@ void secure_transport::service()
     if (!wifi.connected)
     {
         if (sessionActive) closeSession(true);
+        nextConnect = 0;
+        reconnectDelayMs = initialReconnectMs;
         return;
     }
     if (sessionActive)
@@ -489,7 +508,9 @@ void secure_transport::service()
     }
     client.setPreSharedKey(identity, pskHex);
     Serial.printf("Secure TLS connection to %s:%u...\n", peerAddress, peerPort);
-    if (!client.connect(address, peerPort))
+    // This overload takes milliseconds. Keep the UI loop moving while the
+    // controller is unreachable; restore the long I/O timeout for OTA below.
+    if (!client.connect(address, peerPort, connectTimeoutMs))
     {
         char errorText[64] = {};
         const int errorCode = client.lastError(errorText, sizeof(errorText));
@@ -498,12 +519,16 @@ void secure_transport::service()
         // are TLS setup/handshake failures.
         if (isTransportError(errorCode)) ++stats.transportFailures;
         else ++stats.authFailures;
-        nextConnect = millis() + reconnectMs;
+        nextConnect = millis() + reconnectDelayMs;
+        reconnectDelayMs = reconnectDelayMs < maximumReconnectMs / 2
+                         ? reconnectDelayMs * 2 : maximumReconnectMs;
         Serial.printf("Secure TLS connection failed (%d%s%s); retrying.\n",
                       errorCode, errorText[0] ? ": " : "", errorText);
         return;
     }
     sessionActive = true;
+    reconnectDelayMs = initialReconnectMs;
+    client.useSessionTimeout(sessionTimeoutSeconds);
     lastRx = millis();
     lastSequence = 0;
     clearFrame();
@@ -524,6 +549,7 @@ bool secure_transport::start()
     if (!keyAvailable || !peerAddress[0]) return false;
     requested = true;
     nextConnect = 0;
+    reconnectDelayMs = initialReconnectMs;
     return true;
 }
 

@@ -133,7 +133,7 @@ class InstallationWorkflowTests(unittest.TestCase):
         self.assertIn("putUChar(brightnessKey", hardware)
         self.assertIn("putBool(nightModeKey", hardware)
         self.assertIn("constexpr uint32_t backlightFrequency = 1000", hardware)
-        self.assertIn("constexpr uint8_t minimumBrightness = 10", hardware_header)
+        self.assertIn("constexpr uint8_t minimumBrightness = 20", hardware_header)
         self.assertIn("constexpr uint8_t maximumBrightness = 100", hardware_header)
         self.assertIn("analogWriteFrequency(backlightFrequency)", hardware)
         self.assertIn("analogWrite(backlightPin, duty)", hardware)
