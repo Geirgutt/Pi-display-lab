@@ -64,8 +64,9 @@ class AppSmokeTests(unittest.TestCase):
         self.app = create_app(mock_mode=True)
         self.client = self.app.test_client()
 
-    def test_home_and_health_are_available(self) -> None:
-        self.assertEqual(self.client.get("/").status_code, 200)
+    def test_browser_ui_is_removed_but_health_remains_available(self) -> None:
+        self.assertEqual(self.client.get("/").status_code, 404)
+        self.assertEqual(self.client.get("/static/app.js").status_code, 404)
         self.assertEqual(self.client.get("/api/health").get_json()["ok"], True)
 
     def test_state_has_stable_protocol_fields(self) -> None:

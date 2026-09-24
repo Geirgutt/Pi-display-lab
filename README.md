@@ -51,9 +51,7 @@ alternativer.
 - **Calendar:** samler valgfritt flere private ICS-kalendere på controlleren.
 - **Developer controls:** permanent nodestatus, valg av clusterkapasitet og
   oppstart av Monte Carlo- og primtallsbatcher på workerne.
-- **Mock-modus:** test hele prosjektet på Windows uten Raspberry Pi.
-- **Transportlag:** `BrowserTransport` virker nå, mens `Esp32Transport` er en
-  trygg stub for neste etappe.
+- **Mock-modus:** test API-et uten Raspberry Pi.
 
 ## Slik henger delene sammen
 
@@ -65,26 +63,18 @@ Workers ← HTTPS GET /job ─ Cluster coordinator ─ statuscache ┤
 SystemMonitor ─────────────────────────────────────── DashboardState
                                                        (én felles state)
              │
-            ▼
-        TransportHub
-         ┌──┴───────────────┐
-         ▼                  ▼
- BrowserTransport    Controller gateway → TLS → DeskDisplay
-         │                                      │
-         ▼                                      ▼
- Flask API → nettleser → TFT-renderer       Cluster page
+             ▼
+       Controller API → local gateway → TLS → DeskDisplay
 ```
 
 Kort forklart:
 
-- **Backend** er Python-programmet som måler, beregner og svarer nettleseren.
-- **Frontend** er HTML, CSS og JavaScript som tegner det du ser.
-- **API** er avtalte nettadresser der frontend henter eller endrer state.
-- **Transportlag** er adapteren som leverer den samme state-meldingen til en
-  nettleser nå og en ESP32 senere.
+- **Controller API** er Python-programmet som måler, lagrer node-heartbeats
+  og leverer status lokalt til gatewayen. Det har ikke lenger en nettside.
+- **DeskDisplay** tegner skjermbildene selv fra status sendt over TLS.
 
-Forretningslogikken ligger derfor ikke i HTML-en. Nettleseren er bare en
-renderer som mottar state og tegner riktig skjerm.
+Forretningslogikken ligger på controlleren; displayet får kompakt status via
+gatewayen og tegner skjermbildene selv.
 
 ## Start på Raspberry Pi OS Lite
 
@@ -585,25 +575,11 @@ Home Assistant OS bør vi ikke installere dette skriptet direkte. Der lager vi
 senere en liten Home Assistant-integrasjon, add-on eller MQTT/REST-automatisering
 som sender de samme heartbeat-feltene. API-formatet er allerede klart for det.
 
-## Finn Pi-ens IP og åpne fra Windows
+## Controller-API
 
-Mens appen kjører, åpner du en ny SSH-økt/terminal på Pi-en og skriver:
-
-```bash
-hostname -I
-```
-
-Resultatet kan for eksempel se ut som `192.0.2.42` (adressen her er bare en
-plassholder). På Windows-PC-en, som må være på samme nettverk, åpner du da:
-
-```text
-http://192.0.2.42:5000
-```
-
-Bruk din faktiske adresse. `127.0.0.1` virker bare på maskinen der appen kjører.
-
-Prosjektet har ikke innlogging. Bruk det på et hjemmenett/labnett du stoler på,
-og ikke åpne port 5000 direkte mot internett.
+Controlleren beholder HTTP-API-et på port 5000: workerne sender heartbeat hit,
+og DeskDisplay-gatewayen henter status fra loopback. Det finnes ikke lenger et
+nettlesergrensesnitt. Ikke åpne port 5000 direkte mot internett.
 
 ## Før repoet gjøres offentlig
 
@@ -614,7 +590,7 @@ skjermbilder. Kontroller alltid `git status` og `git diff --staged` før push.
 Se [SECURITY.md](SECURITY.md) for sjekklisten, regler for lokale
 hemmeligheter og hva du må gjøre hvis noe sensitivt blir committet ved et uhell.
 
-## Test på Windows med mock-data
+## Test API-et med mock-data
 
 Åpne PowerShell i prosjektmappen og kjør:
 
@@ -624,8 +600,8 @@ py -m venv .venv
 .venv\Scripts\python.exe app.py --mock
 ```
 
-Åpne deretter [http://127.0.0.1:5000](http://127.0.0.1:5000). Mock-modusen viser
-bevegelige, men falske sensorverdier. Du kan også bruke mock-modus på Pi:
+Hent deretter `http://127.0.0.1:5000/api/state` for falske sensorverdier.
+Du kan også bruke mock-modus på Pi:
 
 ```bash
 python app.py --mock
@@ -723,9 +699,6 @@ alltid tegne siste melding uten å måtte huske en lang historikk.
 | `ansible/` | Ruller worker-kode og tjenester ut over eksisterende SSH-nøkler |
 | `updates.py` | Sjekker `origin/main` og lager lenke til en tilgjengelig commit |
 | `transports.py` | Felles `DeviceTransport`, nettlesertransport og ESP32-stub |
-| `templates/index.html` | Selve nettsidens struktur |
-| `static/app.js` | Henter state og tegner de fire skjermbildene |
-| `static/style.css` | Farger, TFT-ramme, layout og responsiv skalering |
 | `tests/` | Små kontroller av API, beregningsjobb og transportlag |
 | `requirements.txt` | Den eneste Python-avhengigheten: Flask |
 
@@ -737,25 +710,9 @@ lenge lisens- og opphavsmerknaden følger med. Programvaren leveres uten garanti
 
 ## Enkle steder å eksperimentere
 
-Ta én liten endring av gangen, lagre filen og oppdater nettleseren:
-
-- **Bytt farger:** øverst i `static/style.css` finner du `--cyan`, `--amber`,
-  `--violet` og bakgrunnsfargene.
-- **Endre overskrifter:** `templates/index.html` inneholder teksten rundt den
-  emulerte skjermen. Tekst inni TFT-en ligger i renderer-funksjonene i
-  `static/app.js`.
-- **Flytt elementer:** søk etter `.metrics-grid`, `.cluster-grid` eller
-  `.nerd-layout` i `static/style.css`.
-- **Endre polling:** `POLL_INTERVAL_MS` øverst i `static/app.js`. `1000` betyr
-  1000 millisekunder, altså ett sekund.
 - **Legg til sensor:** les verdien i `SystemMonitor`, legg den i
-  `DashboardState.snapshot()`, og vis den til slutt i ønsket renderer i
-  `static/app.js`.
+  `DashboardState.snapshot()`, og viderefør den til DeskDisplay-protokollen.
 - **Legg til en Pi:** kjør `scripts/install-agent-service.sh` på den nye noden.
-- **Gjør demoen tyngre/lettere:** alternativene i `templates/index.html`.
-
-Den rekkefølgen ved en ny sensor er viktig: **mål → legg i JSON → tegn**. Det er
-samme mønster en fysisk skjerm skal bruke.
 
 ## Plan for ekte ESP32-S3
 

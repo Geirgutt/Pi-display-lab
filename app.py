@@ -8,7 +8,7 @@ import secrets
 from datetime import datetime
 from typing import Any
 
-from flask import Flask, Response, jsonify, render_template, request
+from flask import Flask, Response, jsonify, request
 
 from cluster_auth import load_cluster_credentials, valid_worker_id
 from cluster_client import (
@@ -164,7 +164,9 @@ def create_app(
     if mock_mode is None:
         mock_mode = os.name == "nt" or os.getenv("PI_DISPLAY_MOCK") == "1"
 
-    app = Flask(__name__)
+    # The controller serves an API for workers and the secure display gateway,
+    # not a browser UI. Disable Flask's implicit /static route as well.
+    app = Flask(__name__, static_folder=None)
     app.config["MOCK_MODE"] = mock_mode
     app.config["NODE_TOKEN"] = os.getenv("PI_DISPLAY_NODE_TOKEN", "")
 
@@ -187,10 +189,6 @@ def create_app(
     app.extensions["updater"] = updater
     app.extensions["cluster_coordinator"] = cluster
     app.extensions["cluster_status"] = cluster_status
-
-    @app.get("/")
-    def index() -> str:
-        return render_template("index.html", mock_mode=mock_mode)
 
     @app.get("/api/health")
     def health() -> Any:
@@ -416,6 +414,5 @@ if __name__ == "__main__":
     )
     mode = "MOCK" if selected_app.config["MOCK_MODE"] else "PI / LIVE"
     print(f"Pi Display Lab starter i {mode}-modus")
-    print(f"Åpne http://127.0.0.1:{args.port} på denne maskinen")
-    print("Fra en annen PC: bruk Pi-ens IP-adresse i stedet for 127.0.0.1")
+    print(f"API tilgjengelig på http://127.0.0.1:{args.port}/api/health")
     selected_app.run(host="0.0.0.0", port=args.port, debug=False, threaded=True)
