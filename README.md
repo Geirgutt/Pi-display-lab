@@ -13,6 +13,10 @@ workerne, slik at ESP32-en bare trenger én TLS-forbindelse.
 
 ## DeskDisplay-firmware
 
+Home får kommende kalender- og treningssammendrag. Naviger med den lille
+Menu-knappen, sveip opp på Home eller ned på Menu, og trykk på sammendragene
+for Cluster, kalender og trening.
+
 Dette er også hovedlageret for DeskDisplay-firmwareprosjektet. Den eksisterende
 Pi Display Lab-strukturen ligger fortsatt i repository-roten; firmwareprosjektet
 ligger separat under `deskdisplay/`.

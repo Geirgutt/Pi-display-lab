@@ -30,6 +30,14 @@ secure_protocol::TrainingTelemetry lastTraining{};
 secure_protocol::CalendarTelemetry lastCalendar{};
 bool trainingDrawn = false;
 bool calendarDrawn = false;
+struct HomeSummary
+{
+    char heading[64] = {};
+    char title[96] = {};
+    bool pressed = false;
+};
+HomeSummary lastHomeCalendar{}, lastHomeTraining{};
+bool isTomorrow(const app_state::Model& model, const char* iso);
 
 LGFX& display() { return hardware::display(); }
 
@@ -118,6 +126,28 @@ void homeAlarm(const app_state::Model& model)
            model.nightMode ? nightOutline : homeButtonOutline,
            model.nightMode ? nightRed : text,
            model.nightMode ? nightPressed : accent);
+}
+
+void homeNavigation(const app_state::Model& model)
+{
+    button(8, "Menu", ui_layout::homeMenuX, ui_layout::homeMenuY,
+           ui_layout::homeMenuWidth, model.pressedButton == 8,
+           homeBackground, model.nightMode ? nightOutline : homeButtonOutline,
+           model.nightMode ? nightRed : text, model.nightMode ? nightPressed : accent);
+    display().setFont(&fonts::Font0);
+    display().setTextSize(1);
+    display().setTextColor(model.nightMode ? nightRed : muted, homeBackground);
+    display().drawString("Swipe up for menu", 28, ui_layout::homeMenuY + 16);
+}
+
+void menuButtons(const app_state::Model& model)
+{
+    homeButton(1, "Cluster", ui_layout::leftButtonX, ui_layout::menuFirstRowY, model);
+    homeButton(2, "Training", ui_layout::rightButtonX, ui_layout::menuFirstRowY, model);
+    homeButton(3, "Calendar", ui_layout::leftButtonX, ui_layout::menuSecondRowY, model);
+    homeButton(7, "Alarm", ui_layout::rightButtonX, ui_layout::menuSecondRowY, model);
+    homeButton(4, "System", ui_layout::leftButtonX, ui_layout::menuThirdRowY, model);
+    homeButton(5, "Clock", ui_layout::rightButtonX, ui_layout::menuThirdRowY, model);
 }
 
 void header(const char* title, uint16_t fill, uint16_t foreground);
@@ -257,6 +287,100 @@ void homeClock(const app_state::Model& model, bool force = false)
         lastHomeOnlineCount = model.clusterTelemetry.onlineNodes;
         lastHomeStreamLive = streamLive;
     }
+}
+
+void fitText(char* value, size_t capacity, int16_t pixels)
+{
+    if (display().textWidth(value) <= pixels) return;
+    size_t length = strlen(value);
+    while (length && (length + 4 > capacity
+           || display().textWidth(value) + display().textWidth("...") > pixels))
+    {
+        --length;
+        while (length && (static_cast<uint8_t>(value[length]) & 0xC0) == 0x80) --length;
+        value[length] = 0;
+    }
+    if (length + 4 <= capacity) strcat(value, "...");
+}
+
+void drawHomeSummary(HomeSummary& previous, HomeSummary value, int16_t y,
+                     const app_state::Model& model, bool force)
+{
+    if (!force && previous.pressed == value.pressed
+        && strcmp(previous.heading, value.heading) == 0
+        && strcmp(previous.title, value.title) == 0) return;
+    previous = value;
+    display().fillRect(20, y, 440, ui_layout::homeSummaryHeight, homeBackground);
+    display().setFont(&fonts::Font0);
+    display().setTextSize(1);
+    display().setTextColor(model.nightMode ? nightRed : muted, homeBackground);
+    fitText(value.heading, sizeof(value.heading), 424);
+    display().drawString(value.heading, 28, y + 4);
+    display().setTextSize(2);
+    display().setTextColor(model.nightMode ? nightRed : text, homeBackground);
+    fitText(value.title, sizeof(value.title), 424);
+    display().drawString(value.title, 28, y + 20);
+    if (value.pressed)
+        display().drawRoundRect(20, y, 440, ui_layout::homeSummaryHeight, 4,
+                               model.nightMode ? nightRed : accent);
+}
+
+void homeSummaries(const app_state::Model& model, bool force = false)
+{
+    const bool cached = model.nodeLastUpdate != 0
+        && uint32_t(millis() - model.nodeLastUpdate) >= 5000;
+    HomeSummary calendar{};
+    calendar.pressed = model.pressedButton == 3;
+    snprintf(calendar.heading, sizeof(calendar.heading), "Calendar");
+    const char* calendarFallback = !model.calendarTelemetry.available ? "Not configured"
+        : (!model.timeValid ? "Waiting for time" : "No upcoming events");
+    copyDisplayText(calendarFallback, calendar.title, sizeof(calendar.title));
+    if (model.nextCalendar >= 0)
+    {
+        const auto& event = model.calendarTelemetry.events[model.nextCalendar];
+        const time_t starts = event.startsAt;
+        const time_t now = time(nullptr);
+        struct tm local = {}, today = {};
+        char when[32] = {};
+        if (localtime_r(&starts, &local) && localtime_r(&now, &today))
+        {
+            const bool sameDay = local.tm_year == today.tm_year && local.tm_yday == today.tm_yday;
+            if (!event.allDay && starts <= now && event.endsAt > now)
+                snprintf(when, sizeof(when), "NOW");
+            else strftime(when, sizeof(when), event.allDay
+                ? (sameDay ? "TODAY ALL DAY" : "%d.%m ALL DAY")
+                : (sameDay ? "TODAY %H:%M" : "%d.%m %H:%M"), &local);
+        }
+        snprintf(calendar.heading, sizeof(calendar.heading), "Calendar - %s%s",
+                 when, cached ? " (cached)" : "");
+        copyDisplayText(event.title[0] ? event.title : "Calendar event",
+                        calendar.title, sizeof(calendar.title));
+    }
+    drawHomeSummary(lastHomeCalendar, calendar, ui_layout::homeCalendarY, model, force);
+
+    HomeSummary training{};
+    training.pressed = model.pressedButton == 9;
+    snprintf(training.heading, sizeof(training.heading), "Training");
+    const char* trainingFallback = !model.trainingTelemetry.available ? "Not configured"
+        : (!model.timeValid ? "Waiting for time" : "No upcoming workouts");
+    copyDisplayText(trainingFallback, training.title, sizeof(training.title));
+    if (model.nextTraining >= 0)
+    {
+        const auto& workout = model.trainingTelemetry.workouts[model.nextTraining];
+        char when[16];
+        const time_t now = time(nullptr);
+        struct tm local = {};
+        char today[11] = {};
+        if (localtime_r(&now, &local)) strftime(today, sizeof(today), "%Y-%m-%d", &local);
+        if (strcmp(workout.date, today) == 0) snprintf(when, sizeof(when), "TODAY");
+        else if (isTomorrow(model, workout.date)) snprintf(when, sizeof(when), "TOMORROW");
+        else snprintf(when, sizeof(when), "%.2s.%.2s", workout.date + 8, workout.date + 5);
+        snprintf(training.heading, sizeof(training.heading), "Training - %s%s",
+                 when, cached ? " (cached)" : "");
+        copyDisplayText(workout.title[0] ? workout.title : "Workout",
+                        training.title, sizeof(training.title));
+    }
+    drawHomeSummary(lastHomeTraining, training, ui_layout::homeTrainingY, model, force);
 }
 
 void systemTelemetry(const app_state::Model& model)
@@ -659,15 +783,23 @@ void ui::alarmFlash(bool lit, const app_state::Model& model)
 
 void ui::page(const app_state::Model& model)
 {
-    display().fillScreen(model.page == app_state::Page::Home ? homeBackground : background);
+    display().fillScreen((model.page == app_state::Page::Home || model.page == app_state::Page::Menu)
+                        ? homeBackground : background);
     if (model.page == app_state::Page::Home)
     {
         homeClock(model, true);
         homeAlarm(model);
-        homeButton(1, "Cluster", ui_layout::leftButtonX, ui_layout::homeTopButtonY, model);
-        homeButton(2, "Training", ui_layout::rightButtonX, ui_layout::homeTopButtonY, model);
-        homeButton(3, "Calendar", ui_layout::leftButtonX, ui_layout::homeBottomButtonY, model);
-        homeButton(4, "System", ui_layout::rightButtonX, ui_layout::homeBottomButtonY, model);
+        homeSummaries(model, true);
+        homeNavigation(model);
+    }
+    else if (model.page == app_state::Page::Menu)
+    {
+        header("Menu", homeBackground, model.nightMode ? nightRed : text);
+        display().setTextSize(1);
+        display().setTextColor(model.nightMode ? nightRed : muted, homeBackground);
+        display().drawString("Choose a page", 200, 80);
+        display().drawString("Swipe down for clock", 180, 386);
+        menuButtons(model);
     }
     else if (model.page == app_state::Page::System)
     {
@@ -732,6 +864,7 @@ void ui::telemetry(const app_state::Model& model)
     if (model.page == app_state::Page::Home)
     {
         homeClock(model);
+        homeSummaries(model);
         return;
     }
     if (model.page == app_state::Page::Training)
@@ -750,10 +883,12 @@ void ui::pressed(const app_state::Model& model)
     if (model.page == app_state::Page::Home)
     {
         homeAlarm(model);
-        homeButton(1, "Cluster", ui_layout::leftButtonX, ui_layout::homeTopButtonY, model);
-        homeButton(2, "Training", ui_layout::rightButtonX, ui_layout::homeTopButtonY, model);
-        homeButton(3, "Calendar", ui_layout::leftButtonX, ui_layout::homeBottomButtonY, model);
-        homeButton(4, "System", ui_layout::rightButtonX, ui_layout::homeBottomButtonY, model);
+        homeSummaries(model);
+        homeNavigation(model);
+    }
+    else if (model.page == app_state::Page::Menu)
+    {
+        menuButtons(model);
     }
     else if (model.page == app_state::Page::System)
     {

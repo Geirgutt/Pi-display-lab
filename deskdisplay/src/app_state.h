@@ -5,7 +5,7 @@
 
 namespace app_state
 {
-enum class Page : uint8_t { Home, Cluster, Training, TrainingDetail, Calendar, System, Alarm };
+enum class Page : uint8_t { Home, Cluster, Training, TrainingDetail, Calendar, System, Alarm, Menu };
 
 struct Model
 {
@@ -21,6 +21,8 @@ struct Model
     int16_t touchY = -1;
     uint8_t pressedButton = 0;
     uint8_t selectedTraining = 0;
+    int8_t nextTraining = -1;
+    int8_t nextCalendar = -1;
     uint8_t brightnessPercent = 100;
     bool nightMode = false;
     bool alarmEnabled = false;

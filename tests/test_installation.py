@@ -162,7 +162,7 @@ class InstallationWorkflowTests(unittest.TestCase):
         self.assertIn("fillRect(20, 272, 440, 42, homeBackground)", ui)
         self.assertIn("? 278 : 283);", ui)
         self.assertNotIn('header("Home"', ui)
-        self.assertIn("model.page == app_state::Page::Home ? homeBackground : background", ui)
+        self.assertIn("model.page == app_state::Page::Home || model.page == app_state::Page::Menu", ui)
         self.assertNotIn("fillRoundRect(12, 68, 456, 272, 10, card)", ui)
         self.assertIn("clusterMetadataSize = 7", protocol)
         self.assertIn("CLUSTER_METADATA_SIZE 7", gateway)

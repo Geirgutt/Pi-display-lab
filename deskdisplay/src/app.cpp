@@ -9,6 +9,8 @@
 #include "ble_test.h"
 #include "secure_transport.h"
 #include "ui_layout.h"
+#include "home_content.h"
+#include "navigation_gesture.h"
 #include <Arduino.h>
 #include <time.h>
 
@@ -17,7 +19,9 @@ namespace
 app_state::Model model;
 uint32_t nextTelemetry = 0;
 bool lastDown = false;
-uint32_t pressedAt = 0;
+navigation_gesture::Tracker gesture;
+app_state::Page touchPage = app_state::Page::Home;
+bool touchCancelled = false;
 bool alarmActive = false;
 bool alarmLit = false;
 uint32_t alarmStartedAt = 0;
@@ -47,10 +51,13 @@ void checkAlarm()
     hardware::markAlarmFired(date, !model.alarmRepeats);
     model.alarmEnabled = hardware::alarmEnabled();
     model.page = app_state::Page::Home;
+    model.pressedButton = 0;
+    touchCancelled = true;
     alarmActive = true;
     alarmLit = true;
     alarmStartedAt = millis();
     lastAlarmBlinkAt = alarmStartedAt;
+    if (model.alarmMethod == 1) ui::page(model);
     ui::alarmFlash(true, model);
 }
 
@@ -133,6 +140,11 @@ void refreshState()
     model.nodeOnline = model.nodeLastUpdate != 0
                     && uint32_t(millis() - model.nodeLastUpdate) < 5000
                     && model.nodeTelemetry.online;
+    char today[11] = {};
+    if (model.timeValid) strftime(today, sizeof(today), "%Y-%m-%d", &localTime);
+    model.nextTraining = home_content::nextWorkout(model.trainingTelemetry, today);
+    model.nextCalendar = home_content::nextEvent(model.calendarTelemetry,
+        model.timeValid ? static_cast<uint32_t>(now) : 0);
 }
 
 uint8_t hit(int16_t x, int16_t y)
@@ -146,14 +158,31 @@ uint8_t hit(int16_t x, int16_t y)
     {
         if (x >= 20 && x < 460 && y >= ui_layout::homeAlarmY
             && y < ui_layout::homeAlarmY + ui_layout::buttonHeight) return 7;
-        if (inside(x, y, ui_layout::leftButtonX, ui_layout::homeTopButtonY,
+        if (inside(x, y, 20, 272, 440)) return 1;
+        if (x >= 20 && x < 460)
+        {
+            if (y >= ui_layout::homeCalendarY
+                && y < ui_layout::homeCalendarY + ui_layout::homeSummaryHeight) return 3;
+            if (y >= ui_layout::homeTrainingY
+                && y < ui_layout::homeTrainingY + ui_layout::homeSummaryHeight) return 9;
+        }
+        if (inside(x, y, ui_layout::homeMenuX, ui_layout::homeMenuY,
+                   ui_layout::homeMenuWidth)) return 8;
+    }
+    else if (model.page == app_state::Page::Menu)
+    {
+        if (inside(x, y, ui_layout::leftButtonX, ui_layout::menuFirstRowY,
                    ui_layout::pairedButtonWidth)) return 1;
-        if (inside(x, y, ui_layout::rightButtonX, ui_layout::homeTopButtonY,
+        if (inside(x, y, ui_layout::rightButtonX, ui_layout::menuFirstRowY,
                    ui_layout::pairedButtonWidth)) return 2;
-        if (inside(x, y, ui_layout::leftButtonX, ui_layout::homeBottomButtonY,
+        if (inside(x, y, ui_layout::leftButtonX, ui_layout::menuSecondRowY,
                    ui_layout::pairedButtonWidth)) return 3;
-        if (inside(x, y, ui_layout::rightButtonX, ui_layout::homeBottomButtonY,
+        if (inside(x, y, ui_layout::rightButtonX, ui_layout::menuSecondRowY,
+                   ui_layout::pairedButtonWidth)) return 7;
+        if (inside(x, y, ui_layout::leftButtonX, ui_layout::menuThirdRowY,
                    ui_layout::pairedButtonWidth)) return 4;
+        if (inside(x, y, ui_layout::rightButtonX, ui_layout::menuThirdRowY,
+                   ui_layout::pairedButtonWidth)) return 5;
     }
     else if (model.page == app_state::Page::System)
     {
@@ -241,6 +270,17 @@ void action(uint8_t button)
         ui::page(model);
         break;
     case 7: model.page = app_state::Page::Alarm; model.pressedButton = 0; ui::page(model); break;
+    case 8: model.page = app_state::Page::Menu; model.pressedButton = 0; ui::page(model); break;
+    case 9:
+        if (model.nextTraining >= 0)
+        {
+            model.selectedTraining = static_cast<uint8_t>(model.nextTraining);
+            model.page = app_state::Page::TrainingDetail;
+        }
+        else model.page = app_state::Page::Training;
+        model.pressedButton = 0;
+        ui::page(model);
+        break;
     case 12: model.alarmHour = (model.alarmHour + 23) % 24; break;
     case 13: model.alarmHour = (model.alarmHour + 1) % 24; break;
     case 14: model.alarmMinute = (model.alarmMinute + 59) % 60; break;
@@ -287,6 +327,7 @@ void processTouch()
     if (alarmActive)
     {
         if (down && !lastDown) stopAlarm();
+        touchCancelled = true;
         lastDown = down;
         return;
     }
@@ -296,18 +337,40 @@ void processTouch()
         model.touchY = point.y;
         if (!lastDown)
         {
+            gesture.begin(point.x, point.y, millis());
+            touchPage = model.page;
+            touchCancelled = false;
             model.pressedButton = hit(point.x, point.y);
-            pressedAt = millis();
             if (model.pressedButton == 11) updateBrightnessSlider(point.x);
             else if (model.pressedButton) ui::pressed(model);
         }
-        else if (model.pressedButton == 11) updateBrightnessSlider(point.x);
+        else
+        {
+            gesture.move(point.x, point.y);
+            if (model.pressedButton == 11) updateBrightnessSlider(point.x);
+        }
     }
     else if (lastDown)
     {
         const uint8_t button = model.pressedButton;
         model.pressedButton = 0;
-        if (button)
+        if (touchCancelled) touchCancelled = false;
+        else if (touchPage == model.page && (touchPage == app_state::Page::Home
+            || touchPage == app_state::Page::Menu))
+        {
+            const auto result = gesture.finish(millis());
+            if (touchPage == app_state::Page::Home && gesture.originY() >= 78
+                && result == navigation_gesture::Result::Up) action(8);
+            else if (touchPage == app_state::Page::Menu
+                     && result == navigation_gesture::Result::Down) action(5);
+            else
+            {
+                ui::pressed(model);
+                if (result == navigation_gesture::Result::Tap && button
+                    && hit(gesture.x(), gesture.y()) == button) action(button);
+            }
+        }
+        else if (touchPage == model.page && button)
         {
             if (button == 11)
             {
@@ -323,7 +386,6 @@ void processTouch()
         }
     }
     lastDown = down;
-    (void)pressedAt;
 }
 }
 
