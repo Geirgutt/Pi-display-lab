@@ -12,6 +12,10 @@ constexpr int16_t leftButtonX = 12;
 constexpr int16_t rightButtonX = 288;
 constexpr int16_t homeCalendarY = 326;
 constexpr int16_t homeTrainingY = 380;
+constexpr int16_t homeTrainingTop(bool calendarVisible)
+{
+    return calendarVisible ? homeTrainingY : homeCalendarY;
+}
 constexpr int16_t homeSummaryHeight = 48;
 constexpr int16_t homeMenuX = 360;
 constexpr int16_t homeMenuY = 432;

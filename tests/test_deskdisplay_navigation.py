@@ -13,6 +13,7 @@ CPP = r'''#include <cassert>
 #include <cstdint>
 #include "navigation_gesture.h"
 #include "home_content.h"
+#include "ui_layout.h"
 
 using navigation_gesture::Result;
 
@@ -41,6 +42,8 @@ static void copyDate(char (&dest)[11], const char* date)
 
 int main()
 {
+    assert(ui_layout::homeTrainingTop(false) == ui_layout::homeCalendarY);
+    assert(ui_layout::homeTrainingTop(true) == ui_layout::homeTrainingY);
     assert(gesture(116, 134) == Result::Tap); // small diagonal jitter
     assert(gesture(102, 60) == Result::Up);
     assert(gesture(102, 240) == Result::Down);

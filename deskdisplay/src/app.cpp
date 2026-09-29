@@ -166,10 +166,11 @@ uint8_t hit(int16_t x, int16_t y)
         if (inside(x, y, 20, 272, 440)) return 1;
         if (x >= 20 && x < 460)
         {
-            if (y >= ui_layout::homeCalendarY
+            if (model.calendarTelemetry.available && y >= ui_layout::homeCalendarY
                 && y < ui_layout::homeCalendarY + ui_layout::homeSummaryHeight) return 3;
-            if (y >= ui_layout::homeTrainingY
-                && y < ui_layout::homeTrainingY + ui_layout::homeSummaryHeight) return 9;
+            const int16_t trainingTop = ui_layout::homeTrainingTop(model.calendarTelemetry.available);
+            if (y >= trainingTop
+                && y < trainingTop + ui_layout::homeSummaryHeight) return 9;
         }
         if (inside(x, y, ui_layout::homeMenuX, ui_layout::homeMenuY,
                    ui_layout::homeMenuWidth)) return 8;

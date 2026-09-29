@@ -37,6 +37,7 @@ struct HomeSummary
     bool pressed = false;
 };
 HomeSummary lastHomeCalendar{}, lastHomeTraining{};
+bool lastHomeCalendarVisible = false;
 bool isTomorrow(const app_state::Model& model, const char* iso);
 
 LGFX& display() { return hardware::display(); }
@@ -329,6 +330,16 @@ void drawHomeSummary(HomeSummary& previous, HomeSummary value, int16_t y,
 
 void homeSummaries(const app_state::Model& model, bool force = false)
 {
+    const bool calendarVisible = model.calendarTelemetry.available;
+    if (force || calendarVisible != lastHomeCalendarVisible)
+    {
+        // Clear both slots when configuration changes, so moved text leaves no ghosts.
+        display().fillRect(20, ui_layout::homeCalendarY, 440,
+            ui_layout::homeTrainingY + ui_layout::homeSummaryHeight - ui_layout::homeCalendarY,
+            homeBackground);
+        lastHomeCalendarVisible = calendarVisible;
+        force = true;
+    }
     const bool cached = model.nodeLastUpdate != 0
         && uint32_t(millis() - model.nodeLastUpdate) >= 5000;
     HomeSummary calendar{};
@@ -358,7 +369,8 @@ void homeSummaries(const app_state::Model& model, bool force = false)
         copyDisplayText(event.title[0] ? event.title : "Calendar event",
                         calendar.title, sizeof(calendar.title));
     }
-    drawHomeSummary(lastHomeCalendar, calendar, ui_layout::homeCalendarY, model, force);
+    if (calendarVisible)
+        drawHomeSummary(lastHomeCalendar, calendar, ui_layout::homeCalendarY, model, force);
 
     HomeSummary training{};
     training.pressed = model.pressedButton == 9;
@@ -382,7 +394,7 @@ void homeSummaries(const app_state::Model& model, bool force = false)
         copyDisplayText(workout.title[0] ? workout.title : "Workout",
                         training.title, sizeof(training.title));
     }
-    drawHomeSummary(lastHomeTraining, training, ui_layout::homeTrainingY, model, force);
+    drawHomeSummary(lastHomeTraining, training, ui_layout::homeTrainingTop(calendarVisible), model, force);
 }
 
 void systemTelemetry(const app_state::Model& model)
