@@ -205,13 +205,16 @@ uint8_t hit(int16_t x, int16_t y)
     }
     else if (model.page == app_state::Page::Alarm)
     {
+        if (y >= 110 && y < 190)
+        {
+            if (x >= 72 && x < 232) return 12;
+            if (x >= 248 && x < 408) return 14;
+        }
         if (y >= ui_layout::alarmAdjustY
             && y < ui_layout::alarmAdjustY + ui_layout::buttonHeight)
         {
-            if (x >= 24 && x < 120) return 12;
-            if (x >= 136 && x < 232) return 13;
-            if (x >= 248 && x < 344) return 14;
-            if (x >= 360 && x < 456) return 15;
+            if (x >= 24 && x < 232) return 12;
+            if (x >= 248 && x < 456) return 14;
         }
         if (x >= 12 && x < 468 && y >= ui_layout::alarmToggleY
             && y < ui_layout::alarmToggleY + ui_layout::buttonHeight) return 16;
@@ -223,6 +226,16 @@ uint8_t hit(int16_t x, int16_t y)
         }
         if (inside(x, y, 12, ui_layout::singleButtonY, 222)) return 19;
         if (inside(x, y, 246, ui_layout::singleButtonY, 222)) return 5;
+    }
+    else if (model.page == app_state::Page::AlarmNumber)
+    {
+        for (uint8_t row = 0; row < 4; ++row)
+            for (uint8_t column = 0; column < 3; ++column)
+                if (inside(x, y, 24 + column * 156, 200 + row * 52, 120))
+                    return row < 3 ? static_cast<uint8_t>(41 + row * 3 + column)
+                        : (column == 0 ? 51 : column == 1 ? 40 : 50);
+        if (inside(x, y, 12, ui_layout::singleButtonY, 222)) return 53;
+        if (inside(x, y, 246, ui_layout::singleButtonY, 222)) return 52;
     }
     else if (model.page == app_state::Page::Training)
     {
@@ -256,6 +269,27 @@ uint8_t hit(int16_t x, int16_t y)
 
 void action(uint8_t button)
 {
+    if (model.page == app_state::Page::AlarmNumber)
+    {
+        model.pressedButton = 0;
+        if (button >= 40 && button <= 49) model.alarmInput.digit(button - 40);
+        else if (button == 50) model.alarmInput.erase();
+        else if (button == 51) model.alarmInput.clear();
+        else if (button == 53) { model.page = app_state::Page::Alarm; ui::page(model); return; }
+        else if (button == 52)
+        {
+            if (!model.alarmInput.valid()) { model.alarmInput.error = true; ui::alarmInput(model); return; }
+            if (model.alarmEditingHour) model.alarmHour = model.alarmInput.value;
+            else model.alarmMinute = model.alarmInput.value;
+            hardware::setAlarm(model.alarmEnabled, model.alarmHour, model.alarmMinute,
+                               model.alarmRepeats, model.alarmMethod);
+            model.page = app_state::Page::Alarm;
+            ui::page(model);
+            return;
+        }
+        ui::alarmInput(model);
+        return;
+    }
     if (button >= 20 && button < 20 + secure_protocol::trainingItemMax)
     {
         model.selectedTraining = static_cast<uint8_t>(button - 20);
@@ -287,10 +321,14 @@ void action(uint8_t button)
         model.pressedButton = 0;
         ui::page(model);
         break;
-    case 12: model.alarmHour = (model.alarmHour + 23) % 24; break;
-    case 13: model.alarmHour = (model.alarmHour + 1) % 24; break;
-    case 14: model.alarmMinute = (model.alarmMinute + 59) % 60; break;
-    case 15: model.alarmMinute = (model.alarmMinute + 1) % 60; break;
+    case 12:
+    case 14:
+        model.alarmEditingHour = button == 12;
+        model.alarmInput.begin(model.alarmEditingHour ? 23 : 59);
+        model.page = app_state::Page::AlarmNumber;
+        model.pressedButton = 0;
+        ui::page(model);
+        break;
     case 16: model.alarmEnabled = !model.alarmEnabled; break;
     case 17: model.alarmRepeats = !model.alarmRepeats; break;
     case 18: model.alarmMethod = static_cast<uint8_t>((model.alarmMethod + 1) % 2); break;
@@ -305,12 +343,12 @@ void action(uint8_t button)
         break;
     default: break;
     }
-    if (button >= 12 && button <= 18)
+    if (button >= 16 && button <= 18)
     {
         hardware::setAlarm(model.alarmEnabled, model.alarmHour, model.alarmMinute,
                            model.alarmRepeats, model.alarmMethod);
         model.pressedButton = 0;
-        ui::page(model);
+        ui::pressed(model);
     }
 }
 
@@ -366,7 +404,7 @@ void processTouch()
         model.pressedButton = 0;
         if (touchCancelled) touchCancelled = false;
         else if (touchPage == model.page && (touchPage == app_state::Page::Home
-            || touchPage == app_state::Page::Menu))
+            || touchPage == app_state::Page::Menu || touchPage == app_state::Page::AlarmNumber))
         {
             const auto result = gesture.finish(millis());
             if (touchPage == app_state::Page::Home && gesture.originY() >= 78

@@ -10,4 +10,5 @@ void telemetry(const app_state::Model& model);
 void pressed(const app_state::Model& model);
 void brightness(const app_state::Model& model);
 void alarmFlash(bool lit, const app_state::Model& model);
+void alarmInput(const app_state::Model& model);
 }

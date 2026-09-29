@@ -2,10 +2,11 @@
 #include <stdint.h>
 #include "diagnostics.h"
 #include "secure_protocol.h"
+#include "alarm_input.h"
 
 namespace app_state
 {
-enum class Page : uint8_t { Home, Cluster, Training, TrainingDetail, Calendar, System, Alarm, Menu };
+enum class Page : uint8_t { Home, Cluster, Training, TrainingDetail, Calendar, System, Alarm, Menu, AlarmNumber };
 
 struct Model
 {
@@ -30,6 +31,8 @@ struct Model
     uint8_t alarmMinute = 0;
     bool alarmRepeats = true;
     uint8_t alarmMethod = 0;
+    bool alarmEditingHour = true;
+    alarm_input::Editor alarmInput{};
     bool timeValid = false;
     char clockText[6] = "--:--";
     char dateText[24] = "--.--.----";

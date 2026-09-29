@@ -153,10 +153,13 @@ void menuButtons(const app_state::Model& model)
 
 void header(const char* title, uint16_t fill, uint16_t foreground);
 
-void alarmSettings(const app_state::Model& model)
+void alarmSettings(const app_state::Model& model, bool force = true)
 {
-    header("Alarm", 0x0841, text);
-    display().fillRoundRect(12, 68, 456, 340, 10, card);
+    if (force)
+    {
+        header("Alarm", 0x0841, text);
+        display().fillRoundRect(12, 68, 456, 340, 10, card);
+    }
     label("Reminder - local display time", 28, 84, 2, muted);
     char timeText[6];
     snprintf(timeText, sizeof(timeText), "%02u:%02u", model.alarmHour, model.alarmMinute);
@@ -166,10 +169,8 @@ void alarmSettings(const app_state::Model& model)
     display().drawString(timeText, (width - display().textWidth(timeText)) / 2, 124);
     label("HOUR", 98, 194, 2, muted);
     label("MINUTE", 324, 194, 2, muted);
-    button(12, "-", 24, ui_layout::alarmAdjustY, 96, model.pressedButton == 12);
-    button(13, "+", 136, ui_layout::alarmAdjustY, 96, model.pressedButton == 13);
-    button(14, "-", 248, ui_layout::alarmAdjustY, 96, model.pressedButton == 14);
-    button(15, "+", 360, ui_layout::alarmAdjustY, 96, model.pressedButton == 15);
+    button(12, "Set hour", 24, ui_layout::alarmAdjustY, 208, model.pressedButton == 12);
+    button(14, "Set minute", 248, ui_layout::alarmAdjustY, 208, model.pressedButton == 14);
     button(17, model.alarmRepeats ? "Repeat: Daily" : "Repeat: Once",
            12, ui_layout::alarmOptionsY, 222, model.pressedButton == 17);
     button(18, model.alarmMethod == 0 ? "Style: Full screen" : "Style: Clock only",
@@ -182,6 +183,21 @@ void alarmSettings(const app_state::Model& model)
            model.pressedButton == 19);
     button(5, "Clock", 246, ui_layout::singleButtonY, 222,
            model.pressedButton == 5);
+}
+
+void alarmNumberKeys(const app_state::Model& model)
+{
+    for (uint8_t number = 1; number <= 9; ++number)
+    {
+        char caption[2] = {static_cast<char>('0' + number), 0};
+        button(40 + number, caption, 24 + ((number - 1) % 3) * 156,
+               200 + ((number - 1) / 3) * 52, 120, model.pressedButton == 40 + number);
+    }
+    button(51, "Clear", 24, 356, 120, model.pressedButton == 51);
+    button(40, "0", 180, 356, 120, model.pressedButton == 40);
+    button(50, "Delete", 336, 356, 120, model.pressedButton == 50);
+    button(53, "Cancel", 12, ui_layout::singleButtonY, 222, model.pressedButton == 53);
+    button(52, "Save", 246, ui_layout::singleButtonY, 222, model.pressedButton == 52);
 }
 
 void brightnessSlider(const app_state::Model& model)
@@ -815,6 +831,13 @@ void ui::page(const app_state::Model& model)
         display().drawString("Swipe down for clock", 180, 386);
         menuButtons(model);
     }
+    else if (model.page == app_state::Page::AlarmNumber)
+    {
+        header(model.alarmEditingHour ? "Set hour" : "Set minute");
+        label(model.alarmEditingHour ? "Enter hour (0-23)" : "Enter minute (0-59)",
+              100, 80, 2, muted);
+        ui::alarmInput(model);
+    }
     else if (model.page == app_state::Page::System)
     {
         header("System");
@@ -913,8 +936,9 @@ void ui::pressed(const app_state::Model& model)
     }
     else if (model.page == app_state::Page::Alarm)
     {
-        alarmSettings(model);
+        alarmSettings(model, false);
     }
+    else if (model.page == app_state::Page::AlarmNumber) alarmNumberKeys(model);
     else if (model.page == app_state::Page::Training)
     {
         trainingTelemetry(model, true);
@@ -935,4 +959,25 @@ void ui::pressed(const app_state::Model& model)
 void ui::brightness(const app_state::Model& model)
 {
     brightnessSlider(model);
+}
+
+void ui::alarmInput(const app_state::Model& model)
+{
+    char digits[3] = "__";
+    if (model.alarmInput.length == 1) digits[0] = '0' + model.alarmInput.value;
+    else if (model.alarmInput.length == 2)
+    {
+        digits[0] = '0' + model.alarmInput.value / 10;
+        digits[1] = '0' + model.alarmInput.value % 10;
+    }
+    display().fillRect(164, 108, 152, 60, card);
+    display().setFont(&fonts::Font0);
+    display().setTextSize(7);
+    display().setTextColor(text, card);
+    display().drawString(digits, (width - display().textWidth(digits)) / 2, 110);
+    display().fillRect(12, 172, 456, 20, background);
+    if (model.alarmInput.error)
+        label(model.alarmEditingHour ? "Enter 0-23; delete or clear to correct"
+                                    : "Enter 0-59; delete or clear to correct", 28, 176, 1, warning);
+    alarmNumberKeys(model);
 }

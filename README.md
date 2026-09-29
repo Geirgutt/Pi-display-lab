@@ -20,6 +20,8 @@ for Cluster, kalender og trening.
 På Alarm-siden prøver «Test alarm» valgt blinkestil i 30 sekunder (trykk på
 skjermen for å stoppe) uten å deaktivere en engangsalarm eller endre tidspunktet.
 Et nytt tidspunkt eller ny aktivering kan utløse en alarm igjen samme dag.
+Trykk på time/minutt eller «Set hour»/«Set minute» for talltastatur. Verdien
+lagres først med «Save»; «Cancel» beholder den gamle innstillingen.
 
 Dette er også hovedlageret for DeskDisplay-firmwareprosjektet. Den eksisterende
 Pi Display Lab-strukturen ligger fortsatt i repository-roten; firmwareprosjektet
