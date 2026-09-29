@@ -156,7 +156,7 @@ void alarmSettings(const app_state::Model& model)
 {
     header("Alarm", 0x0841, text);
     display().fillRoundRect(12, 68, 456, 340, 10, card);
-    label("Daily reminder - local display time", 28, 84, 2, muted);
+    label("Reminder - local display time", 28, 84, 2, muted);
     char timeText[6];
     snprintf(timeText, sizeof(timeText), "%02u:%02u", model.alarmHour, model.alarmMinute);
     display().setFont(&fonts::Font0);
@@ -177,8 +177,10 @@ void alarmSettings(const app_state::Model& model)
                                   : "Disabled - tap to turn ON",
            12, ui_layout::alarmToggleY, 456, model.pressedButton == 16);
     label("Flashes for 30 seconds; tap screen to stop", 28, 382, 1, muted);
-    button(5, "Home", ui_layout::singleButtonX, ui_layout::singleButtonY,
-           ui_layout::singleButtonWidth, model.pressedButton == 5);
+    button(19, "Test alarm", 12, ui_layout::singleButtonY, 222,
+           model.pressedButton == 19);
+    button(5, "Clock", 246, ui_layout::singleButtonY, 222,
+           model.pressedButton == 5);
 }
 
 void brightnessSlider(const app_state::Model& model)

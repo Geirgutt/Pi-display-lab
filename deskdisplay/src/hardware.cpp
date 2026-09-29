@@ -1,6 +1,7 @@
 #include <Arduino.h>
 #include <Preferences.h>
 #include "hardware.h"
+#include "alarm_schedule.h"
 
 namespace
 {
@@ -148,6 +149,10 @@ uint8_t alarmMethod() { return currentAlarmMethod; }
 void setAlarm(bool enabled, uint8_t hour, uint8_t minute, bool repeats, uint8_t method)
 {
     if (hour >= 24 || minute >= 60 || method > 1) return;
+    const bool rearm = alarm_schedule::shouldRearm(currentAlarmEnabled,
+        currentAlarmHour, currentAlarmMinute, currentAlarmRepeats,
+        enabled, hour, minute, repeats);
+    if (rearm) currentLastAlarmDate = 0;
     currentAlarmEnabled = enabled;
     currentAlarmHour = hour;
     currentAlarmMinute = minute;
@@ -161,6 +166,7 @@ void setAlarm(bool enabled, uint8_t hour, uint8_t minute, bool repeats, uint8_t 
         preferences.putUChar(alarmMinuteKey, minute);
         preferences.putBool(alarmRepeatKey, repeats);
         preferences.putUChar(alarmMethodKey, method);
+        if (rearm) preferences.putUInt(lastAlarmDateKey, 0);
         preferences.end();
     }
 }

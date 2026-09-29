@@ -37,6 +37,20 @@ void stopAlarm()
     ui::page(model);
 }
 
+void startAlarm()
+{
+    alarmReturnPage = model.page;
+    model.page = app_state::Page::Home;
+    model.pressedButton = 0;
+    touchCancelled = true;
+    alarmActive = true;
+    alarmLit = true;
+    alarmStartedAt = millis();
+    lastAlarmBlinkAt = alarmStartedAt;
+    if (model.alarmMethod == 1) ui::page(model);
+    ui::alarmFlash(true, model);
+}
+
 void checkAlarm()
 {
     if (!model.alarmEnabled || !model.timeValid || alarmActive) return;
@@ -47,18 +61,9 @@ void checkAlarm()
         + (local.tm_mon + 1) * 100 + local.tm_mday);
     if (local.tm_hour != model.alarmHour || local.tm_min != model.alarmMinute
         || date == hardware::lastAlarmDate()) return;
-    alarmReturnPage = model.page;
     hardware::markAlarmFired(date, !model.alarmRepeats);
     model.alarmEnabled = hardware::alarmEnabled();
-    model.page = app_state::Page::Home;
-    model.pressedButton = 0;
-    touchCancelled = true;
-    alarmActive = true;
-    alarmLit = true;
-    alarmStartedAt = millis();
-    lastAlarmBlinkAt = alarmStartedAt;
-    if (model.alarmMethod == 1) ui::page(model);
-    ui::alarmFlash(true, model);
+    startAlarm();
 }
 
 void serviceAlarm(uint32_t now)
@@ -215,8 +220,8 @@ uint8_t hit(int16_t x, int16_t y)
             if (x >= 12 && x < 240) return 17;
             if (x >= 240 && x < 468) return 18;
         }
-        if (inside(x, y, ui_layout::singleButtonX, ui_layout::singleButtonY,
-                   ui_layout::singleButtonWidth)) return 5;
+        if (inside(x, y, 12, ui_layout::singleButtonY, 222)) return 19;
+        if (inside(x, y, 246, ui_layout::singleButtonY, 222)) return 5;
     }
     else if (model.page == app_state::Page::Training)
     {
@@ -288,6 +293,10 @@ void action(uint8_t button)
     case 16: model.alarmEnabled = !model.alarmEnabled; break;
     case 17: model.alarmRepeats = !model.alarmRepeats; break;
     case 18: model.alarmMethod = static_cast<uint8_t>((model.alarmMethod + 1) % 2); break;
+    case 19:
+        // A preview never consumes ONCE or alters the persisted schedule.
+        startAlarm();
+        break;
     case 10:
         model.page = app_state::Page::Training;
         model.pressedButton = 0;
