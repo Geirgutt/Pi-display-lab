@@ -14,6 +14,7 @@ constexpr int16_t homeTopButtonY = 360;
 constexpr int16_t homeBottomButtonY = 420;
 constexpr int16_t homeAlarmY = 18;
 constexpr int16_t alarmAdjustY = 224;
+constexpr int16_t alarmOptionsY = 278;
 constexpr int16_t alarmToggleY = 322;
 constexpr int16_t systemButtonY = 426;
 constexpr int16_t brightnessSliderX = 48;

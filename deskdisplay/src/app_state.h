@@ -26,6 +26,8 @@ struct Model
     bool alarmEnabled = false;
     uint8_t alarmHour = 23;
     uint8_t alarmMinute = 0;
+    bool alarmRepeats = true;
+    uint8_t alarmMethod = 0;
     bool timeValid = false;
     char clockText[6] = "--:--";
     char dateText[24] = "--.--.----";

@@ -19,8 +19,10 @@ bool toggleNightMode();
 bool alarmEnabled();
 uint8_t alarmHour();
 uint8_t alarmMinute();
-void setAlarm(bool enabled, uint8_t hour, uint8_t minute);
+bool alarmRepeats();
+uint8_t alarmMethod();
+void setAlarm(bool enabled, uint8_t hour, uint8_t minute, bool repeats, uint8_t method);
 uint32_t lastAlarmDate();
-void markAlarmFired(uint32_t date);
+void markAlarmFired(uint32_t date, bool disableAfterFire);
 void setBacklight(bool on);
 }

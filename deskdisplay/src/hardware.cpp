@@ -15,6 +15,8 @@ bool currentNightMode = false;
 bool currentAlarmEnabled = false;
 uint8_t currentAlarmHour = 23;
 uint8_t currentAlarmMinute = 0;
+bool currentAlarmRepeats = true;
+uint8_t currentAlarmMethod = 0;
 uint32_t currentLastAlarmDate = 0;
 constexpr char preferenceNamespace[] = "dd-ui";
 constexpr char brightnessKey[] = "brightness";
@@ -22,6 +24,8 @@ constexpr char nightModeKey[] = "night";
 constexpr char alarmEnabledKey[] = "alarmOn";
 constexpr char alarmHourKey[] = "alarmHr";
 constexpr char alarmMinuteKey[] = "alarmMin";
+constexpr char alarmRepeatKey[] = "alarmRpt";
+constexpr char alarmMethodKey[] = "alarmMode";
 constexpr char lastAlarmDateKey[] = "alarmDate";
 
 bool supportedBrightness(uint8_t value)
@@ -61,6 +65,9 @@ bool beginDisplay()
         const uint8_t savedMinute = preferences.getUChar(alarmMinuteKey, 0);
         currentAlarmHour = savedHour < 24 ? savedHour : 23;
         currentAlarmMinute = savedMinute < 60 ? savedMinute : 0;
+        currentAlarmRepeats = preferences.getBool(alarmRepeatKey, true);
+        const uint8_t savedMethod = preferences.getUChar(alarmMethodKey, 0);
+        currentAlarmMethod = savedMethod <= 1 ? savedMethod : 0;
         currentLastAlarmDate = preferences.getUInt(lastAlarmDateKey, 0);
         preferences.end();
     }
@@ -135,32 +142,40 @@ bool toggleNightMode()
 bool alarmEnabled() { return currentAlarmEnabled; }
 uint8_t alarmHour() { return currentAlarmHour; }
 uint8_t alarmMinute() { return currentAlarmMinute; }
+bool alarmRepeats() { return currentAlarmRepeats; }
+uint8_t alarmMethod() { return currentAlarmMethod; }
 
-void setAlarm(bool enabled, uint8_t hour, uint8_t minute)
+void setAlarm(bool enabled, uint8_t hour, uint8_t minute, bool repeats, uint8_t method)
 {
-    if (hour >= 24 || minute >= 60) return;
+    if (hour >= 24 || minute >= 60 || method > 1) return;
     currentAlarmEnabled = enabled;
     currentAlarmHour = hour;
     currentAlarmMinute = minute;
+    currentAlarmRepeats = repeats;
+    currentAlarmMethod = method;
     Preferences preferences;
     if (preferences.begin(preferenceNamespace, false))
     {
         preferences.putBool(alarmEnabledKey, enabled);
         preferences.putUChar(alarmHourKey, hour);
         preferences.putUChar(alarmMinuteKey, minute);
+        preferences.putBool(alarmRepeatKey, repeats);
+        preferences.putUChar(alarmMethodKey, method);
         preferences.end();
     }
 }
 
 uint32_t lastAlarmDate() { return currentLastAlarmDate; }
 
-void markAlarmFired(uint32_t date)
+void markAlarmFired(uint32_t date, bool disableAfterFire)
 {
     currentLastAlarmDate = date;
+    if (disableAfterFire) currentAlarmEnabled = false;
     Preferences preferences;
     if (preferences.begin(preferenceNamespace, false))
     {
         preferences.putUInt(lastAlarmDateKey, date);
+        if (disableAfterFire) preferences.putBool(alarmEnabledKey, false);
         preferences.end();
     }
 }

@@ -52,9 +52,9 @@ alternativer.
 - **Alarm:** avslått som standard. Trykk alarmfeltet øverst på klokkeskjermen
   for å stille en daglig påminnelse. Juster timer/minutter, slå den på og trykk
   Home. Ved tidspunktet blinker skjermen i 30 sekunder med hvitt lys, eller
-  rødt i nattmodus. Trykk
-  hvor som helst for å stoppe den. Innstillingen lagres lokalt på displayet;
-  alarmen krever at displayets klokke har fått gyldig tid fra nettverket.
+  rødt i nattmodus. Velg engangsalarm eller gjentakelse hver dag, og fullskjermblink
+  eller blinkende klokketall. Trykk hvor som helst for å stoppe den. Innstillingene
+  lagres lokalt på displayet; alarmen krever gyldig klokketid fra nettverket.
 - **Developer controls:** permanent nodestatus, valg av clusterkapasitet og
   oppstart av Monte Carlo- og primtallsbatcher på workerne.
 - **Mock-modus:** test API-et uten Raspberry Pi.

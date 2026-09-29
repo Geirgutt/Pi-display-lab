@@ -22,12 +22,14 @@ bool alarmActive = false;
 bool alarmLit = false;
 uint32_t alarmStartedAt = 0;
 uint32_t lastAlarmBlinkAt = 0;
+app_state::Page alarmReturnPage = app_state::Page::Home;
 
 void stopAlarm()
 {
     alarmActive = false;
     alarmLit = false;
     model.pressedButton = 0;
+    model.page = alarmReturnPage;
     ui::page(model);
 }
 
@@ -41,12 +43,15 @@ void checkAlarm()
         + (local.tm_mon + 1) * 100 + local.tm_mday);
     if (local.tm_hour != model.alarmHour || local.tm_min != model.alarmMinute
         || date == hardware::lastAlarmDate()) return;
-    hardware::markAlarmFired(date);
+    alarmReturnPage = model.page;
+    hardware::markAlarmFired(date, !model.alarmRepeats);
+    model.alarmEnabled = hardware::alarmEnabled();
+    model.page = app_state::Page::Home;
     alarmActive = true;
     alarmLit = true;
     alarmStartedAt = millis();
     lastAlarmBlinkAt = alarmStartedAt;
-    ui::alarmFlash(true, model.nightMode, model.clockText);
+    ui::alarmFlash(true, model);
 }
 
 void serviceAlarm(uint32_t now)
@@ -61,7 +66,7 @@ void serviceAlarm(uint32_t now)
     {
         lastAlarmBlinkAt = now;
         alarmLit = !alarmLit;
-        ui::alarmFlash(alarmLit, model.nightMode, model.clockText);
+        ui::alarmFlash(alarmLit, model);
     }
 }
 
@@ -97,6 +102,8 @@ void refreshState()
     model.alarmEnabled = hardware::alarmEnabled();
     model.alarmHour = hardware::alarmHour();
     model.alarmMinute = hardware::alarmMinute();
+    model.alarmRepeats = hardware::alarmRepeats();
+    model.alarmMethod = hardware::alarmMethod();
     const time_t now = time(nullptr);
     struct tm localTime = {};
     model.timeValid = now >= 1700000000 && localtime_r(&now, &localTime) != nullptr;
@@ -173,6 +180,12 @@ uint8_t hit(int16_t x, int16_t y)
         }
         if (x >= 12 && x < 468 && y >= ui_layout::alarmToggleY
             && y < ui_layout::alarmToggleY + ui_layout::buttonHeight) return 16;
+        if (y >= ui_layout::alarmOptionsY
+            && y < ui_layout::alarmOptionsY + ui_layout::buttonHeight)
+        {
+            if (x >= 12 && x < 240) return 17;
+            if (x >= 240 && x < 468) return 18;
+        }
         if (inside(x, y, ui_layout::singleButtonX, ui_layout::singleButtonY,
                    ui_layout::singleButtonWidth)) return 5;
     }
@@ -233,6 +246,8 @@ void action(uint8_t button)
     case 14: model.alarmMinute = (model.alarmMinute + 59) % 60; break;
     case 15: model.alarmMinute = (model.alarmMinute + 1) % 60; break;
     case 16: model.alarmEnabled = !model.alarmEnabled; break;
+    case 17: model.alarmRepeats = !model.alarmRepeats; break;
+    case 18: model.alarmMethod = static_cast<uint8_t>((model.alarmMethod + 1) % 2); break;
     case 10:
         model.page = app_state::Page::Training;
         model.pressedButton = 0;
@@ -240,9 +255,10 @@ void action(uint8_t button)
         break;
     default: break;
     }
-    if (button >= 12 && button <= 16)
+    if (button >= 12 && button <= 18)
     {
-        hardware::setAlarm(model.alarmEnabled, model.alarmHour, model.alarmMinute);
+        hardware::setAlarm(model.alarmEnabled, model.alarmHour, model.alarmMinute,
+                           model.alarmRepeats, model.alarmMethod);
         model.pressedButton = 0;
         ui::page(model);
     }
@@ -365,6 +381,7 @@ void app::service()
     if (secure_transport::takeDisplayRestoreRequest()) ui::page(model);
     if (secure_transport::displaySuppressed())
     {
+        if (alarmActive) model.page = alarmReturnPage;
         alarmActive = false;
         return;
     }

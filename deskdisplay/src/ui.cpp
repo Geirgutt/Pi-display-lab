@@ -109,8 +109,9 @@ void homeAlarm(const app_state::Model& model)
 {
     char caption[36];
     if (model.alarmEnabled)
-        snprintf(caption, sizeof(caption), "Alarm %02u:%02u ON  >",
-                 model.alarmHour, model.alarmMinute);
+        snprintf(caption, sizeof(caption), "Alarm %02u:%02u %s  >",
+                 model.alarmHour, model.alarmMinute,
+                 model.alarmRepeats ? "DAILY" : "ONCE");
     else snprintf(caption, sizeof(caption), "Alarm OFF  -  tap to set  >");
     button(7, caption, 20, ui_layout::homeAlarmY, 440,
            model.pressedButton == 7, homeBackground,
@@ -138,6 +139,10 @@ void alarmSettings(const app_state::Model& model)
     button(13, "+", 136, ui_layout::alarmAdjustY, 96, model.pressedButton == 13);
     button(14, "-", 248, ui_layout::alarmAdjustY, 96, model.pressedButton == 14);
     button(15, "+", 360, ui_layout::alarmAdjustY, 96, model.pressedButton == 15);
+    button(17, model.alarmRepeats ? "Repeat: Daily" : "Repeat: Once",
+           12, ui_layout::alarmOptionsY, 222, model.pressedButton == 17);
+    button(18, model.alarmMethod == 0 ? "Style: Full screen" : "Style: Clock only",
+           246, ui_layout::alarmOptionsY, 222, model.pressedButton == 18);
     button(16, model.alarmEnabled ? "Enabled - tap to turn OFF"
                                   : "Disabled - tap to turn ON",
            12, ui_layout::alarmToggleY, 456, model.pressedButton == 16);
@@ -626,9 +631,21 @@ void ui::showSystemUpdate()
     display().drawString(warning, (width - display().textWidth(warning)) / 2, 268);
 }
 
-void ui::alarmFlash(bool lit, bool nightMode, const char* clockText)
+void ui::alarmFlash(bool lit, const app_state::Model& model)
 {
-    const uint16_t fill = lit ? (nightMode ? nightRed : text) : TFT_BLACK;
+    const uint16_t alarmColor = model.nightMode ? nightRed : text;
+    if (model.alarmMethod == 1)
+    {
+        display().fillRect(20, 78, 440, 96, homeBackground);
+        if (!lit) return;
+        display().setFont(&fonts::Font0);
+        display().setTextColor(alarmColor, homeBackground);
+        display().setTextSize(11);
+        display().drawString(model.clockText,
+                             (width - display().textWidth(model.clockText)) / 2, 86);
+        return;
+    }
+    const uint16_t fill = lit ? alarmColor : TFT_BLACK;
     display().fillScreen(fill);
     if (!lit) return;
     display().setFont(&fonts::Font0);
@@ -637,7 +654,7 @@ void ui::alarmFlash(bool lit, bool nightMode, const char* clockText)
     const char* message = "STOP PLAYING";
     display().drawString(message, (width - display().textWidth(message)) / 2, 178);
     display().setTextSize(3);
-    display().drawString(clockText, (width - display().textWidth(clockText)) / 2, 242);
+    display().drawString(model.clockText, (width - display().textWidth(model.clockText)) / 2, 242);
 }
 
 void ui::page(const app_state::Model& model)

@@ -78,7 +78,9 @@ class InstallationWorkflowTests(unittest.TestCase):
         self.assertIn("hardware::setBacklight(true)", transport)
         self.assertIn("if (otaDisplayIsSuppressed && otaRebootAt == 0)", transport)
         self.assertIn("if (secure_transport::takeDisplayRestoreRequest()) ui::page(model);", app)
-        self.assertIn("if (secure_transport::displaySuppressed())\n    {\n        alarmActive = false;\n        return;\n    }", app)
+        self.assertIn("if (secure_transport::displaySuppressed())", app)
+        self.assertIn("if (alarmActive) model.page = alarmReturnPage;", app)
+        self.assertIn("alarmActive = false;", app)
         self.assertIn("void showSystemUpdate();", ui_header)
 
     def test_deskdisplay_ota_waits_for_rebooted_tls_reconnect(self) -> None:
@@ -172,17 +174,23 @@ class InstallationWorkflowTests(unittest.TestCase):
         ui = self.read("deskdisplay/src/ui.cpp")
         self.assertIn("Page::Alarm", app)
         self.assertIn("hardware::setAlarm", app)
-        self.assertIn("hardware::markAlarmFired(date)", app)
+        self.assertIn("hardware::markAlarmFired(date, !model.alarmRepeats)", app)
         self.assertIn("date == hardware::lastAlarmDate()", app)
+        self.assertIn("!model.alarmRepeats", app)
+        self.assertIn("alarmMethod = static_cast<uint8_t>((model.alarmMethod + 1) % 2)", app)
         self.assertIn("uint32_t(now - alarmStartedAt) >= 30000", app)
         self.assertIn("uint32_t(now - lastAlarmBlinkAt) >= 500", app)
         self.assertIn("if (down && !lastDown) stopAlarm()", app)
         self.assertIn("alarmActive = false;\n        return;", app)
         for stored in ("putBool(alarmEnabledKey", "putUChar(alarmHourKey",
-                       "putUChar(alarmMinuteKey", "putUInt(lastAlarmDateKey"):
+                       "putUChar(alarmMinuteKey", "putBool(alarmRepeatKey",
+                       "putUChar(alarmMethodKey", "putUInt(lastAlarmDateKey"):
             self.assertIn(stored, hardware)
         self.assertIn("void ui::alarmFlash", ui)
         self.assertIn("nightMode ? nightRed : text", ui)
+        self.assertIn('"Repeat: Daily" : "Repeat: Once"', ui)
+        self.assertIn('"Style: Full screen" : "Style: Clock only"', ui)
+        self.assertIn("if (disableAfterFire) preferences.putBool(alarmEnabledKey, false);", hardware)
 
     def test_services_are_non_root_and_have_low_risk_hardening(self) -> None:
         playbook = self.read("ansible/install-workers.yml")
