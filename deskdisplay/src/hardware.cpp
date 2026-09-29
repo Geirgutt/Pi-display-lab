@@ -12,9 +12,17 @@ constexpr uint32_t backlightFrequency = 1000;
 bool displayReady = false;
 uint8_t currentBrightness = 100;
 bool currentNightMode = false;
+bool currentAlarmEnabled = false;
+uint8_t currentAlarmHour = 23;
+uint8_t currentAlarmMinute = 0;
+uint32_t currentLastAlarmDate = 0;
 constexpr char preferenceNamespace[] = "dd-ui";
 constexpr char brightnessKey[] = "brightness";
 constexpr char nightModeKey[] = "night";
+constexpr char alarmEnabledKey[] = "alarmOn";
+constexpr char alarmHourKey[] = "alarmHr";
+constexpr char alarmMinuteKey[] = "alarmMin";
+constexpr char lastAlarmDateKey[] = "alarmDate";
 
 bool supportedBrightness(uint8_t value)
 {
@@ -48,6 +56,12 @@ bool beginDisplay()
         const uint8_t saved = preferences.getUChar(brightnessKey, currentBrightness);
         if (supportedBrightness(saved)) currentBrightness = saved;
         currentNightMode = preferences.getBool(nightModeKey, false);
+        currentAlarmEnabled = preferences.getBool(alarmEnabledKey, false);
+        const uint8_t savedHour = preferences.getUChar(alarmHourKey, 23);
+        const uint8_t savedMinute = preferences.getUChar(alarmMinuteKey, 0);
+        currentAlarmHour = savedHour < 24 ? savedHour : 23;
+        currentAlarmMinute = savedMinute < 60 ? savedMinute : 0;
+        currentLastAlarmDate = preferences.getUInt(lastAlarmDateKey, 0);
         preferences.end();
     }
     pinMode(backlightPin, OUTPUT);
@@ -116,6 +130,39 @@ bool toggleNightMode()
         preferences.end();
     }
     return currentNightMode;
+}
+
+bool alarmEnabled() { return currentAlarmEnabled; }
+uint8_t alarmHour() { return currentAlarmHour; }
+uint8_t alarmMinute() { return currentAlarmMinute; }
+
+void setAlarm(bool enabled, uint8_t hour, uint8_t minute)
+{
+    if (hour >= 24 || minute >= 60) return;
+    currentAlarmEnabled = enabled;
+    currentAlarmHour = hour;
+    currentAlarmMinute = minute;
+    Preferences preferences;
+    if (preferences.begin(preferenceNamespace, false))
+    {
+        preferences.putBool(alarmEnabledKey, enabled);
+        preferences.putUChar(alarmHourKey, hour);
+        preferences.putUChar(alarmMinuteKey, minute);
+        preferences.end();
+    }
+}
+
+uint32_t lastAlarmDate() { return currentLastAlarmDate; }
+
+void markAlarmFired(uint32_t date)
+{
+    currentLastAlarmDate = date;
+    Preferences preferences;
+    if (preferences.begin(preferenceNamespace, false))
+    {
+        preferences.putUInt(lastAlarmDateKey, date);
+        preferences.end();
+    }
 }
 
 void setBacklight(bool on)

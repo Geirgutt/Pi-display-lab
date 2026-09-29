@@ -49,6 +49,12 @@ alternativer.
 - **Nerd:** Monte Carlo-estimat av pi med levende sirkelgrafikk for treff og bom.
 - **Training:** kommende økter fra Garmins offisielle publiserte kalender.
 - **Calendar:** samler valgfritt flere private ICS-kalendere på controlleren.
+- **Alarm:** avslått som standard. Trykk alarmfeltet øverst på klokkeskjermen
+  for å stille en daglig påminnelse. Juster timer/minutter, slå den på og trykk
+  Home. Ved tidspunktet blinker skjermen i 30 sekunder med hvitt lys, eller
+  rødt i nattmodus. Trykk
+  hvor som helst for å stoppe den. Innstillingen lagres lokalt på displayet;
+  alarmen krever at displayets klokke har fått gyldig tid fra nettverket.
 - **Developer controls:** permanent nodestatus, valg av clusterkapasitet og
   oppstart av Monte Carlo- og primtallsbatcher på workerne.
 - **Mock-modus:** test API-et uten Raspberry Pi.

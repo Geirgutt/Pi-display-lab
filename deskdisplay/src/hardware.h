@@ -16,5 +16,11 @@ uint8_t brightness();
 uint8_t cycleBrightness();
 bool nightMode();
 bool toggleNightMode();
+bool alarmEnabled();
+uint8_t alarmHour();
+uint8_t alarmMinute();
+void setAlarm(bool enabled, uint8_t hour, uint8_t minute);
+uint32_t lastAlarmDate();
+void markAlarmFired(uint32_t date);
 void setBacklight(bool on);
 }

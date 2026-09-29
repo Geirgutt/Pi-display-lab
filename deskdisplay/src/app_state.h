@@ -5,7 +5,7 @@
 
 namespace app_state
 {
-enum class Page : uint8_t { Home, Cluster, Training, TrainingDetail, Calendar, System };
+enum class Page : uint8_t { Home, Cluster, Training, TrainingDetail, Calendar, System, Alarm };
 
 struct Model
 {
@@ -23,6 +23,9 @@ struct Model
     uint8_t selectedTraining = 0;
     uint8_t brightnessPercent = 100;
     bool nightMode = false;
+    bool alarmEnabled = false;
+    uint8_t alarmHour = 23;
+    uint8_t alarmMinute = 0;
     bool timeValid = false;
     char clockText[6] = "--:--";
     char dateText[24] = "--.--.----";

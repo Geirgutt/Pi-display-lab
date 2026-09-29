@@ -78,7 +78,7 @@ class InstallationWorkflowTests(unittest.TestCase):
         self.assertIn("hardware::setBacklight(true)", transport)
         self.assertIn("if (otaDisplayIsSuppressed && otaRebootAt == 0)", transport)
         self.assertIn("if (secure_transport::takeDisplayRestoreRequest()) ui::page(model);", app)
-        self.assertIn("if (secure_transport::displaySuppressed()) return;", app)
+        self.assertIn("if (secure_transport::displaySuppressed())\n    {\n        alarmActive = false;\n        return;\n    }", app)
         self.assertIn("void showSystemUpdate();", ui_header)
 
     def test_deskdisplay_ota_waits_for_rebooted_tls_reconnect(self) -> None:
@@ -165,6 +165,24 @@ class InstallationWorkflowTests(unittest.TestCase):
         self.assertIn("clusterMetadataSize = 7", protocol)
         self.assertIn("CLUSTER_METADATA_SIZE 7", gateway)
         self.assertIn("put16(payload + 4, online_nodes)", gateway)
+
+    def test_deskdisplay_alarm_is_local_persistent_and_ota_safe(self) -> None:
+        app = self.read("deskdisplay/src/app.cpp")
+        hardware = self.read("deskdisplay/src/hardware.cpp")
+        ui = self.read("deskdisplay/src/ui.cpp")
+        self.assertIn("Page::Alarm", app)
+        self.assertIn("hardware::setAlarm", app)
+        self.assertIn("hardware::markAlarmFired(date)", app)
+        self.assertIn("date == hardware::lastAlarmDate()", app)
+        self.assertIn("uint32_t(now - alarmStartedAt) >= 30000", app)
+        self.assertIn("uint32_t(now - lastAlarmBlinkAt) >= 500", app)
+        self.assertIn("if (down && !lastDown) stopAlarm()", app)
+        self.assertIn("alarmActive = false;\n        return;", app)
+        for stored in ("putBool(alarmEnabledKey", "putUChar(alarmHourKey",
+                       "putUChar(alarmMinuteKey", "putUInt(lastAlarmDateKey"):
+            self.assertIn(stored, hardware)
+        self.assertIn("void ui::alarmFlash", ui)
+        self.assertIn("nightMode ? nightRed : text", ui)
 
     def test_services_are_non_root_and_have_low_risk_hardening(self) -> None:
         playbook = self.read("ansible/install-workers.yml")
