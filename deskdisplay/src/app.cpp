@@ -465,6 +465,8 @@ void app::service()
         checkAlarm();
         if (!alarmActive) ui::telemetry(model);
     }
-    serviceAlarm(now);
+    // checkAlarm() may have started the alarm after the telemetry timestamp.
+    // Use a fresh time so unsigned elapsed arithmetic cannot underflow.
+    serviceAlarm(millis());
     delay(20);
 }
