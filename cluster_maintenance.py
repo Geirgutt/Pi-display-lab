@@ -54,16 +54,25 @@ def run_maintenance(settings: AppConfig, workers: list[str], upgrade: bool) -> i
         vars_file.write_text(json.dumps(variables, indent=2) + "\n", encoding="utf-8")
         os.chmod(inventory, 0o600)
         os.chmod(vars_file, 0o600)
+        environment = dict(os.environ)
+        environment["ANSIBLE_STDOUT_CALLBACK"] = "pi_maintenance"
+        callback_dir = str(PROJECT_DIR / "ansible/callback_plugins")
+        existing_callbacks = environment.get("ANSIBLE_CALLBACK_PLUGINS", "")
+        environment["ANSIBLE_CALLBACK_PLUGINS"] = (
+            callback_dir + os.pathsep + existing_callbacks if existing_callbacks else callback_dir
+        )
+        environment["PI_DISPLAY_MAINTENANCE_WORKERS"] = json.dumps(workers)
+        environment["PI_DISPLAY_MAINTENANCE_UPGRADE"] = "1" if upgrade else "0"
         with PasswordBroker(temp_dir / "worker-sudo.sock", passwords) as broker:
             result = subprocess.run(
                 [ansible, "-i", str(inventory), "ansible/maintain-workers.yml",
                  "--forks", str(min(MAX_FORKS, len(workers))),
                  "--extra-vars", "@" + str(vars_file),
                  "--extra-vars", json.dumps({"worker_sudo_socket": str(broker.path)})],
-                cwd=PROJECT_DIR, stdin=subprocess.DEVNULL,
+                cwd=PROJECT_DIR, stdin=subprocess.DEVNULL, env=environment,
             )
     if result.returncode:
-        print("Vedlikeholdet feilet. Se resultatet per node i Ansible-oppsummeringen.", file=sys.stderr)
+        print("Vedlikeholdet feilet. Se feilmeldingene og eventuell nodeoppsummering over.", file=sys.stderr)
     elif upgrade:
         print("Pakkeoppgradering fullført. Se omstartsstatus per node over.", flush=True)
     else:

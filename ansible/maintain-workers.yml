@@ -30,13 +30,36 @@
     ansible_become_password: "{{ lookup('worker_sudo', inventory_hostname, socket_path=worker_sudo_socket) }}"
     ansible_become_timeout: 60
   tasks:
-    - name: Oppdater pakkelister
+    - name: "[1/7] Oppdater pakkelister"
       become: true
       ansible.builtin.apt:
         update_cache: true
         lock_timeout: 300
+      register: maintenance_refresh
 
-    - name: Oppgrader installerte pakker uten å fjerne pakker
+    - name: "[2/7] Registrer installerte pakker før oppgradering"
+      become: true
+      ansible.builtin.command:
+        expand_argument_vars: false
+        argv:
+          - dpkg-query
+          - -W
+          - '-f=${db:Status-Status}\t${binary:Package}\t${Version}\n'
+      changed_when: false
+      register: maintenance_before
+
+    - name: "[3/7] Finn tilgjengelige pakkeoppgraderinger"
+      ansible.builtin.command:
+        argv:
+          - apt
+          - list
+          - --upgradable
+      environment:
+        LC_ALL: C
+      changed_when: false
+      register: maintenance_available
+
+    - name: "[4/7] Oppgrader installerte pakker uten å fjerne pakker"
       become: true
       ansible.builtin.apt:
         upgrade: safe
@@ -44,12 +67,33 @@
         fail_on_autoremove: true
         lock_timeout: 300
       when: maintenance_upgrade | default(false) | bool
+      register: maintenance_upgrade_result
 
-    - name: Se om noden trenger omstart
+    - name: "[5/7] Registrer installerte pakker etter oppgradering"
+      become: true
+      ansible.builtin.command:
+        expand_argument_vars: false
+        argv:
+          - dpkg-query
+          - -W
+          - '-f=${db:Status-Status}\t${binary:Package}\t${Version}\n'
+      changed_when: false
+      when: maintenance_upgrade | default(false) | bool
+      register: maintenance_after
+
+    - name: "[6/7] Finn gjenstående pakkeoppgraderinger"
+      ansible.builtin.command:
+        argv:
+          - apt
+          - list
+          - --upgradable
+      environment:
+        LC_ALL: C
+      changed_when: false
+      when: maintenance_upgrade | default(false) | bool
+      register: maintenance_remaining
+
+    - name: "[7/7] Se om noden trenger omstart"
       ansible.builtin.stat:
         path: /var/run/reboot-required
       register: maintenance_reboot
-
-    - name: Vis omstartsstatus
-      ansible.builtin.debug:
-        msg: "{{ inventory_hostname }}: {{ 'Omstart kreves. Start noden på nytt når det passer.' if maintenance_reboot.stat.exists else 'Ingen omstart meldt av operativsystemet.' }}"

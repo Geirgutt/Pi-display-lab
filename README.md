@@ -433,6 +433,13 @@ Bruk nodenes adresser slik de står i `worker_hosts`. `--config FIL` velger en
 annen controller-config. Uten modusflagg spør skriptet om du også vil oppgradere
 OS-pakkene. Svar ja for å installere oppdateringer, eller nei/Enter for bare å
 oppdatere pakkelistene. Sluttmeldingen viser hvilken handling som ble utført.
+Terminalen viser fremdriftslinjer for noder og vedlikeholdstrinn, samt løpende
+ventetid mens apt jobber. Linjene viser fullførte trinn og noder; de måler ikke
+nedlastede byte eller prosent av pakkeinstallasjonen. Før oppgradering vises
+tilgjengelige pakker med gammel og ny versjon. Etterpå sammenlignes faktisk
+installerte versjoner, slik at nye og oppgraderte pakker vises sammen med
+eventuelle gjenstående oppdateringer. Til slutt oppsummeres hver node med
+pakkeantall, feil og behov for omstart.
 Skriptet krever eksisterende SSH-nøkkelinnlogging,
 godkjente SSH host keys og Ansible fra cluster-oppsettet. Sudo-passord spørres
 om ved behov. Har flere workers felles sudo-passord, svar ja på spørsmålet om

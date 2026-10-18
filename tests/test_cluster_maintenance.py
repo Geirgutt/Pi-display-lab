@@ -172,6 +172,10 @@ class ClusterMaintenanceTests(unittest.TestCase):
         self.assertTrue(json.loads(variables_contents)["maintenance_upgrade"])
         collect.assert_called_once_with("labuser", ["one.example"], identity_file="/keys/lab")
         self.assertIs(subprocess_kwargs[0]["stdin"], subprocess.DEVNULL)
+        environment = subprocess_kwargs[0]["env"]
+        self.assertEqual(environment["ANSIBLE_STDOUT_CALLBACK"], "pi_maintenance")
+        self.assertEqual(json.loads(environment["PI_DISPLAY_MAINTENANCE_WORKERS"]), ["one.example"])
+        self.assertEqual(environment["PI_DISPLAY_MAINTENANCE_UPGRADE"], "1")
 
     def test_shared_sudo_password_is_prompted_once_and_brokered_to_each_worker(self):
         secret = "shared-sudo-token"
