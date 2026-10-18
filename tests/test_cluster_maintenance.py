@@ -58,6 +58,24 @@ class ClusterMaintenanceTests(unittest.TestCase):
 
         run.assert_not_called()
 
+    def test_invalid_parallel_values_are_rejected_before_credentials(self):
+        for parallel in (0, -1, 101):
+            with self.subTest(parallel=parallel), \
+                    patch.object(cluster_maintenance, "collect_passwords") as collect:
+                with self.assertRaisesRegex(RuntimeError, "parallel"):
+                    cluster_maintenance.run_maintenance(
+                        controller_settings(), ["one.example"], False, parallel=parallel,
+                    )
+                collect.assert_not_called()
+
+    def test_cli_rejects_parallel_outside_one_to_one_hundred(self):
+        for parallel in ("0", "-1", "101"):
+            with self.subTest(parallel=parallel), \
+                    patch.object(cluster_maintenance, "validate_controller_config") as validate:
+                with self.assertRaises(SystemExit):
+                    cluster_maintenance.main(["--parallel", parallel])
+                validate.assert_not_called()
+
     def test_ansible_nonzero_status_is_returned(self):
         completed = subprocess.CompletedProcess(["ansible-playbook"], 17)
         with patch.object(cluster_maintenance.os, "chmod"), \
@@ -80,7 +98,7 @@ class ClusterMaintenanceTests(unittest.TestCase):
 
         self.assertEqual(result, 0)
         validate.assert_called_once_with(PROJECT_DIR / "config.local.json")
-        maintain.assert_called_once_with(settings, ["one.example", "two.example"], False)
+        maintain.assert_called_once_with(settings, ["one.example", "two.example"], False, 3)
         prompt.assert_called_once()
 
     def test_prompt_accepts_yes_for_upgrade(self):
@@ -91,7 +109,7 @@ class ClusterMaintenanceTests(unittest.TestCase):
             result = cluster_maintenance.main([])
 
         self.assertEqual(result, 0)
-        maintain.assert_called_once_with(settings, ["one.example", "two.example"], True)
+        maintain.assert_called_once_with(settings, ["one.example", "two.example"], True, 3)
         prompt.assert_called_once()
 
     def test_prompt_retries_invalid_answer_then_accepts_no(self):
@@ -102,7 +120,7 @@ class ClusterMaintenanceTests(unittest.TestCase):
             result = cluster_maintenance.main([])
 
         self.assertEqual(result, 0)
-        maintain.assert_called_once_with(settings, ["one.example", "two.example"], False)
+        maintain.assert_called_once_with(settings, ["one.example", "two.example"], False, 3)
         self.assertEqual(prompt.call_count, 2)
 
     def test_update_only_skips_upgrade_prompt(self):
@@ -113,7 +131,7 @@ class ClusterMaintenanceTests(unittest.TestCase):
             result = cluster_maintenance.main(["--update-only"])
 
         self.assertEqual(result, 0)
-        maintain.assert_called_once_with(settings, ["one.example", "two.example"], False)
+        maintain.assert_called_once_with(settings, ["one.example", "two.example"], False, 3)
         prompt.assert_not_called()
 
     def test_prompt_eof_aborts_without_running_maintenance(self):
@@ -132,11 +150,12 @@ class ClusterMaintenanceTests(unittest.TestCase):
                 patch.object(cluster_maintenance, "run_maintenance", return_value=0) as maintain, \
                 patch("builtins.input") as prompt:
             result = cluster_maintenance.main([
-                "--upgrade", "--worker", "two.example", "--worker", "one.example",
+                "--upgrade", "--parallel", "2", "--worker", "two.example",
+                "--worker", "one.example", "--worker", "three.example",
             ])
 
         self.assertEqual(result, 0)
-        maintain.assert_called_once_with(settings, ["one.example", "two.example"], True)
+        maintain.assert_called_once_with(settings, ["one.example", "two.example", "three.example"], True, 2)
         prompt.assert_not_called()
 
     def test_password_is_absent_from_command_and_generated_files(self):
@@ -159,7 +178,9 @@ class ClusterMaintenanceTests(unittest.TestCase):
                 patch.object(cluster_maintenance, "PasswordBroker", return_value=nullcontext(SimpleNamespace(path="/private/sudo.sock"))), \
                 patch.object(cluster_maintenance.shutil, "which", return_value="ansible-playbook"), \
                 patch.object(cluster_maintenance.subprocess, "run", side_effect=run):
-            result = cluster_maintenance.run_maintenance(controller_settings(), ["one.example"], True)
+            result = cluster_maintenance.run_maintenance(
+                controller_settings(), ["one.example"], True, parallel=2,
+            )
 
         self.assertEqual(result, 0)
         self.assertTrue(command_seen)
@@ -170,6 +191,8 @@ class ClusterMaintenanceTests(unittest.TestCase):
         self.assertEqual(inventory_contents, "[cluster_workers]\none.example\n")
         self.assertNotIn("two.example", inventory_contents)
         self.assertTrue(json.loads(variables_contents)["maintenance_upgrade"])
+        self.assertEqual(json.loads(variables_contents)["maintenance_parallel"], 2)
+        self.assertEqual(command_seen[command_seen.index("--forks") + 1], "1")
         collect.assert_called_once_with("labuser", ["one.example"], identity_file="/keys/lab")
         self.assertIs(subprocess_kwargs[0]["stdin"], subprocess.DEVNULL)
         environment = subprocess_kwargs[0]["env"]
@@ -182,11 +205,14 @@ class ClusterMaintenanceTests(unittest.TestCase):
         broker_passwords = []
         commands = []
         inventories = []
+        variables = []
 
         def run(command, **kwargs):
             commands.append(command)
             inventory = Path(command[command.index("-i") + 1])
             inventories.append(inventory.read_text(encoding="utf-8"))
+            vars_file = Path(next(value[1:] for value in command if value.startswith("@")))
+            variables.append(json.loads(vars_file.read_text(encoding="utf-8")))
             return subprocess.CompletedProcess(command, 0)
 
         def broker(path, passwords):
@@ -217,6 +243,7 @@ class ClusterMaintenanceTests(unittest.TestCase):
         self.assertEqual(commands[0][0], "ansible-playbook")
         self.assertIn("ansible/maintain-workers.yml", commands[0])
         self.assertEqual(commands[0][commands[0].index("--forks") + 1], "2")
+        self.assertEqual(variables[0]["maintenance_parallel"], 3)
 
 
 if __name__ == "__main__":

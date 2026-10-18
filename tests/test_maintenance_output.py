@@ -16,14 +16,20 @@ class QuietStream(io.StringIO):
 class TTYStream(io.StringIO):
     def __init__(self):
         super().__init__()
-        self.pulse_written = threading.Event()
+        self.pulse_lines = []
+        self.first_both_pulse = threading.Event()
+        self.second_only_pulse = threading.Event()
 
     def isatty(self):
         return True
 
     def write(self, value):
-        if value.startswith("\rpi-one:"):
-            self.pulse_written.set()
+        if value.startswith("Pågår: ") and ("pi-one:" in value or "pi-two:" in value):
+            self.pulse_lines.append(value)
+            if "pi-one:" in value and "pi-two:" in value:
+                self.first_both_pulse.set()
+            elif "pi-two:" in value and "pi-one:" not in value:
+                self.second_only_pulse.set()
         return super().write(value)
 
 
@@ -77,26 +83,51 @@ class MaintenanceOutputTests(unittest.TestCase):
         self.assertIn("pakkeoppgraderingen ble ikke kjørt", text)
         self.assertIn("0 nye pakker; 0 oppgradert; 1 oppgraderinger gjenstår", text)
 
-    def test_tty_pulse_stops_and_joins_before_next_stage_resets_event(self):
+    def test_overlapping_hosts_share_pulse_and_one_result_keeps_other_active(self):
         stream = TTYStream()
-        output = MaintenanceOutput(["pi-one"], upgrade=True, stream=stream)
-        # Make the pulse thread emit once, then exit, without waiting five seconds.
-        with patch.object(output._pulse_stop, "wait", side_effect=[False, True, True]) as wait, \
-                patch("maintenance_output.time.monotonic", side_effect=[10.0, 15.0, 20.0]):
+        output = MaintenanceOutput(["pi-one", "pi-two"], upgrade=True, stream=stream)
+        second_started = threading.Event()
+        first_result_done = threading.Event()
+        calls = 0
+
+        def fake_wait(_timeout):
+            nonlocal calls
+            calls += 1
+            if calls == 1:
+                self.assertTrue(second_started.wait(1))
+                return False
+            if calls == 2:
+                self.assertTrue(first_result_done.wait(1))
+                return False
+            return True
+
+        # Coordinate two pulse ticks without a real five-second wait.
+        with patch.object(output._pulse_stop, "wait", side_effect=fake_wait), \
+                patch("maintenance_output.time.monotonic", side_effect=[10.0, 12.0, 15.0, 20.0]):
             output.start("pi-one", "refresh")
-            self.assertTrue(stream.pulse_written.wait(1))
-            first_thread = output._pulse_thread
+            timer_thread = output._pulse_thread
+            output.start("pi-two", "upgrade")
+            self.assertIs(output._pulse_thread, timer_thread)
+            second_started.set()
+            self.assertTrue(stream.first_both_pulse.wait(1))
+
             output.result("pi-one", "refresh", {})
-            self.assertFalse(first_thread.is_alive())
+            self.assertTrue(timer_thread.is_alive())
+            first_result_done.set()
+            self.assertTrue(stream.second_only_pulse.wait(1))
+            timer_thread.join(1)
+            self.assertFalse(timer_thread.is_alive())
+            output.result("pi-two", "upgrade", {})
 
-            output.start("pi-one", "upgrade")
-            second_thread = output._pulse_thread
-            second_thread.join(1)
-            self.assertFalse(second_thread.is_alive())
-            output.result("pi-one", "upgrade", {})
-
-        self.assertEqual(wait.call_count, 3)
-        self.assertIn("… 5s", stream.getvalue())
+        self.assertEqual(calls, 3)
+        self.assertIn("pi-one: oppdaterer pakkelister … 5s", stream.pulse_lines[0])
+        self.assertIn("pi-two: oppgraderer pakker … 3s", stream.pulse_lines[0])
+        self.assertIn("pi-two: oppgraderer pakker … 8s", stream.pulse_lines[1])
+        self.assertNotIn("pi-one:", stream.pulse_lines[1])
+        self.assertIn(
+            stream.pulse_lines[0] + "pi-one: pakkelistene er oppdatert.\n",
+            stream.getvalue(),
+        )
 
     def test_skipped_stages_advance_node_progress_and_reboot_is_measured(self):
         stream = QuietStream()

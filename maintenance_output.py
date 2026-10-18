@@ -38,24 +38,27 @@ class MaintenanceOutput:
         }
         self._pulse_stop = threading.Event()
         self._pulse_thread: threading.Thread | None = None
-        self._pulse_started = 0.0
-        self._active: tuple[str, str] | None = None
+        self._active: dict[str, tuple[str, float]] = {}
         self._finished = False
 
     def start(self, host: str, stage: str) -> None:
         self._check_host_stage(host, stage)
         with self._pulse_lifecycle_lock:
-            self._stop_pulse()
             with self._lock:
-                self._active = (host, stage)
+                pulse_was_idle = not self._has_active_pulse()
+            if pulse_was_idle:
+                # Reap an exited timer before reusing its Event for a new run.
+                self._stop_pulse()
+            with self._lock:
+                started = time.monotonic()
+                self._active[host] = (stage, started)
                 progress = self._node_progress(host)
                 self._write(f"{host}: {STAGE_LABELS[stage]} ({progress}).")
-                if stage in ("refresh", "upgrade") and self._is_tty():
-                    # The previous pulse thread is joined before this shared Event is reset.
+                if stage in ("refresh", "upgrade") and self._is_tty() and self._pulse_thread is None:
+                    # The previous pulse thread was joined before this shared Event was reset.
                     self._pulse_stop.clear()
-                    self._pulse_started = time.monotonic()
                     self._pulse_thread = threading.Thread(
-                        target=self._pulse, args=(host, stage), daemon=True,
+                        target=self._pulse, daemon=True,
                         name="maintenance-progress",
                     )
                     self._pulse_thread.start()
@@ -63,11 +66,10 @@ class MaintenanceOutput:
     def result(self, host: str, stage: str, result: dict, skipped: bool = False) -> None:
         self._check_host_stage(host, stage)
         with self._pulse_lifecycle_lock:
-            self._stop_pulse()
             with self._lock:
                 node = self._nodes[host]
                 node["completed"].add(stage)
-                self._active = None
+                self._active.pop(host, None)
                 if skipped and stage == "upgrade":
                     self._write(f"{host}: pakkeoppgraderingen ble ikke kjørt.")
                 elif skipped:
@@ -75,25 +77,29 @@ class MaintenanceOutput:
                 else:
                     self._render_result(host, stage, result or {}, node)
                 self._write_progress(host)
+                pulse_remains_active = self._has_active_pulse()
+            if not pulse_remains_active:
+                self._stop_pulse()
 
     def fail(self, host: str, message: str) -> None:
         if host not in self._nodes:
             raise ValueError(f"Ukjent worker: {host}")
         with self._pulse_lifecycle_lock:
-            self._stop_pulse()
             with self._lock:
-                self._active = None
+                self._active.pop(host, None)
                 self._nodes[host]["failed"] = True
                 self._write(f"{host}: FEIL – {message.strip() or 'vedlikeholdet feilet'}")
                 self._write_progress(host)
+                pulse_remains_active = self._has_active_pulse()
+            if not pulse_remains_active:
+                self._stop_pulse()
 
     def finish(self) -> None:
         with self._pulse_lifecycle_lock:
-            self._stop_pulse()
             with self._lock:
                 if self._finished:
                     return
-                self._active = None
+                self._active.clear()
                 self._finished = True
                 failed = sum(node["failed"] for node in self._nodes.values())
                 completed = sum(
@@ -128,6 +134,7 @@ class MaintenanceOutput:
                         f"  {host}: {status}; {installed_text} nye pakker; {upgraded_text} oppgradert; "
                         f"{remaining_text} oppgraderinger gjenstår; omstart {reboot_text}."
                     )
+            self._stop_pulse()
 
     def _render_result(self, host: str, stage: str, result: dict, node: dict) -> None:
         if stage in ("before", "after", "available", "remaining") and "stdout" not in result:
@@ -235,23 +242,31 @@ class MaintenanceOutput:
         except (AttributeError, OSError):
             return False
 
-    def _pulse(self, host: str, stage: str) -> None:
+    def _has_active_pulse(self) -> bool:
+        return any(stage in ("refresh", "upgrade") for stage, _started in self._active.values())
+
+    def _pulse(self) -> None:
         while not self._pulse_stop.wait(5):
-            elapsed = int(time.monotonic() - self._pulse_started)
+            now = time.monotonic()
             with self._lock:
-                if self._active != (host, stage):
+                active = [
+                    (host, stage, started)
+                    for host, (stage, started) in self._active.items()
+                    if stage in ("refresh", "upgrade")
+                ]
+                if not active:
                     return
-                self.stream.write(f"\r{host}: {STAGE_LABELS[stage]} … {elapsed}s")
-                self.stream.flush()
+                lines = [
+                    f"{host}: {STAGE_LABELS[stage]} … {int(now - started)}s"
+                    for host, stage, started in active
+                ]
+                self._write("Pågår: " + "; ".join(lines) + ".")
 
     def _stop_pulse(self) -> None:
         self._pulse_stop.set()
         thread = self._pulse_thread
         if thread is not None and thread is not threading.current_thread():
             thread.join()
-            if self._is_tty():
-                self.stream.write("\r" + " " * 100 + "\r")
-                self.stream.flush()
         self._pulse_thread = None
 
     def _write(self, message: str) -> None:

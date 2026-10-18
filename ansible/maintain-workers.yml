@@ -21,10 +21,10 @@
         argv: [/usr/bin/true]
       changed_when: false
 
-- name: Vedlikehold OS-pakker på én worker om gangen
+- name: Vedlikehold OS-pakker i grupper av workers
   hosts: cluster_workers
   gather_facts: false
-  serial: 1
+  serial: "{{ maintenance_parallel | default(3) | int }}"
   any_errors_fatal: true
   vars:
     ansible_become_password: "{{ lookup('worker_sudo', inventory_hostname, socket_path=worker_sudo_socket) }}"

@@ -427,6 +427,9 @@ bash scripts/maintain-workers.sh --update-only
 
 # Begrens til én eller flere registrerte workers:
 bash scripts/maintain-workers.sh --upgrade --worker worker-01.example --worker worker-02.example
+
+# Velg selv hvor mange workers som vedlikeholdes samtidig (standard: 3):
+bash scripts/maintain-workers.sh --upgrade --parallel 5
 ```
 
 Bruk nodenes adresser slik de står i `worker_hosts`. `--config FIL` velger en
@@ -447,8 +450,11 @@ felles passord og skriv det inn én gang. Bare noder som avviser det felles
 passordet, får et eget passordspørsmål. Passord holdes i minnet og lagres ikke
 i filer eller kommandolinjer.
 Alle valgte noder kontrolleres for sudo og et apt-basert OS før pakkeendringer.
-Deretter behandles én node om gangen; ved feil stopper kjøringen med feilkode
-og Ansible viser resultatet per node. Tidligere fullførte noder rulles ikke tilbake.
+Deretter behandles inntil tre workers samtidig. `--parallel ANTALL` velger en
+annen grense (1–100); et nytt parti starter når det forrige er ferdig. Ved feil
+kjører allerede startede pakkeoperasjoner ferdig, men nye partier starter ikke.
+Kjøringen avsluttes med feilkode og resultat per node. Tidligere fullførte noder
+rulles ikke tilbake.
 
 `--upgrade` bruker vanlig `apt-get upgrade`, uten å fjerne pakker. Pakkeoppgraderinger
 kan starte berørte tjenester på nytt. Skriptet viser om OS-et melder behov for

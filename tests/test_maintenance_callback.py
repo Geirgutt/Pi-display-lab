@@ -56,7 +56,12 @@ class MaintenanceCallbackTests(unittest.TestCase):
 
     def test_playbook_results_produce_exact_changes_remaining_and_reboot_summary(self):
         plays = yaml.safe_load((PROJECT_DIR / "ansible/maintain-workers.yml").read_text(encoding="utf-8"))
-        task_registers = [task["register"] for task in plays[1]["tasks"]]
+        # ansible-core 2.21 serializes classic `register: name` as a mapping
+        # from the variable name to `_task.POLYMORPHIC_RESULT_EXPRESSION`.
+        task_registers = [
+            {task["register"]: "_task.polymorphic_result"}
+            for task in plays[1]["tasks"]
+        ]
         results = [
             {"changed": True},
             {"stdout": "installed\topenssl\t1.0\n"},
@@ -69,6 +74,7 @@ class MaintenanceCallbackTests(unittest.TestCase):
         self.assertEqual(len(task_registers), len(results))
         for register, data in zip(task_registers, results):
             result = self.result(register, data)
+            self.callback.v2_playbook_on_task_start(result._task, False)
             self.callback.v2_runner_on_start(result._host, result._task)
             self.callback.v2_runner_on_ok(result)
         self.callback.v2_playbook_on_stats(None)
@@ -80,8 +86,21 @@ class MaintenanceCallbackTests(unittest.TestCase):
         self.assertIn("1 fullført, 0 feilet, 1 ufullstendig", text)
         self.assertNotIn("verbose apt output", text)
 
+    def test_legacy_string_register_and_unrelated_projection_are_safe(self):
+        task = SimpleNamespace(register="maintenance_reboot", get_name=lambda: "Reboot status")
+        self.assertEqual(self.module.CallbackModule._stage_for_task(task), "reboot")
+
+        projection = SimpleNamespace(register={"other_result": "_task.polymorphic_result"})
+        self.assertIsNone(self.module.CallbackModule._stage_for_task(projection))
+
+        stage_projection = SimpleNamespace(register={
+            "other_result": "_task.polymorphic_result",
+            "maintenance_reboot": "_task.polymorphic_result",
+        })
+        self.assertEqual(self.module.CallbackModule._stage_for_task(stage_projection), "reboot")
+
     def test_secret_task_failure_is_hidden_and_does_not_complete_the_node(self):
-        result = self.result("maintenance_upgrade_result", {
+        result = self.result({"maintenance_upgrade_result": "_task.polymorphic_result"}, {
             "msg": "sensitive-password", "stdout": "sensitive-output", "stderr": "sensitive-stderr",
         }, no_log=True)
         self.callback.v2_runner_on_failed(result)

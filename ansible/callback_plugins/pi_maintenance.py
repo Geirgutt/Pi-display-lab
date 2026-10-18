@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import os
 import sys
+from collections.abc import Mapping
 from pathlib import Path
 
 from ansible.plugins.callback import CallbackBase
@@ -51,25 +52,41 @@ class CallbackModule(CallbackBase):
         self._display.display(f"\n{play.get_name()}")
 
     def v2_playbook_on_task_start(self, task, is_conditional):
-        if getattr(task, "register", None) not in STAGES:
+        if self._stage_for_task(task) is None:
             self._display.display(f"  {task.get_name()}")
 
     def v2_runner_on_start(self, host, task):
-        stage = STAGES.get(getattr(task, "register", None))
+        stage = self._stage_for_task(task)
         if stage:
             self.output.start(host.get_name(), stage)
 
     def v2_runner_on_ok(self, result):
-        stage = STAGES.get(getattr(result._task, "register", None))
+        stage = self._stage_for_task(result._task)
         if stage:
             self.output.result(result._host.get_name(), stage, self._public_result(result))
         else:
             self._display.display(f"  OK: {result._host.get_name()}")
 
     def v2_runner_on_skipped(self, result):
-        stage = STAGES.get(getattr(result._task, "register", None))
+        stage = self._stage_for_task(result._task)
         if stage:
             self.output.result(result._host.get_name(), stage, {}, skipped=True)
+
+    @staticmethod
+    def _stage_for_task(task):
+        """Resolve a maintenance stage across Ansible's string and projection forms."""
+        register = getattr(task, "register", None)
+        if isinstance(register, str):
+            return STAGES.get(register)
+        if isinstance(register, Mapping):
+            stages = {
+                STAGES[key]
+                for key in register
+                if isinstance(key, str) and key in STAGES
+            }
+            if len(stages) == 1:
+                return stages.pop()
+        return None
 
     def _public_result(self, result):
         data = result._result

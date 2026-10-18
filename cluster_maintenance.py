@@ -11,13 +11,28 @@ import sys
 import tempfile
 from pathlib import Path
 
-from cluster_install import MAX_FORKS, PasswordBroker, collect_passwords, select_workers
+from cluster_install import PasswordBroker, collect_passwords, select_workers
 from config import AppConfig, ConfigValidationError, validate_controller_config
 
 PROJECT_DIR = Path(__file__).resolve().parent
+DEFAULT_PARALLEL = 3
+MAX_PARALLEL = 100
 
 
-def run_maintenance(settings: AppConfig, workers: list[str], upgrade: bool) -> int:
+def parse_parallel(value: str) -> int:
+    try:
+        parallel = int(value)
+    except ValueError:
+        raise argparse.ArgumentTypeError("parallel må være et heltall fra 1 til 100") from None
+    if not 1 <= parallel <= MAX_PARALLEL:
+        raise argparse.ArgumentTypeError("parallel må være et heltall fra 1 til 100")
+    return parallel
+
+
+def run_maintenance(settings: AppConfig, workers: list[str], upgrade: bool,
+                    parallel: int = DEFAULT_PARALLEL) -> int:
+    if isinstance(parallel, bool) or not isinstance(parallel, int) or not 1 <= parallel <= MAX_PARALLEL:
+        raise RuntimeError("parallel må være et heltall fra 1 til 100")
     workers = select_workers(settings.worker_hosts, workers, False)
     if not workers:
         raise RuntimeError("Ingen workers er konfigurert.")
@@ -27,7 +42,8 @@ def run_maintenance(settings: AppConfig, workers: list[str], upgrade: bool) -> i
         raise RuntimeError("Ansible mangler. Kjør bash scripts/setup-cluster.sh først.")
 
     action = "Oppgraderer OS-pakker" if upgrade else "Oppdaterer pakkelister"
-    print(f"{action} på: {', '.join(workers)}", flush=True)
+    concurrency = min(parallel, len(workers))
+    print(f"{action} på: {', '.join(workers)} (maks {concurrency} samtidig)", flush=True)
     passwords = collect_passwords(
         settings.ssh_user, workers, identity_file=settings.ssh_identity_file,
     )
@@ -46,6 +62,7 @@ def run_maintenance(settings: AppConfig, workers: list[str], upgrade: bool) -> i
             "ansible_python_interpreter": "/usr/bin/python3",
             "ansible_ssh_common_args": "-o StrictHostKeyChecking=yes",
             "maintenance_upgrade": upgrade,
+            "maintenance_parallel": parallel,
         }
         if settings.ssh_identity_file:
             variables["ansible_ssh_private_key_file"] = settings.ssh_identity_file
@@ -66,7 +83,7 @@ def run_maintenance(settings: AppConfig, workers: list[str], upgrade: bool) -> i
         with PasswordBroker(temp_dir / "worker-sudo.sock", passwords) as broker:
             result = subprocess.run(
                 [ansible, "-i", str(inventory), "ansible/maintain-workers.yml",
-                 "--forks", str(min(MAX_FORKS, len(workers))),
+                 "--forks", str(concurrency),
                  "--extra-vars", "@" + str(vars_file),
                  "--extra-vars", json.dumps({"worker_sudo_socket": str(broker.path)})],
                 cwd=PROJECT_DIR, stdin=subprocess.DEVNULL, env=environment,
@@ -90,6 +107,8 @@ def main(argv: list[str] | None = None) -> int:
                       help="Oppdater bare pakkelister uten spørsmål om oppgradering.")
     parser.add_argument("--worker", action="append", default=[], metavar="HOST",
                         help="Velg en registrert worker. Kan gjentas. Standard: alle workers.")
+    parser.add_argument("--parallel", type=parse_parallel, default=DEFAULT_PARALLEL, metavar="N",
+                        help="Maksimalt antall workers som oppdateres samtidig (1-100, standard: 3).")
     args = parser.parse_args(argv)
     try:
         settings = validate_controller_config(args.config)
@@ -107,7 +126,7 @@ def main(argv: list[str] | None = None) -> int:
                 if answer in ("", "n", "nei", "no"):
                     break
                 print("Svar ja eller nei.", flush=True)
-        return run_maintenance(settings, workers, upgrade)
+        return run_maintenance(settings, workers, upgrade, args.parallel)
     except (ConfigValidationError, RuntimeError, OSError) as error:
         print(str(error), file=sys.stderr)
         return 1

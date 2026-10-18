@@ -22,3 +22,24 @@ jobs:
         run: python -m pip install -r requirements-test.txt
       - name: Run unit tests
         run: python -m unittest discover -s tests -v
+
+  maintenance-ansible:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        ansible: ["ansible-core~=2.19.0", "ansible-core>=2.19,<2.22"]
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - name: Install Ansible test dependencies
+        env:
+          ANSIBLE_REQUIREMENT: ${{ matrix.ansible }}
+        run: python -m pip install "$ANSIBLE_REQUIREMENT" PyYAML==6.0.2
+      - name: Check maintenance playbook syntax
+        run: ansible-playbook -i 'localhost,' ansible/maintain-workers.yml --syntax-check
+      - name: Exercise real callbacks without apt, SSH or sudo
+        run: python -m unittest discover -s tests -p test_maintenance_ansible.py -v
