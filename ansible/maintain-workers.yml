@@ -1,0 +1,55 @@
+---
+# Validate the entire selection before changing packages on any worker.
+- name: Kontroller valgte workers før OS-vedlikehold
+  hosts: cluster_workers
+  gather_facts: true
+  strategy: linear
+  any_errors_fatal: true
+  vars:
+    ansible_become_password: "{{ lookup('worker_sudo', inventory_hostname, socket_path=worker_sudo_socket) }}"
+    ansible_become_timeout: 60
+  tasks:
+    - name: Kontroller at noden bruker Debian, Ubuntu eller Raspberry Pi OS
+      ansible.builtin.assert:
+        that:
+          - ansible_facts['os_family'] == 'Debian'
+        fail_msg: "OS-vedlikeholdet krever apt (Debian, Ubuntu eller Raspberry Pi OS)."
+
+    - name: Kontroller sudo før pakkeendringer
+      become: true
+      ansible.builtin.command:
+        argv: [/usr/bin/true]
+      changed_when: false
+
+- name: Vedlikehold OS-pakker på én worker om gangen
+  hosts: cluster_workers
+  gather_facts: false
+  serial: 1
+  any_errors_fatal: true
+  vars:
+    ansible_become_password: "{{ lookup('worker_sudo', inventory_hostname, socket_path=worker_sudo_socket) }}"
+    ansible_become_timeout: 60
+  tasks:
+    - name: Oppdater pakkelister
+      become: true
+      ansible.builtin.apt:
+        update_cache: true
+        lock_timeout: 300
+
+    - name: Oppgrader installerte pakker uten å fjerne pakker
+      become: true
+      ansible.builtin.apt:
+        upgrade: safe
+        force_apt_get: true
+        fail_on_autoremove: true
+        lock_timeout: 300
+      when: maintenance_upgrade | default(false) | bool
+
+    - name: Se om noden trenger omstart
+      ansible.builtin.stat:
+        path: /var/run/reboot-required
+      register: maintenance_reboot
+
+    - name: Vis omstartsstatus
+      ansible.builtin.debug:
+        msg: "{{ inventory_hostname }}: {{ 'Omstart kreves. Start noden på nytt når det passer.' if maintenance_reboot.stat.exists else 'Ingen omstart meldt av operativsystemet.' }}"

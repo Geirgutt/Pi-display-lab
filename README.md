@@ -410,6 +410,38 @@ siste Git-versjon selv. Gamle prototypefiler slettes aldri automatisk. En kjent
 gammel coordinator på opptatt port tilbys stoppet etter egen bekreftelse;
 ukjente prosesser stoppes ikke.
 
+### Oppdater OS-pakker på workers
+
+Kjør fra repoet på controlleren som vanlig bruker. Skriptet leser registrerte
+workers og SSH-innstillinger fra `config.local.json`:
+
+```bash
+# Oppdater pakkelistene på alle workers (apt update):
+bash scripts/maintain-workers.sh
+
+# Oppdater pakkelister og oppgrader OS-pakker på alle workers:
+bash scripts/maintain-workers.sh --upgrade
+
+# Begrens til én eller flere registrerte workers:
+bash scripts/maintain-workers.sh --upgrade --worker worker-01.example --worker worker-02.example
+```
+
+Bruk nodenes adresser slik de står i `worker_hosts`. `--config FIL` velger en
+annen controller-config. Skriptet krever eksisterende SSH-nøkkelinnlogging,
+godkjente SSH host keys og Ansible fra cluster-oppsettet. Sudo-passord spørres
+om ved behov. Har flere workers felles sudo-passord, svar ja på spørsmålet om
+felles passord og skriv det inn én gang. Bare noder som avviser det felles
+passordet, får et eget passordspørsmål. Passord holdes i minnet og lagres ikke
+i filer eller kommandolinjer.
+Alle valgte noder kontrolleres for sudo og et apt-basert OS før pakkeendringer.
+Deretter behandles én node om gangen; ved feil stopper kjøringen med feilkode
+og Ansible viser resultatet per node. Tidligere fullførte noder rulles ikke tilbake.
+
+`--upgrade` bruker vanlig `apt-get upgrade`, uten å fjerne pakker. Pakkeoppgraderinger
+kan starte berørte tjenester på nytt. Skriptet viser om OS-et melder behov for
+omstart, men starter ikke nodene på nytt. Controllerens OS-pakker er ikke med;
+disse oppdateres lokalt. Selve clusterprogrammet oppdateres med `scripts/update.sh`.
+
 ### TLS og lokale hemmeligheter
 
 Første installasjon oppretter en liten privat lab-CA og et coordinator-
