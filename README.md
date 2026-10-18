@@ -416,18 +416,24 @@ Kjør fra repoet på controlleren som vanlig bruker. Skriptet leser registrerte
 workers og SSH-innstillinger fra `config.local.json`:
 
 ```bash
-# Oppdater pakkelistene på alle workers (apt update):
+# Oppdater alle workers; skriptet spør om pakker også skal oppgraderes:
 bash scripts/maintain-workers.sh
 
-# Oppdater pakkelister og oppgrader OS-pakker på alle workers:
+# Oppdater pakkelister og oppgrader uten spørsmål om oppgradering:
 bash scripts/maintain-workers.sh --upgrade
+
+# Oppdater bare pakkelistene (apt update), uten spørsmål om oppgradering:
+bash scripts/maintain-workers.sh --update-only
 
 # Begrens til én eller flere registrerte workers:
 bash scripts/maintain-workers.sh --upgrade --worker worker-01.example --worker worker-02.example
 ```
 
 Bruk nodenes adresser slik de står i `worker_hosts`. `--config FIL` velger en
-annen controller-config. Skriptet krever eksisterende SSH-nøkkelinnlogging,
+annen controller-config. Uten modusflagg spør skriptet om du også vil oppgradere
+OS-pakkene. Svar ja for å installere oppdateringer, eller nei/Enter for bare å
+oppdatere pakkelistene. Sluttmeldingen viser hvilken handling som ble utført.
+Skriptet krever eksisterende SSH-nøkkelinnlogging,
 godkjente SSH host keys og Ansible fra cluster-oppsettet. Sudo-passord spørres
 om ved behov. Har flere workers felles sudo-passord, svar ja på spørsmålet om
 felles passord og skriv det inn én gang. Bare noder som avviser det felles

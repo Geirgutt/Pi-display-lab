@@ -74,23 +74,70 @@ class ClusterMaintenanceTests(unittest.TestCase):
         settings = controller_settings(("one.example", "two.example"))
         with patch.object(cluster_maintenance, "validate_controller_config", return_value=settings) as validate, \
                 patch.object(cluster_maintenance, "run_maintenance", return_value=0) as maintain, \
+                patch("builtins.input", return_value="") as prompt, \
                 patch("sys.argv", ["cluster-maintenance"]):
             result = cluster_maintenance.main()
 
         self.assertEqual(result, 0)
         validate.assert_called_once_with(PROJECT_DIR / "config.local.json")
         maintain.assert_called_once_with(settings, ["one.example", "two.example"], False)
+        prompt.assert_called_once()
+
+    def test_prompt_accepts_yes_for_upgrade(self):
+        settings = controller_settings()
+        with patch.object(cluster_maintenance, "validate_controller_config", return_value=settings), \
+                patch.object(cluster_maintenance, "run_maintenance", return_value=0) as maintain, \
+                patch("builtins.input", return_value="yes") as prompt:
+            result = cluster_maintenance.main([])
+
+        self.assertEqual(result, 0)
+        maintain.assert_called_once_with(settings, ["one.example", "two.example"], True)
+        prompt.assert_called_once()
+
+    def test_prompt_retries_invalid_answer_then_accepts_no(self):
+        settings = controller_settings()
+        with patch.object(cluster_maintenance, "validate_controller_config", return_value=settings), \
+                patch.object(cluster_maintenance, "run_maintenance", return_value=0) as maintain, \
+                patch("builtins.input", side_effect=["perhaps", "no"]) as prompt:
+            result = cluster_maintenance.main([])
+
+        self.assertEqual(result, 0)
+        maintain.assert_called_once_with(settings, ["one.example", "two.example"], False)
+        self.assertEqual(prompt.call_count, 2)
+
+    def test_update_only_skips_upgrade_prompt(self):
+        settings = controller_settings()
+        with patch.object(cluster_maintenance, "validate_controller_config", return_value=settings), \
+                patch.object(cluster_maintenance, "run_maintenance", return_value=0) as maintain, \
+                patch("builtins.input") as prompt:
+            result = cluster_maintenance.main(["--update-only"])
+
+        self.assertEqual(result, 0)
+        maintain.assert_called_once_with(settings, ["one.example", "two.example"], False)
+        prompt.assert_not_called()
+
+    def test_prompt_eof_aborts_without_running_maintenance(self):
+        settings = controller_settings()
+        with patch.object(cluster_maintenance, "validate_controller_config", return_value=settings), \
+                patch.object(cluster_maintenance, "run_maintenance") as maintain, \
+                patch("builtins.input", side_effect=EOFError):
+            result = cluster_maintenance.main([])
+
+        self.assertEqual(result, 130)
+        maintain.assert_not_called()
 
     def test_repeated_worker_options_select_requested_workers_and_upgrade(self):
         settings = controller_settings(("one.example", "two.example", "three.example"))
         with patch.object(cluster_maintenance, "validate_controller_config", return_value=settings), \
-                patch.object(cluster_maintenance, "run_maintenance", return_value=0) as maintain:
+                patch.object(cluster_maintenance, "run_maintenance", return_value=0) as maintain, \
+                patch("builtins.input") as prompt:
             result = cluster_maintenance.main([
                 "--upgrade", "--worker", "two.example", "--worker", "one.example",
             ])
 
         self.assertEqual(result, 0)
         maintain.assert_called_once_with(settings, ["one.example", "two.example"], True)
+        prompt.assert_not_called()
 
     def test_password_is_absent_from_command_and_generated_files(self):
         secret = "sensitive-sudo-token-7f2a"

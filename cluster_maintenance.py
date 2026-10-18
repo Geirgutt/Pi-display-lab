@@ -64,16 +64,21 @@ def run_maintenance(settings: AppConfig, workers: list[str], upgrade: bool) -> i
             )
     if result.returncode:
         print("Vedlikeholdet feilet. Se resultatet per node i Ansible-oppsummeringen.", file=sys.stderr)
+    elif upgrade:
+        print("Pakkeoppgradering fullført. Se omstartsstatus per node over.", flush=True)
     else:
-        print("Vedlikehold fullført. Se omstartsstatus per node over.", flush=True)
+        print("Pakkelistene er oppdatert. Ingen pakkeoppgradering ble kjørt.", flush=True)
     return result.returncode
 
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--config", type=Path, default=PROJECT_DIR / "config.local.json")
-    parser.add_argument("--upgrade", action="store_true",
-                        help="Oppdater pakkelister og kjør vanlig apt-get upgrade.")
+    mode = parser.add_mutually_exclusive_group()
+    mode.add_argument("--upgrade", action="store_true",
+                      help="Oppdater pakkelister og kjør apt-get upgrade uten spørsmål om oppgradering.")
+    mode.add_argument("--update-only", action="store_true",
+                      help="Oppdater bare pakkelister uten spørsmål om oppgradering.")
     parser.add_argument("--worker", action="append", default=[], metavar="HOST",
                         help="Velg en registrert worker. Kan gjentas. Standard: alle workers.")
     args = parser.parse_args(argv)
@@ -82,7 +87,18 @@ def main(argv: list[str] | None = None) -> int:
         workers = select_workers(settings.worker_hosts, args.worker, False)
         if not workers:
             raise RuntimeError("Ingen workers er konfigurert.")
-        return run_maintenance(settings, workers, args.upgrade)
+        upgrade = args.upgrade
+        if not args.upgrade and not args.update_only:
+            print(f"Valgte workers: {', '.join(workers)}", flush=True)
+            while True:
+                answer = input("Vil du også oppgradere installerte OS-pakker på valgte workers? [j/N]: ").strip().lower()
+                if answer in ("j", "ja", "y", "yes"):
+                    upgrade = True
+                    break
+                if answer in ("", "n", "nei", "no"):
+                    break
+                print("Svar ja eller nei.", flush=True)
+        return run_maintenance(settings, workers, upgrade)
     except (ConfigValidationError, RuntimeError, OSError) as error:
         print(str(error), file=sys.stderr)
         return 1
