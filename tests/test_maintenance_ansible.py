@@ -46,7 +46,13 @@ class MaintenanceAnsibleTests(unittest.TestCase):
             "name": "Synthetic maintenance without package changes",
             "hosts": "cluster_workers", "gather_facts": False,
             "serial": original["serial"], "any_errors_fatal": original["any_errors_fatal"],
-            "vars": {"maintenance_parallel": 3}, "tasks": tasks,
+            "vars": {
+                "maintenance_parallel": 3,
+                "ansible_facts": {"os_family": "Debian" if platform == "debian" else "RedHat"},
+            },
+            # Exercise the exact production include, including Jinja comparisons.
+            # Only the included package operations are replaced with harmless jobs.
+            "tasks": original["tasks"],
         }
         environment = dict(os.environ, ANSIBLE_STDOUT_CALLBACK="pi_maintenance",
                            ANSIBLE_CALLBACK_PLUGINS=str(PROJECT_DIR / "ansible/callback_plugins"),
@@ -54,6 +60,11 @@ class MaintenanceAnsibleTests(unittest.TestCase):
                            PI_DISPLAY_MAINTENANCE_UPGRADE="1", ANSIBLE_NOCOLOR="1")
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
+            (root / f"maintenance-{platform}.yml").write_text(yaml.safe_dump(tasks), encoding="utf-8")
+            other = "fedora" if platform == "debian" else "debian"
+            (root / f"maintenance-{other}.yml").write_text(yaml.safe_dump([
+                {"ansible.builtin.fail": {"msg": "Wrong OS maintenance branch selected"}},
+            ]), encoding="utf-8")
             inventory = root / "inventory.ini"
             inventory.write_text("[cluster_workers]\n" + "\n".join(WORKERS) +
                                  "\n[cluster_workers:vars]\nansible_connection=local\n" +

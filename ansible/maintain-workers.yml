@@ -32,4 +32,5 @@
     ansible_ssh_timeout: 60
   tasks:
     - name: Velg pakkevedlikehold for operativsystemet
-      ansible.builtin.include_tasks: "{{ 'maintenance-debian.yml' if ansible_facts['os_family'] == 'Debian' else 'maintenance-fedora.yml' }}"
+      ansible.builtin.include_tasks:
+        file: "{{ 'maintenance-debian.yml' if ansible_facts['os_family'] == 'Debian' else 'maintenance-fedora.yml' }}"
