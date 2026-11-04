@@ -6,6 +6,18 @@ from update_policy import classify_paths
 
 
 class UpdatePolicyTests(unittest.TestCase):
+    def test_maintenance_tools_only_update_controller(self) -> None:
+        paths = (
+            "cluster_maintenance.py", "maintenance_output.py",
+            "scripts/maintain-workers.sh", "scripts/fedora-reboot-status.py",
+            "ansible/maintain-workers.yml", "ansible/maintenance-debian.yml",
+            "ansible/maintenance-fedora.yml", "ansible/callback_plugins/pi_maintenance.py",
+            "README.md", "tests/test_maintenance_output.py",
+        )
+        self.assertEqual(classify_paths(paths), ("controller", False, ()))
+        self.assertEqual(classify_paths(paths + ("cluster_worker.py",)), ("quick", False, ()))
+        self.assertEqual(classify_paths(paths + ("ansible/install-workers.yml",)), ("full", False, ()))
+
     def test_display_code_with_docs_and_tests_is_display_only(self) -> None:
         self.assertEqual(
             classify_paths((

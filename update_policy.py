@@ -99,12 +99,24 @@ def classify_paths(paths: Iterable[str]) -> tuple[str, bool, tuple[str, ...]]:
         "calendar_data.py",
         "display_state.py",
         "integration_sync.py",
+        "cluster_maintenance.py",
+        "maintenance_output.py",
+        "scripts/maintain-workers.sh",
+        "scripts/fedora-reboot-status.py",
+        "ansible/maintain-workers.yml",
+        "ansible/maintenance-debian.yml",
+        "ansible/maintenance-fedora.yml",
+        "ansible/callback_plugins/pi_maintenance.py",
         "scripts/update.sh",
         "training.py",
         "update_policy.py",
     }
     if non_display and all(path in controller_files for path in non_display):
         return "controller", display_changed, ()
+
+    # Controller tools can accompany worker changes without turning a known
+    # quick update into an unknown/full deployment.
+    non_display = tuple(path for path in non_display if path not in controller_files)
 
     if any(
         _matches(path, FULL_FILES, FULL_PREFIXES)

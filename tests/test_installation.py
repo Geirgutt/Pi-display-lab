@@ -8,6 +8,15 @@ PROJECT_DIR = Path(__file__).resolve().parent.parent
 
 
 class InstallationWorkflowTests(unittest.TestCase):
+    def test_worker_playbooks_allow_slow_ssh_sudo_handshakes(self) -> None:
+        import yaml
+
+        for name in ("install-workers.yml", "update-workers.yml", "maintain-workers.yml"):
+            for play in yaml.safe_load(self.read(f"ansible/{name}")):
+                with self.subTest(play=play["name"]):
+                    self.assertEqual(play["vars"]["ansible_ssh_timeout"], 60)
+                    self.assertNotIn("ansible_become_timeout", play["vars"])
+
     def read(self, relative_path: str) -> str:
         return (PROJECT_DIR / relative_path).read_text(encoding="utf-8")
 
