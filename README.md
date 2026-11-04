@@ -422,7 +422,7 @@ bash scripts/maintain-workers.sh
 # Oppdater pakkelister og oppgrader uten spørsmål om oppgradering:
 bash scripts/maintain-workers.sh --upgrade
 
-# Oppdater bare pakkelistene (apt update), uten spørsmål om oppgradering:
+# Oppdater bare pakkelistene (apt update / dnf makecache), uten spørsmål:
 bash scripts/maintain-workers.sh --update-only
 
 # Begrens til én eller flere registrerte workers:
@@ -430,16 +430,22 @@ bash scripts/maintain-workers.sh --upgrade --worker worker-01.example --worker w
 
 # Velg selv hvor mange workers som vedlikeholdes samtidig (standard: 3):
 bash scripts/maintain-workers.sh --upgrade --parallel 5
+
+# Vanlig linjelogg i stedet for terminalpanel:
+bash scripts/maintain-workers.sh --upgrade --plain
 ```
 
 Bruk nodenes adresser slik de står i `worker_hosts`. `--config FIL` velger en
 annen controller-config. Uten modusflagg spør skriptet om du også vil oppgradere
 OS-pakkene. Svar ja for å installere oppdateringer, eller nei/Enter for bare å
 oppdatere pakkelistene. Sluttmeldingen viser hvilken handling som ble utført.
-Terminalen viser fremdriftslinjer for noder og vedlikeholdstrinn, samt løpende
-ventetid mens apt jobber. Linjene viser fullførte trinn og noder; de måler ikke
-nedlastede byte eller prosent av pakkeinstallasjonen. Før oppgradering vises
-tilgjengelige pakker med gammel og ny versjon. Etterpå sammenlignes faktisk
+I et vanlig SSH-vindu oppdateres et fast terminalpanel med fremdriftslinje,
+aktivt trinn, ventetid og tilgjengelige/gjenstående oppdateringer per worker.
+Panelet viser fullførte trinn og noder; det måler ikke nedlastede byte eller
+prosent av pakkeinstallasjonen. Ved liten terminal prioriteres aktive og feilede
+workers; alle tas med i sluttrapporten. `--plain`, `TERM=dumb` og omdirigert
+utdata gir vanlig linjelogg. Pakke- og feildetaljer skrives etter panelet.
+Tilgjengelige pakker rapporteres med gammel og ny versjon. Etterpå sammenlignes faktisk
 installerte versjoner, slik at nye og oppgraderte pakker vises sammen med
 eventuelle gjenstående oppdateringer. Til slutt oppsummeres hver node med
 pakkeantall, feil og behov for omstart.
@@ -449,7 +455,15 @@ om ved behov. Har flere workers felles sudo-passord, svar ja på spørsmålet om
 felles passord og skriv det inn én gang. Bare noder som avviser det felles
 passordet, får et eget passordspørsmål. Passord holdes i minnet og lagres ikke
 i filer eller kommandolinjer.
-Alle valgte noder kontrolleres for sudo og et apt-basert OS før pakkeendringer.
+Alle valgte noder kontrolleres for sudo og støttet OS før pakkeendringer.
+Debian, Ubuntu og Raspberry Pi OS bruker apt; vanlig Fedora med DNF 4/5 bruker
+`dnf makecache`, `dnf repoquery`, `dnf upgrade` og RPM-versjoner. Fedora Atomic
+med rpm-ostree støttes ikke. DNF følger nodens pakkepolicy, inkludert eventuell
+utskifting av foreldede pakker og opprydding i gamle kjerner; skriptet bruker
+ikke `--allowerasing`, `autoremove` eller `distro-sync`.
+Fedora sjekker omstart med `needs-restarting`. Hvis pluginen mangler eller
+sjekken ikke kan tolkes, vises omstartsstatus som ukjent; ingen plugin installeres
+automatisk. Ingen noder startes automatisk på nytt.
 Deretter behandles inntil tre workers samtidig. `--parallel ANTALL` velger en
 annen grense (1–100); et nytt parti starter når det forrige er ferdig. Ved feil
 kjører allerede startede pakkeoperasjoner ferdig, men nye partier starter ikke.

@@ -1,0 +1,56 @@
+---
+- name: "[1/7] Oppdater pakkelister med dnf"
+  become: true
+  ansible.builtin.command:
+    argv: [dnf, -y, --refresh, makecache]
+  changed_when: false
+  register: maintenance_refresh
+
+- name: "[2/7] Registrer installerte RPM-pakker før oppgradering"
+  ansible.builtin.command:
+    argv: [rpm, -qa, --queryformat, 'installed\t%{NAME}.%{ARCH}\t%{EPOCHNUM}:%{VERSION}-%{RELEASE}\n']
+  changed_when: false
+  register: maintenance_before
+
+- name: "[3/7] Finn tilgjengelige pakkeoppgraderinger med dnf"
+  become: true
+  ansible.builtin.command:
+    argv: [dnf, -q, repoquery, --upgrades, --latest-limit=1, --queryformat, "pi-update\t%{name}.%{arch}\t%{evr}\n"]
+  environment:
+    LC_ALL: C
+  changed_when: false
+  register: maintenance_available
+
+- name: "[4/7] Oppgrader installerte pakker med dnf"
+  become: true
+  ansible.builtin.command:
+    # No --allowerasing or distro-sync. DNF may replace obsoleted packages and
+    # prune old installonly kernels according to the worker's own DNF policy.
+    argv: [dnf, -y, upgrade]
+  when: maintenance_upgrade | default(false) | bool
+  register: maintenance_upgrade_result
+
+- name: "[5/7] Registrer installerte RPM-pakker etter oppgradering"
+  ansible.builtin.command:
+    argv: [rpm, -qa, --queryformat, 'installed\t%{NAME}.%{ARCH}\t%{EPOCHNUM}:%{VERSION}-%{RELEASE}\n']
+  changed_when: false
+  when: maintenance_upgrade | default(false) | bool
+  register: maintenance_after
+
+- name: "[6/7] Finn gjenstående pakkeoppgraderinger med dnf"
+  become: true
+  ansible.builtin.command:
+    argv: [dnf, -q, repoquery, --upgrades, --latest-limit=1, --queryformat, "pi-update\t%{name}.%{arch}\t%{evr}\n"]
+  environment:
+    LC_ALL: C
+  changed_when: false
+  when: maintenance_upgrade | default(false) | bool
+  register: maintenance_remaining
+
+- name: "[7/7] Se om Fedora-noden trenger omstart"
+  become: true
+  ansible.builtin.script:
+    cmd: ../scripts/fedora-reboot-status.py
+    executable: /usr/bin/python3
+  changed_when: false
+  register: maintenance_reboot

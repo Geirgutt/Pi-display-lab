@@ -46,26 +46,23 @@ class CallbackModule(CallbackBase):
             json.loads(os.environ.get("PI_DISPLAY_MAINTENANCE_WORKERS", "[]")),
             os.environ.get("PI_DISPLAY_MAINTENANCE_UPGRADE") == "1",
         )
-        self._display.display("Fremdriftslinjene viser fullførte trinn og noder. Ventetid vises mens apt jobber.")
 
     def v2_playbook_on_play_start(self, play):
-        self._display.display(f"\n{play.get_name()}")
-
-    def v2_playbook_on_task_start(self, task, is_conditional):
-        if self._stage_for_task(task) is None:
-            self._display.display(f"  {task.get_name()}")
+        self.output.phase(play.get_name())
 
     def v2_runner_on_start(self, host, task):
         stage = self._stage_for_task(task)
         if stage:
             self.output.start(host.get_name(), stage)
+        else:
+            self.output.checking(host.get_name(), task.get_name())
 
     def v2_runner_on_ok(self, result):
         stage = self._stage_for_task(result._task)
         if stage:
             self.output.result(result._host.get_name(), stage, self._public_result(result))
         else:
-            self._display.display(f"  OK: {result._host.get_name()}")
+            self.output.checking(result._host.get_name(), "kontroll OK")
 
     def v2_runner_on_skipped(self, result):
         stage = self._stage_for_task(result._task)

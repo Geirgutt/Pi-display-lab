@@ -18,7 +18,7 @@ WORKERS = ["pi-one", "pi-two", "pi-three", "pi-four"]
 
 @unittest.skipUnless(ANSIBLE and os.name != "nt", "Requires Ansible on Linux")
 class MaintenanceAnsibleTests(unittest.TestCase):
-    def run_local_maintenance(self, fail_worker=None):
+    def run_local_maintenance(self, fail_worker=None, platform="debian"):
         original = yaml.safe_load((PROJECT_DIR / "ansible/maintain-workers.yml").read_text(encoding="utf-8"))[1]
         outputs = {
             "maintenance_refresh": "",
@@ -29,7 +29,7 @@ class MaintenanceAnsibleTests(unittest.TestCase):
             "maintenance_remaining": "Listing...\n",
         }
         tasks = []
-        for task in original["tasks"]:
+        for task in yaml.safe_load((PROJECT_DIR / f"ansible/maintenance-{platform}.yml").read_text(encoding="utf-8")):
             register = task["register"]
             synthetic = {"name": task["name"], "register": register}
             if register == "maintenance_reboot":
@@ -81,6 +81,12 @@ class MaintenanceAnsibleTests(unittest.TestCase):
         self.assertIn("pi-two: feilet", result.stdout)
         self.assertIn("pi-four: ufullstendig", result.stdout)
         self.assertNotIn("pi-four: oppdaterer pakkelister", result.stdout)
+
+    def test_fedora_tasks_use_the_same_callback_stages(self):
+        result = self.run_local_maintenance(platform="fedora")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertNotIn("Callback dispatch", result.stderr)
+        self.assertIn("4 fullført, 0 feilet, 0 ufullstendig", result.stdout)
 
 
 if __name__ == "__main__":

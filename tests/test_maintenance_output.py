@@ -85,7 +85,8 @@ class MaintenanceOutputTests(unittest.TestCase):
 
     def test_overlapping_hosts_share_pulse_and_one_result_keeps_other_active(self):
         stream = TTYStream()
-        output = MaintenanceOutput(["pi-one", "pi-two"], upgrade=True, stream=stream)
+        with patch.dict("os.environ", {"PI_DISPLAY_MAINTENANCE_UI": "plain"}):
+            output = MaintenanceOutput(["pi-one", "pi-two"], upgrade=True, stream=stream)
         second_started = threading.Event()
         first_result_done = threading.Event()
         calls = 0
@@ -128,6 +129,54 @@ class MaintenanceOutputTests(unittest.TestCase):
             stream.pulse_lines[0] + "pi-one: pakkelistene er oppdatert.\n",
             stream.getvalue(),
         )
+
+    def test_dashboard_redraws_workers_and_retains_details_at_finish(self):
+        stream = TTYStream()
+        with patch.dict("os.environ", {"TERM": "xterm", "PI_DISPLAY_MAINTENANCE_UI": "auto"}):
+            output = MaintenanceOutput(["pi-one", "pi-two"], upgrade=True, stream=stream)
+        # Render deterministic elapsed time without starting a background timer.
+        output._active = {"pi-one": ("upgrade", 10), "pi-two": ("refresh", 12)}
+        output._status.update({"pi-one": "oppgraderer pakker", "pi-two": "oppdaterer pakkelister"})
+        with patch("maintenance_output.shutil.get_terminal_size", return_value=(100, 24)):
+            output._draw_panel(20)
+            first = stream.getvalue()
+            self.assertIn("oppgraderer pakker (10s)", first)
+            self.assertIn("oppdaterer pakkelister (8s)", first)
+            output.result("pi-one", "upgrade", {})
+            self.assertIn("\x1b[", stream.getvalue())
+            self.assertNotIn("Pågår:", stream.getvalue())
+            self.assertEqual(set(output._active), {"pi-two"})
+            output.fail("pi-two", "SSH feilet\nfeildetalj")
+            output.finish()
+        text = stream.getvalue()
+        self.assertIn("feildetalj", text)
+        self.assertIn("1 feilet", text)
+        self.assertIn("Detaljer fra vedlikeholdet:", text)
+        self.assertIsNone(output._pulse_thread)
+        previous = stream.getvalue()
+        output.finish()
+        self.assertEqual(previous, stream.getvalue())
+
+    def test_plain_mode_never_emits_terminal_controls(self):
+        stream = TTYStream()
+        with patch.dict("os.environ", {"PI_DISPLAY_MAINTENANCE_UI": "plain"}):
+            output = MaintenanceOutput(["pi-one"], upgrade=True, stream=stream)
+        output.result("pi-one", "refresh", {})
+        output.finish()
+        self.assertNotIn("\x1b", stream.getvalue())
+
+    def test_dnf_updates_rpm_multiversion_and_unknown_reboot(self):
+        stream = QuietStream()
+        output = MaintenanceOutput(["fedora"], upgrade=True, stream=stream)
+        output.result("fedora", "before", {"stdout": "installed\tkernel.x86_64\t0:6.9-1\ninstalled\tkernel.x86_64\t0:6.8-1\n"})
+        output.result("fedora", "available", {"stdout": "pi-update\tkernel.x86_64\t6.10-1\n"})
+        output.result("fedora", "after", {"stdout": "installed\tkernel.x86_64\t0:6.9-1\ninstalled\tkernel.x86_64\t0:6.10-1\n"})
+        output.result("fedora", "remaining", {"stdout": ""})
+        output.result("fedora", "reboot", {"stdout": '{"reboot_required": null}'})
+        output.finish()
+        text = stream.getvalue()
+        self.assertIn("kernel.x86_64: 0:6.8-1, 0:6.9-1 → 6.10-1", text)
+        self.assertIn("1 oppgradert; 0 oppgraderinger gjenstår; omstart ukjent", text)
 
     def test_skipped_stages_advance_node_progress_and_reboot_is_measured(self):
         stream = QuietStream()

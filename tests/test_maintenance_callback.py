@@ -55,12 +55,12 @@ class MaintenanceCallbackTests(unittest.TestCase):
         )
 
     def test_playbook_results_produce_exact_changes_remaining_and_reboot_summary(self):
-        plays = yaml.safe_load((PROJECT_DIR / "ansible/maintain-workers.yml").read_text(encoding="utf-8"))
+        tasks = yaml.safe_load((PROJECT_DIR / "ansible/maintenance-debian.yml").read_text(encoding="utf-8"))
         # ansible-core 2.21 serializes classic `register: name` as a mapping
         # from the variable name to `_task.POLYMORPHIC_RESULT_EXPRESSION`.
         task_registers = [
             {task["register"]: "_task.polymorphic_result"}
-            for task in plays[1]["tasks"]
+            for task in tasks
         ]
         results = [
             {"changed": True},
@@ -74,7 +74,6 @@ class MaintenanceCallbackTests(unittest.TestCase):
         self.assertEqual(len(task_registers), len(results))
         for register, data in zip(task_registers, results):
             result = self.result(register, data)
-            self.callback.v2_playbook_on_task_start(result._task, False)
             self.callback.v2_runner_on_start(result._host, result._task)
             self.callback.v2_runner_on_ok(result)
         self.callback.v2_playbook_on_stats(None)

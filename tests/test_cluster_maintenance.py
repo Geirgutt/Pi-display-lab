@@ -1,6 +1,7 @@
 """Focused orchestration tests for cluster maintenance (no real nodes)."""
 
 import json
+import os
 import subprocess
 import tempfile
 import unittest
@@ -29,6 +30,18 @@ def controller_settings(workers=("one.example", "two.example")):
 
 
 class ClusterMaintenanceTests(unittest.TestCase):
+    def test_plain_flag_reaches_renderer_without_leaking_to_later_runs(self):
+        seen = []
+        def maintain(*args):
+            seen.append(os.environ.get("PI_DISPLAY_MAINTENANCE_UI"))
+            return 0
+        with patch.dict(os.environ, {"PI_DISPLAY_MAINTENANCE_UI": "auto"}), \
+                patch.object(cluster_maintenance, "validate_controller_config", return_value=controller_settings()), \
+                patch.object(cluster_maintenance, "run_maintenance", side_effect=maintain):
+            self.assertEqual(cluster_maintenance.main(["--update-only", "--plain"]), 0)
+            self.assertEqual(os.environ["PI_DISPLAY_MAINTENANCE_UI"], "auto")
+        self.assertEqual(seen, ["plain"])
+
     def test_unknown_worker_is_rejected_before_credentials_or_commands(self):
         with patch.object(cluster_maintenance, "validate_controller_config", return_value=controller_settings()), \
                 patch.object(cluster_maintenance, "collect_passwords") as collect, \

@@ -9,11 +9,12 @@
     ansible_become_password: "{{ lookup('worker_sudo', inventory_hostname, socket_path=worker_sudo_socket) }}"
     ansible_become_timeout: 60
   tasks:
-    - name: Kontroller at noden bruker Debian, Ubuntu eller Raspberry Pi OS
+    - name: Kontroller at noden bruker Debian, Ubuntu, Raspberry Pi OS eller Fedora
       ansible.builtin.assert:
         that:
-          - ansible_facts['os_family'] == 'Debian'
-        fail_msg: "OS-vedlikeholdet krever apt (Debian, Ubuntu eller Raspberry Pi OS)."
+          - ansible_facts['os_family'] == 'Debian' or ansible_facts['distribution'] == 'Fedora'
+          - ansible_facts['os_family'] == 'Debian' or ansible_facts['pkg_mgr'] in ['dnf', 'dnf5']
+        fail_msg: "OS-vedlikeholdet støtter Debian, Ubuntu, Raspberry Pi OS (apt) og Fedora (dnf)."
 
     - name: Kontroller sudo før pakkeendringer
       become: true
@@ -30,70 +31,5 @@
     ansible_become_password: "{{ lookup('worker_sudo', inventory_hostname, socket_path=worker_sudo_socket) }}"
     ansible_become_timeout: 60
   tasks:
-    - name: "[1/7] Oppdater pakkelister"
-      become: true
-      ansible.builtin.apt:
-        update_cache: true
-        lock_timeout: 300
-      register: maintenance_refresh
-
-    - name: "[2/7] Registrer installerte pakker før oppgradering"
-      become: true
-      ansible.builtin.command:
-        expand_argument_vars: false
-        argv:
-          - dpkg-query
-          - -W
-          - '-f=${db:Status-Status}\t${binary:Package}\t${Version}\n'
-      changed_when: false
-      register: maintenance_before
-
-    - name: "[3/7] Finn tilgjengelige pakkeoppgraderinger"
-      ansible.builtin.command:
-        argv:
-          - apt
-          - list
-          - --upgradable
-      environment:
-        LC_ALL: C
-      changed_when: false
-      register: maintenance_available
-
-    - name: "[4/7] Oppgrader installerte pakker uten å fjerne pakker"
-      become: true
-      ansible.builtin.apt:
-        upgrade: safe
-        force_apt_get: true
-        fail_on_autoremove: true
-        lock_timeout: 300
-      when: maintenance_upgrade | default(false) | bool
-      register: maintenance_upgrade_result
-
-    - name: "[5/7] Registrer installerte pakker etter oppgradering"
-      become: true
-      ansible.builtin.command:
-        expand_argument_vars: false
-        argv:
-          - dpkg-query
-          - -W
-          - '-f=${db:Status-Status}\t${binary:Package}\t${Version}\n'
-      changed_when: false
-      when: maintenance_upgrade | default(false) | bool
-      register: maintenance_after
-
-    - name: "[6/7] Finn gjenstående pakkeoppgraderinger"
-      ansible.builtin.command:
-        argv:
-          - apt
-          - list
-          - --upgradable
-      environment:
-        LC_ALL: C
-      changed_when: false
-      when: maintenance_upgrade | default(false) | bool
-      register: maintenance_remaining
-
-    - name: "[7/7] Se om noden trenger omstart"
-      ansible.builtin.stat:
-        path: /var/run/reboot-required
-      register: maintenance_reboot
+    - name: Velg pakkevedlikehold for operativsystemet
+      ansible.builtin.include_tasks: "{{ 'maintenance-debian.yml' if ansible_facts['os_family'] == 'Debian' else 'maintenance-fedora.yml' }}"
