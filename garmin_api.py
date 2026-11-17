@@ -11,6 +11,7 @@ import hashlib
 import json
 import math
 import time
+import zipfile
 from datetime import date, timedelta
 from email.utils import parsedate_to_datetime
 from pathlib import Path
@@ -19,6 +20,7 @@ from urllib.parse import urlencode
 from urllib.request import Request, HTTPRedirectHandler, build_opener
 
 from integration_sync import write_json_atomic
+from garmin_charts import MAX_FIT_BYTES, decode_activity_file
 
 BASE_URL = "https://personal.connectapi.garmin.com"
 TOKEN_PATH = "/personalapitoken-service/personal-api/personal-api-key/token"
@@ -56,14 +58,16 @@ class GarminClient:
         self.fingerprint = hashlib.sha256(self.key.encode()).hexdigest()
         self.token = ""
 
-    def _request(self, path: str, authorization: str, *, post=False) -> bytes:
+    def _request(self, path: str, authorization: str, *, post=False, download=False) -> bytes:
+        limit = MAX_FIT_BYTES if download else MAX_RESPONSE
         request = Request(BASE_URL + path, data=b"" if post else None,
-                          headers={"Authorization": authorization, "Accept": "*/*" if post else "application/json"},
+                          headers={"Authorization": authorization,
+                                   "Accept": "*/*" if post or download else "application/json"},
                           method="POST" if post else "GET")
         try:
             with self.opener.open(request, timeout=15) as reply:
-                data = reply.read(MAX_RESPONSE + 1)
-                if len(data) > MAX_RESPONSE:
+                data = reply.read(limit + 1)
+                if len(data) > limit:
                     raise GarminError("Garmin response exceeded the size limit")
                 return data
         except HTTPError as error:
@@ -113,21 +117,65 @@ class GarminClient:
     def get(self, path: str, params: dict | None = None):
         if params:
             path += "?" + urlencode(params)
-        if not self.token:
-            self.obtain_token()
-        try:
-            data = self._request(path, "Bearer " + self.token)
-        except GarminError as error:
-            if error.status != 401:
-                raise
-            self.obtain_token(force=True)
-            data = self._request(path, "Bearer " + self.token)
+        data = self._get_bytes(path)
         if not data:
             return None  # HTTP 204: no measurements for this account/date.
         try:
             return json.loads(data)
         except (ValueError, UnicodeError):
             raise GarminError("Garmin returned invalid JSON") from None
+
+    def download_activity(self, activity_id: int) -> bytes:
+        return self._get_bytes(f"/download-service/files/activity/{activity_id}", download=True)
+
+    def _get_bytes(self, path: str, *, download=False) -> bytes:
+        if not self.token:
+            self.obtain_token()
+        try:
+            return self._request(path, "Bearer " + self.token, download=download)
+        except GarminError as error:
+            if error.status != 401:
+                raise
+            self.obtain_token(force=True)
+            return self._request(path, "Bearer " + self.token, download=download)
+
+
+def _sync_activity_charts(client: GarminClient, raw: dict, now: int) -> int:
+    activities = raw.get("activities")
+    if not isinstance(activities, list):
+        return 0
+    ordered = sorted((item for item in activities if isinstance(item, dict)),
+                     key=lambda item: str(item.get("startTimeLocal") or ""), reverse=True)
+    ids = [item.get("activityId") for item in ordered]
+    ids = list(dict.fromkeys(value for value in ids
+                             if type(value) is int and 0 < value < 2**63))[:10]
+    old = raw.get("charts")
+    old = old if isinstance(old, dict) else {}
+    charts = {str(value): old[str(value)] for value in ids if isinstance(old.get(str(value)), dict)}
+    raw["charts"] = charts
+    attempted = 0
+    for activity_id in ids:
+        key = str(activity_id)
+        cached = charts.get(key, {})
+        checked = cached.get("checked")
+        if cached.get("series") or (type(checked) is int and 0 <= now - checked < 86400):
+            continue
+        attempted += 1
+        try:
+            series = decode_activity_file(client.download_activity(activity_id))
+        except GarminError as error:
+            if error.status in (401, 429):
+                return now + (error.retry_after or 900)
+            if error.status == 403:
+                charts[key] = {"checked": now, "series": []}
+                break
+            series = []
+        except (ImportError, OSError, ValueError, RuntimeError, zipfile.BadZipFile):
+            series = []
+        charts[key] = {"checked": now, "series": series}
+        if attempted == 2:
+            break
+    return 0
 
 
 def synchronize(api_key: str, cache_dir: Path, *, today: date | None = None, client=None, clock=time.time) -> dict:
@@ -178,8 +226,10 @@ def synchronize(api_key: str, cache_dir: Path, *, today: date | None = None, cli
             if error.status == 401 or error.status == 429:
                 retry_at = clock() + (error.retry_after or 900)
                 break
-    payload = build_dashboard(raw, today=current)
     now = int(clock())
+    if not retry_at:
+        retry_at = _sync_activity_charts(client, raw, now)
+    payload = build_dashboard(raw, today=current)
     payload.update(source="garmin-personal-api", status="ok" if not failures else
                    "auth_error" if auth_error else "stale" if same_key and previous.get("updated_at") else "error",
                    updated_at=now if successes else previous.get("updated_at", 0) if same_key else 0,

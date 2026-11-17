@@ -6,7 +6,7 @@
 
 namespace app_state
 {
-enum class Page : uint8_t { Home, Cluster, Training, TrainingDetail, Calendar, System, Alarm, Menu, AlarmNumber, Spotify, Garmin, ActivityHistory, ActivityDetail };
+enum class Page : uint8_t { Home, Cluster, Training, TrainingDetail, Calendar, System, Alarm, Menu, AlarmNumber, Spotify, Garmin, ActivityHistory, ActivityDetail, GarminMetricDetail };
 
 constexpr uint8_t activityPageSize = 5;
 
@@ -47,6 +47,10 @@ struct Model
     secure_protocol::GarminTelemetry garminTelemetry{};
     secure_protocol::ActivityTelemetry activities{};
     secure_protocol::Activity selectedActivity{};
+    bool activityFromHome = false;
+    bool activityChartsVisible = false;
+    secure_protocol::GarminMetric selectedGarminMetric{};
+    uint32_t garminMetricHistoryEnd = 0;
     uint32_t activityRevision = 0;
     uint8_t activityPage = 0;
     uint8_t activityOffset() const

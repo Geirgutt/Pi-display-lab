@@ -112,6 +112,10 @@ class GarminApiTests(unittest.TestCase):
         activity = {"date": "2026-11-17", "activity_type": "running", "distance_km": 5,
                     "duration_seconds": 1500, "average_pace_min_per_km": 5, "average_hr": 140}
         write_json_atomic(path, {"status": "ok", "updated_at": 100, "last_activity": activity,
+                                "history_end": 20774,
+                                "activities": [{"date": "2026-11-17", "title": "Morning run", "kind": "running",
+                                                "values": ["5", "25", "5:00", "140", "--", "--"],
+                                                "charts": [[130] * 24, [300] * 24, [50] * 24]}],
                                 "groups": [{"title": "Today", "metrics": [
                                     {"label": "Steps", "value": "9000", "unit": "", "history": [1000, None, 9000]}]}]})
         provider = GarminProvider(path, clock=lambda: 101)
@@ -125,6 +129,14 @@ class GarminApiTests(unittest.TestCase):
         self.assertIn("activity\t2026-11-17\trunning\t50\t1500\t500\t140", text)
         history = next(row for row in text.splitlines() if row.startswith("garmin_metric")).split("\t")[-1]
         self.assertEqual([int(value) for value in history.split(",")], [3333, -32768, 30000, -32768, -32768, -32768, -32768])
+        legacy = _deskdisplay_state_lines(state, (), include_activities=True)
+        self.assertIn("garmin_activity\t2026-11-17\tMorning run", legacy)
+        self.assertNotIn("garmin_chart", legacy)
+        enhanced = _deskdisplay_state_lines(state, (), include_activities=True, include_charts=True)
+        self.assertIn("garmin_history_end\t20774\n", enhanced)
+        self.assertIn("garmin_chart\t0\t" + ",".join(["130"] * 24) + "\n", enhanced)
+        scale = next(row for row in enhanced.splitlines() if row.startswith("garmin_metric")).split("\t")[-1]
+        self.assertEqual(scale, "3")
 
     def test_api_failure_does_not_stop_the_existing_calendar_sync(self):
         script = Path(__file__).resolve().parents[1] / "scripts/sync-integrations.py"

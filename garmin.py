@@ -47,6 +47,8 @@ class GarminProvider:
                                 "unit": str(metric.get("unit") or "")[:12], "history": history})
             groups.append({"title": str(group.get("title") or "Garmin")[:20], "metrics": metrics})
         activities = raw.get("activities")
+        history_end = raw.get("history_end", 0)
         return {"status": status, "updated_at": max(0, min(0xffffffff, int(updated))),
                 "groups": groups, "last_activity": raw.get("last_activity"),
-                "activities": activities[:10] if isinstance(activities, list) else []}
+                "activities": activities[:10] if isinstance(activities, list) else [],
+                "history_end": history_end if type(history_end) is int and 0 <= history_end <= 100000 else 0}

@@ -58,7 +58,7 @@ def _epoch(value: Any) -> int:
 
 
 def _deskdisplay_state_lines(payload: dict[str, Any], worker_hosts: tuple[str, ...],
-                             *, include_activities: bool = False) -> str:
+                             *, include_activities: bool = False, include_charts: bool = False) -> str:
     """Render compact controller state for the local DeskDisplay gateway."""
 
     nodes = list(payload.get("nodes") or [])
@@ -176,6 +176,8 @@ def _deskdisplay_state_lines(payload: dict[str, Any], worker_hosts: tuple[str, .
     garmin = payload.get("garmin") or {}
     garmin_status = {"not_configured": 0, "ok": 1, "stale": 2, "auth_error": 3, "error": 4}
     lines.append(f"garmin\t{garmin_status.get(garmin.get('status'), 4)}\t{int(garmin.get('updated_at') or 0)}")
+    if include_charts:
+        lines.append(f"garmin_history_end\t{garmin.get('history_end', 0)}")
     for group in list(garmin.get("groups") or [])[:4]:
         lines.append("garmin_group\t" + _compact_text(group.get("title"), 20, "Garmin"))
         for metric in list(group.get("metrics") or [])[:6]:
@@ -185,15 +187,16 @@ def _deskdisplay_state_lines(payload: dict[str, Any], worker_hosts: tuple[str, .
             # daily steps retain their shape within the compact signed range.
             peak = max([abs(v) for v in values if isinstance(v, (float, int))
                         and not isinstance(v, bool) and math.isfinite(v)] or [0])
-            divisor = max(1, peak / 3000)
+            divisor = max(1, math.ceil(peak / 3000)) if include_charts else max(1, peak / 3000)
             for value in values:
                 valid = (isinstance(value, (float, int)) and not isinstance(value, bool)
                          and math.isfinite(value))
                 history.append(str(int(round(value / divisor * 10))) if valid else "-32768")
             history.extend(["-32768"] * (7 - len(history)))
-            lines.append("\t".join(("garmin_metric", _compact_text(metric.get("label"), 20),
-                                    _compact_text(metric.get("value"), 16, "--"),
-                                    _compact_text(metric.get("unit"), 12), ",".join(history))))
+            fields = ("garmin_metric", _compact_text(metric.get("label"), 20),
+                      _compact_text(metric.get("value"), 16, "--"),
+                      _compact_text(metric.get("unit"), 12), ",".join(history))
+            lines.append("\t".join(fields + (str(divisor),) if include_charts else fields))
     activities = garmin.get("activities")
     if include_activities and isinstance(activities, list):
         for activity in activities[:10]:
@@ -206,6 +209,13 @@ def _deskdisplay_state_lines(payload: dict[str, Any], worker_hosts: tuple[str, .
                                     _compact_text(activity.get("title"), 48, "Activity"),
                                     _compact_text(activity.get("kind"), 24),
                                     *(_compact_text(value, 16, "--") for value in values))))
+            charts = activity.get("charts")
+            if include_charts and isinstance(charts, list) and len(charts) == 3:
+                for index, series in enumerate(charts):
+                    if isinstance(series, list) and len(series) == 24:
+                        samples = ",".join(str(value) if type(value) is int and -32768 <= value <= 32767
+                                           else "-32768" for value in series)
+                        lines.append(f"garmin_chart\t{index}\t{samples}")
     return "\n".join(lines) + "\n"
 
 
@@ -269,7 +279,8 @@ def create_app(
         payload = dashboard.snapshot(cluster_status=cluster_status.snapshot())
         return Response(
             _deskdisplay_state_lines(payload, settings.worker_hosts,
-                                     include_activities=request.headers.get("X-DeskDisplay-Activities") == "1"),
+                                     include_activities=request.headers.get("X-DeskDisplay-Activities") == "1",
+                                     include_charts=request.headers.get("X-DeskDisplay-Charts") == "1"),
             mimetype="text/plain",
             headers={"Cache-Control": "no-store"},
         )

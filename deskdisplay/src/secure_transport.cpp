@@ -19,8 +19,8 @@
 
 namespace
 {
-constexpr char identity[] = "DeskDisplay-peer";
-constexpr char activityIdentity[] = "DeskDisplay-peer-activities";
+constexpr const char* identities[] = {"DeskDisplay-peer-charts", "DeskDisplay-peer-activities",
+                                      "DeskDisplay-peer"};
 constexpr char preferenceNamespace[] = "dd-secure";
 constexpr uint16_t defaultPort = 4567;
 constexpr uint32_t initialReconnectMs = 5000;
@@ -51,7 +51,7 @@ uint16_t peerPort = defaultPort;
 bool keyAvailable = false;
 bool requested = false;
 bool sessionActive = false;
-bool useActivityIdentity = true;
+uint8_t identityIndex = 0;
 uint32_t nextConnect = 0;
 uint32_t reconnectDelayMs = initialReconnectMs;
 uint32_t lastRx = 0;
@@ -288,9 +288,17 @@ size_t expectedFrameSize()
         if (frame[3] == secure_protocol::spotifyTelemetryType)
             return secure_protocol::spotifyFrameSize;
         if (frame[3] == secure_protocol::garminTelemetryType)
-            return secure_protocol::garminFrameSize;
+        {
+            const size_t length = secure_protocol::headerSize + payloadLength;
+            return length == secure_protocol::garminFrameSize || length == secure_protocol::garminScaleFrameSize
+                ? length : 0;
+        }
         if (frame[3] == secure_protocol::activityTelemetryType)
-            return secure_protocol::activityFrameSize;
+        {
+            const size_t length = secure_protocol::headerSize + payloadLength;
+            return length == secure_protocol::activityFrameSize || length == secure_protocol::activityChartFrameSize
+                ? length : 0;
+        }
         return frame[3] == secure_protocol::telemetryType ? secure_protocol::frameSize : 0;
     }
 }
@@ -535,7 +543,7 @@ void secure_transport::service()
         requested = false;
         return;
     }
-    client.setPreSharedKey(useActivityIdentity ? activityIdentity : identity, pskHex);
+    client.setPreSharedKey(identities[identityIndex], pskHex);
     Serial.printf("Secure TLS connection to %s:%u...\n", peerAddress, peerPort);
     // This overload takes milliseconds. Keep the UI loop moving while the
     // controller is unreachable; restore the long I/O timeout for OTA below.
@@ -550,8 +558,8 @@ void secure_transport::service()
         else
         {
             ++stats.authFailures;
-            // Previous gateways accept only the original PSK identity.
-            useActivityIdentity = !useActivityIdentity;
+            // Older gateways negotiate their original frame format through their PSK identity.
+            identityIndex = (identityIndex + 1) % (sizeof(identities) / sizeof(identities[0]));
         }
         nextConnect = millis() + reconnectDelayMs;
         reconnectDelayMs = reconnectDelayMs < maximumReconnectMs / 2
@@ -561,7 +569,7 @@ void secure_transport::service()
         return;
     }
     sessionActive = true;
-    if (!useActivityIdentity) latestActivities.count = 0;
+    if (identityIndex == 2) latestActivities.count = 0;
     reconnectDelayMs = initialReconnectMs;
     client.useSessionTimeout(sessionTimeoutSeconds);
     lastRx = millis();

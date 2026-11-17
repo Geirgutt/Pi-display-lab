@@ -49,8 +49,9 @@ Direkte skriptkommandoer nedenfor kan fortsatt brukes ved avansert arbeid.
 
 ## DeskDisplay-firmware
 
-Home får kommende kalender- og treningssammendrag. Naviger med den lille
-Menu-knappen, sveip opp på Home eller ned på Menu, og trykk på sammendragene
+Home viser siste aktivitet til venstre og neste sju treningsdager til høyre.
+Kortene åpner henholdsvis aktivitetsdetaljene og ukeoversikten direkte. Naviger
+med Menu-knappen, sveip opp på Home eller ned på Menu, og trykk på sammendragene
 for Cluster, kalender og trening.
 
 På Alarm-siden prøver «Test alarm» valgt blinkestil i 30 sekunder (trykk på
@@ -272,10 +273,15 @@ På skjermen åpner du **Menu → Garmin**. Fire sider viser inntil 24 verdier:
 Body Battery, skritt, stress, hvilepuls, kalorier og væske; søvntid, søvnscore,
 dyp søvn, REM og HRV; vekt, VO2 maks, kondisjonsalder, SpO2, respirasjon og
 intensitetsminutter; samt distanse, tid, tempo, puls, aerob treningseffekt og
-belastning for siste aktivitet. Små grafer viser de siste sju kalenderdagene
-der data finnes. Manglende målinger vises som `--`. Vekt bruker siste måling
+belastning for siste aktivitet. Trykk på et målekort for å åpne en større graf
+og se daterte målinger fra de siste sju kalenderdagene der data finnes.
+Manglende målinger vises som `--`. Vekt bruker siste måling
 innen sju dager, VO2 maks siste verdi innen 30 dager. Garmin-knappen
 **Workouts** åpner den eksisterende visningen av kommende økter.
+I en fullført aktivitet åpner **Charts** grafer for puls, tempo og høyde når
+aktivitetsfila inneholder målingene. Controlleren henter inntil to nye
+aktivitetsfiler per synkronisering, beholder grafpunktene lokalt og sender dem
+til displayet. Eldre økter fylles derfor inn etter hvert.
 Intensitetsminutter følger [Garmins vekting](https://support.garmin.com/en-GB/?faq=pNU9nnDzzGAHmEavp9rpY8),
 der minutter med høy intensitet teller dobbelt.
 

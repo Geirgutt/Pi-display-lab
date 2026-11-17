@@ -22,6 +22,9 @@ constexpr uint8_t garminTelemetryType = 6;
 constexpr uint8_t activityTelemetryType = 7;
 constexpr size_t activityCountMax = 10;
 constexpr size_t activityMetricCount = 6;
+constexpr size_t activityChartCount = 3;
+constexpr size_t activityChartSamples = 24;
+constexpr size_t activityRecordSize = 187;
 constexpr size_t garminGroupMax = 4;
 constexpr size_t garminMetricMax = 6;
 constexpr size_t garminHistoryMax = 7;
@@ -32,21 +35,25 @@ constexpr size_t garminMetricSize = 21 + 17 + 13 + 14;
 constexpr size_t garminGroupSize = 21 + 1 + garminMetricMax * garminMetricSize;
 constexpr size_t garminPayloadSize = 6 + garminGroupMax * garminGroupSize;
 constexpr size_t garminFrameSize = 14 + garminPayloadSize;
+constexpr size_t garminScaleFrameSize = garminFrameSize + 4 + 4 * garminGroupMax * garminMetricMax;
 struct Activity
 {
     char date[11] = {};
     char title[49] = {};
     char kind[25] = {};
     char values[activityMetricCount][17] = {};
+    bool chartsAvailable = false;
+    int16_t charts[activityChartCount][activityChartSamples] = {};
 };
 struct ActivityTelemetry
 {
     uint8_t count = 0;
     Activity items[activityCountMax]{};
 };
-static_assert(sizeof(Activity) == 187, "Unexpected activity wire layout");
-constexpr size_t activityPayloadSize = 1 + activityCountMax * sizeof(Activity);
+static_assert(offsetof(Activity, chartsAvailable) == activityRecordSize, "Unexpected activity wire layout");
+constexpr size_t activityPayloadSize = 1 + activityCountMax * activityRecordSize;
 constexpr size_t activityFrameSize = 14 + activityPayloadSize;
+constexpr size_t activityChartFrameSize = activityFrameSize + activityCountMax * activityChartCount * activityChartSamples * 2;
 constexpr uint8_t spotifyCommandType = 0x91;
 constexpr size_t spotifyTitleMax = 96;
 constexpr size_t spotifyDeviceMax = 48;
@@ -104,8 +111,8 @@ static_assert(clusterFrameSize <= maxFrameSize, "Cluster frame exceeds receive b
 static_assert(trainingFrameSize <= maxFrameSize, "Training frame exceeds receive buffer");
 static_assert(calendarFrameSize <= maxFrameSize, "Calendar frame exceeds receive buffer");
 static_assert(spotifyFrameSize <= maxFrameSize, "Spotify frame exceeds receive buffer");
-static_assert(garminFrameSize <= maxFrameSize, "Garmin frame exceeds receive buffer");
-static_assert(activityFrameSize <= maxFrameSize, "Activity frame exceeds receive buffer");
+static_assert(garminScaleFrameSize <= maxFrameSize, "Garmin frame exceeds receive buffer");
+static_assert(activityChartFrameSize <= maxFrameSize, "Activity frame exceeds receive buffer");
 static_assert(otaChunkFrameSize <= maxFrameSize, "OTA frame exceeds receive buffer");
 constexpr int16_t temperatureUnavailable = INT16_MIN;
 
@@ -206,6 +213,7 @@ struct GarminMetric
     char value[garminValueMax + 1] = {};
     char unit[garminUnitMax + 1] = {};
     int16_t history[garminHistoryMax] = {};
+    uint32_t scale = 0;
 };
 struct GarminGroup
 {
@@ -219,6 +227,7 @@ struct GarminTelemetry
     uint32_t updatedAt = 0;
     uint8_t count = 0;
     GarminGroup groups[garminGroupMax]{};
+    uint32_t historyEnd = 0;
 };
 
 inline void put16(uint8_t* p, uint16_t value)
@@ -421,17 +430,34 @@ inline bool decodeTrainingTelemetry(const uint8_t* frame, size_t length, uint64_
 inline bool decodeActivityTelemetry(const uint8_t* frame, size_t length, uint64_t& sequence,
                                     ActivityTelemetry& value)
 {
-    if (!frame || length != activityFrameSize || frame[0] != magic0 || frame[1] != magic1
+    if (!frame || (length != activityFrameSize && length != activityChartFrameSize)
+        || frame[0] != magic0 || frame[1] != magic1
         || frame[2] != version || frame[3] != activityTelemetryType
-        || get16(frame + 4) != activityPayloadSize || frame[14] > activityCountMax) return false;
+        || get16(frame + 4) != length - 14 || frame[14] > activityCountMax) return false;
     value.count = frame[14];
     for (size_t index = 0; index < value.count; ++index)
     {
         Activity& item = value.items[index];
-        memcpy(&item, frame + 15 + index * sizeof(item), sizeof(item));
+        item = Activity{};
+        memcpy(item.date, frame + 15 + index * activityRecordSize, sizeof(item.date));
+        const uint8_t* p = frame + 15 + index * activityRecordSize + sizeof(item.date);
+        memcpy(item.title, p, sizeof(item.title)); p += sizeof(item.title);
+        memcpy(item.kind, p, sizeof(item.kind)); p += sizeof(item.kind);
+        memcpy(item.values, p, sizeof(item.values));
         if (item.date[10] || item.title[48] || item.kind[24]) return false;
         for (const auto& metric : item.values)
             if (metric[16]) return false;
+        if (length == activityChartFrameSize)
+        {
+            p = frame + activityFrameSize + index * activityChartCount * activityChartSamples * 2;
+            for (auto& series : item.charts)
+                for (auto& sample : series)
+                {
+                    sample = static_cast<int16_t>(get16(p));
+                    item.chartsAvailable |= sample != INT16_MIN;
+                    p += 2;
+                }
+        }
     }
     for (size_t index = value.count; index < activityCountMax; ++index)
         value.items[index] = Activity{};
@@ -442,9 +468,10 @@ inline bool decodeActivityTelemetry(const uint8_t* frame, size_t length, uint64_
 inline bool decodeGarminTelemetry(const uint8_t* frame, size_t length, uint64_t& sequence,
                                   GarminTelemetry& value)
 {
-    if (!frame || length != garminFrameSize || frame[0] != magic0 || frame[1] != magic1
+    if (!frame || (length != garminFrameSize && length != garminScaleFrameSize)
+        || frame[0] != magic0 || frame[1] != magic1
         || frame[2] != version || frame[3] != garminTelemetryType
-        || get16(frame + 4) != garminPayloadSize) return false;
+        || get16(frame + 4) != length - headerSize) return false;
     const uint8_t* p = frame + headerSize;
     if (p[0] > 4 || p[5] > garminGroupMax) return false;
     // Validate the full fixed-size payload before changing caller state.
@@ -461,6 +488,7 @@ inline bool decodeGarminTelemetry(const uint8_t* frame, size_t length, uint64_t&
     value = GarminTelemetry{};
     GarminTelemetry& decoded = value;
     decoded.status = p[0]; decoded.updatedAt = get32(p + 1); decoded.count = p[5];
+    if (length == garminScaleFrameSize) decoded.historyEnd = get32(p + garminPayloadSize);
     for (size_t group = 0; group < decoded.count; ++group)
     {
         const uint8_t* g = p + 6 + group * garminGroupSize;
@@ -474,6 +502,8 @@ inline bool decodeGarminTelemetry(const uint8_t* frame, size_t length, uint64_t&
             memcpy(metric.unit, m + 38, 13);
             for (size_t day = 0; day < garminHistoryMax; ++day)
                 metric.history[day] = static_cast<int16_t>(get16(m + 51 + day * 2));
+            if (length == garminScaleFrameSize)
+                metric.scale = get32(p + garminPayloadSize + 4 + 4 * (group * garminMetricMax + index));
         }
     }
     sequence = get64(frame + 6);

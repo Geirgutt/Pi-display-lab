@@ -10,13 +10,22 @@ constexpr int16_t buttonHeight = 42;
 constexpr int16_t pairedButtonWidth = 180;
 constexpr int16_t leftButtonX = 12;
 constexpr int16_t rightButtonX = 288;
+constexpr int16_t homeSummaryX = 20;
+constexpr int16_t homeSummaryWidth = 440;
+constexpr int16_t homeWorkoutY = 244;
+constexpr int16_t homeWorkoutWidth = 214;
+constexpr int16_t homeWorkoutHeight = 68;
+constexpr int16_t homeUpcomingX = 246;
 constexpr int16_t homeCalendarY = 326;
-constexpr int16_t homeTrainingY = 380;
-constexpr int16_t homeTrainingTop(bool calendarVisible)
-{
-    return calendarVisible ? homeTrainingY : homeCalendarY;
-}
 constexpr int16_t homeSummaryHeight = 48;
+constexpr bool inHomeSummary(int16_t x, int16_t y, int16_t left, int16_t top,
+                             int16_t width, int16_t height)
+{
+    return x >= left && x < left + width && y >= top && y < top + height;
+}
+constexpr int16_t homeClusterX = 20;
+constexpr int16_t homeClusterY = 432;
+constexpr int16_t homeClusterWidth = 300;
 constexpr int16_t homeMenuX = 360;
 constexpr int16_t homeMenuY = 432;
 constexpr int16_t homeMenuWidth = 100;
@@ -47,4 +56,8 @@ constexpr uint8_t trainingDayCount = 7;
 constexpr int16_t activityFirstRowY = 84;
 constexpr int16_t activityRowStep = 64;
 constexpr int16_t activityRowHeight = 56;
+constexpr int16_t garminMetricWidth = 222;
+constexpr int16_t garminMetricHeight = 88;
+constexpr int16_t garminMetricX(uint8_t index) { return 12 + (index % 2) * 234; }
+constexpr int16_t garminMetricY(uint8_t index) { return 122 + (index / 2) * 96; }
 }

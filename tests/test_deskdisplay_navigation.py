@@ -42,8 +42,12 @@ static void copyDate(char (&dest)[11], const char* date)
 
 int main()
 {
-    assert(ui_layout::homeTrainingTop(false) == ui_layout::homeCalendarY);
-    assert(ui_layout::homeTrainingTop(true) == ui_layout::homeTrainingY);
+    assert(ui_layout::inHomeSummary(20, 244, ui_layout::homeSummaryX,
+                                    ui_layout::homeWorkoutY, ui_layout::homeWorkoutWidth, ui_layout::homeWorkoutHeight));
+    assert(!ui_layout::inHomeSummary(240, 244, ui_layout::homeSummaryX,
+                                     ui_layout::homeWorkoutY, ui_layout::homeWorkoutWidth, ui_layout::homeWorkoutHeight));
+    assert(ui_layout::inHomeSummary(246, 244, ui_layout::homeUpcomingX,
+                                    ui_layout::homeWorkoutY, ui_layout::homeWorkoutWidth, ui_layout::homeWorkoutHeight));
     assert(gesture(116, 134) == Result::Tap); // small diagonal jitter
     assert(gesture(102, 60) == Result::Up);
     assert(gesture(102, 240) == Result::Down);

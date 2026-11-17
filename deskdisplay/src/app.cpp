@@ -176,15 +176,14 @@ uint8_t hit(int16_t x, int16_t y)
     {
         if (x >= 20 && x < 460 && y >= ui_layout::homeAlarmY
             && y < ui_layout::homeAlarmY + ui_layout::buttonHeight) return 7;
-        if (inside(x, y, 20, 272, 440)) return 1;
-        if (x >= 20 && x < 460)
-        {
-            if (model.calendarTelemetry.available && y >= ui_layout::homeCalendarY
-                && y < ui_layout::homeCalendarY + ui_layout::homeSummaryHeight) return 3;
-            const int16_t trainingTop = ui_layout::homeTrainingTop(model.calendarTelemetry.available);
-            if (y >= trainingTop
-                && y < trainingTop + ui_layout::homeSummaryHeight) return 9;
-        }
+        if (inside(x, y, ui_layout::homeClusterX, ui_layout::homeClusterY,
+                   ui_layout::homeClusterWidth)) return 1;
+        if (ui_layout::inHomeSummary(x, y, ui_layout::homeSummaryX, ui_layout::homeWorkoutY,
+                                     ui_layout::homeWorkoutWidth, ui_layout::homeWorkoutHeight)) return 66;
+        if (ui_layout::inHomeSummary(x, y, ui_layout::homeUpcomingX, ui_layout::homeWorkoutY,
+                                     ui_layout::homeWorkoutWidth, ui_layout::homeWorkoutHeight)) return 2;
+        if (model.calendarTelemetry.available && ui_layout::inHomeSummary(x, y, ui_layout::homeSummaryX,
+                ui_layout::homeCalendarY, ui_layout::homeSummaryWidth, ui_layout::homeSummaryHeight)) return 3;
         if (inside(x, y, ui_layout::homeMenuX, ui_layout::homeMenuY,
                    ui_layout::homeMenuWidth)) return 8;
     }
@@ -207,6 +206,18 @@ uint8_t hit(int16_t x, int16_t y)
     }
     else if (model.page == app_state::Page::Garmin)
     {
+        const auto& state = model.garminTelemetry;
+        if (state.count)
+        {
+            const auto& group = state.groups[model.selectedGarmin % state.count];
+            for (uint8_t i = 0; i < group.count; ++i)
+            {
+                const int16_t left = ui_layout::garminMetricX(i);
+                const int16_t top = ui_layout::garminMetricY(i);
+                if (x >= left && x < left + ui_layout::garminMetricWidth
+                    && y >= top && y < top + ui_layout::garminMetricHeight) return 80 + i;
+            }
+        }
         if (inside(x, y, 12, 426, 52)) return 59;
         if (inside(x, y, 72, 426, 52)) return 60;
         if (inside(x, y, 132, 426, 112)) return 61;
@@ -230,7 +241,13 @@ uint8_t hit(int16_t x, int16_t y)
     }
     else if (model.page == app_state::Page::ActivityDetail)
     {
-        if (inside(x, y, 12, 426, 180)) return 65;
+        if (!model.activityFromHome && inside(x, y, 12, 426, 132)) return 65;
+        if (model.selectedActivity.title[0] && inside(x, y, 174, 426, 132)) return 67;
+        if (inside(x, y, 336, 426, 132)) return 5;
+    }
+    else if (model.page == app_state::Page::GarminMetricDetail)
+    {
+        if (inside(x, y, 12, 426, 180)) return 62;
         if (inside(x, y, 288, 426, 180)) return 5;
     }
     else if (model.page == app_state::Page::Spotify)
@@ -322,12 +339,28 @@ uint8_t hit(int16_t x, int16_t y)
 
 void action(uint8_t button)
 {
+    if (model.page == app_state::Page::Garmin && button >= 80
+        && button < 80 + secure_protocol::garminMetricMax)
+    {
+        const auto& state = model.garminTelemetry;
+        if (!state.count) return;
+        const auto& group = state.groups[model.selectedGarmin % state.count];
+        const uint8_t index = button - 80;
+        if (index >= group.count) return;
+        model.selectedGarminMetric = group.metrics[index];
+        model.garminMetricHistoryEnd = state.historyEnd;
+        model.page = app_state::Page::GarminMetricDetail;
+        ui::page(model);
+        return;
+    }
     if (model.page == app_state::Page::ActivityHistory && button >= 70
         && button < 70 + app_state::activityPageSize)
     {
         const uint8_t index = model.activityOffset() + button - 70;
         if (index >= model.activities.count || pressedActivityRevision != model.activityRevision) return;
         model.selectedActivity = model.activities.items[index];
+        model.activityFromHome = false;
+        model.activityChartsVisible = false;
         model.page = app_state::Page::ActivityDetail;
         ui::page(model);
         return;
@@ -386,6 +419,7 @@ void action(uint8_t button)
     case 63: model.activityPage = 0; ui::page(model); break;
     case 64: model.activityPage = 1; ui::page(model); break;
     case 65: model.page = app_state::Page::ActivityHistory; ui::page(model); break;
+    case 67: model.activityChartsVisible = !model.activityChartsVisible; ui::page(model); break;
     case 58: model.page = app_state::Page::Garmin; model.pressedButton = 0; ui::page(model); break;
     case 54: model.page = app_state::Page::Spotify; model.pressedButton = 0; ui::page(model); break;
     case 1: model.page = app_state::Page::Cluster; model.pressedButton = 0; ui::page(model); break;
@@ -399,14 +433,11 @@ void action(uint8_t button)
         break;
     case 7: model.page = app_state::Page::Alarm; model.pressedButton = 0; ui::page(model); break;
     case 8: model.page = app_state::Page::Menu; model.pressedButton = 0; ui::page(model); break;
-    case 9:
-        if (model.nextTraining >= 0)
-        {
-            model.selectedTraining = static_cast<uint8_t>(model.nextTraining);
-            model.page = app_state::Page::TrainingDetail;
-        }
-        else model.page = app_state::Page::Training;
-        model.pressedButton = 0;
+    case 66:
+        model.selectedActivity = model.activities.count ? model.activities.items[0] : secure_protocol::Activity{};
+        model.activityFromHome = true;
+        model.activityChartsVisible = false;
+        model.page = app_state::Page::ActivityDetail;
         ui::page(model);
         break;
     case 12:

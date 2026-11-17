@@ -44,7 +44,7 @@ struct HomeSummary
     char title[96] = {};
     bool pressed = false;
 };
-HomeSummary lastHomeCalendar{}, lastHomeTraining{};
+HomeSummary lastHomeCalendar{}, lastHomeTraining{}, lastHomeActivity{};
 bool lastHomeCalendarVisible = false;
 bool isTomorrow(const app_state::Model& model, const char* iso);
 
@@ -143,10 +143,6 @@ void homeNavigation(const app_state::Model& model)
            ui_layout::homeMenuWidth, model.pressedButton == 8,
            homeBackground, model.nightMode ? nightOutline : homeButtonOutline,
            model.nightMode ? nightRed : text, model.nightMode ? nightPressed : accent);
-    display().setFont(&fonts::Font0);
-    display().setTextSize(1);
-    display().setTextColor(model.nightMode ? nightRed : muted, homeBackground);
-    display().drawString("Swipe up for menu", 28, ui_layout::homeMenuY + 16);
 }
 
 void menuButtons(const app_state::Model& model)
@@ -303,15 +299,15 @@ void homeClock(const app_state::Model& model, bool force = false)
         else snprintf(status, sizeof(status), "Cluster: %u/%u online",
                       static_cast<unsigned>(model.clusterTelemetry.onlineNodes),
                       static_cast<unsigned>(model.clusterTelemetry.totalNodes));
-        display().fillRect(20, 272, 440, 42, homeBackground);
+        display().fillRect(ui_layout::homeClusterX, ui_layout::homeClusterY,
+                           ui_layout::homeClusterWidth, ui_layout::buttonHeight, homeBackground);
         const uint16_t statusColor = model.nightMode ? nightRed
             : (streamLive && model.clusterTelemetry.onlineNodes
-               == model.clusterTelemetry.totalNodes ? good : warning);
+               == model.clusterTelemetry.totalNodes ? muted : warning);
         display().setTextColor(statusColor, homeBackground);
-        display().setTextSize(streamLive && model.clusterTelemetry.totalNodes > 0 ? 3 : 2);
+        display().setTextSize(1);
         display().setFont(&fonts::Font0);
-        display().drawString(status, (width - display().textWidth(status)) / 2,
-                             streamLive && model.clusterTelemetry.totalNodes > 0 ? 278 : 283);
+        display().drawString(status, ui_layout::homeClusterX + 8, ui_layout::homeClusterY + 16);
         lastHomeNodeCount = model.clusterTelemetry.totalNodes;
         lastHomeOnlineCount = model.clusterTelemetry.onlineNodes;
         lastHomeStreamLive = streamLive;
@@ -332,26 +328,26 @@ void fitText(char* value, size_t capacity, int16_t pixels)
     if (length + 4 <= capacity) strcat(value, "...");
 }
 
-void drawHomeSummary(HomeSummary& previous, HomeSummary value, int16_t y,
-                     const app_state::Model& model, bool force)
+void drawHomeSummary(HomeSummary& previous, HomeSummary value, int16_t x, int16_t y, int16_t cardWidth,
+                     int16_t cardHeight, const app_state::Model& model, bool force)
 {
     if (!force && previous.pressed == value.pressed
         && strcmp(previous.heading, value.heading) == 0
         && strcmp(previous.title, value.title) == 0) return;
     previous = value;
-    display().fillRect(20, y, 440, ui_layout::homeSummaryHeight, homeBackground);
+    display().fillRect(x, y, cardWidth, cardHeight, homeBackground);
     display().setFont(&fonts::Font0);
     display().setTextSize(1);
     display().setTextColor(model.nightMode ? nightRed : muted, homeBackground);
-    fitText(value.heading, sizeof(value.heading), 424);
-    display().drawString(value.heading, 28, y + 4);
+    fitText(value.heading, sizeof(value.heading), cardWidth - 16);
+    display().drawString(value.heading, x + 8, y + cardHeight / 4 - 6);
     display().setTextSize(2);
     display().setTextColor(model.nightMode ? nightRed : text, homeBackground);
-    fitText(value.title, sizeof(value.title), 424);
-    display().drawString(value.title, 28, y + 20);
-    if (value.pressed)
-        display().drawRoundRect(20, y, 440, ui_layout::homeSummaryHeight, 4,
-                               model.nightMode ? nightRed : accent);
+    fitText(value.title, sizeof(value.title), cardWidth - 16);
+    display().drawString(value.title, x + 8, y + cardHeight / 2 - 4);
+    display().drawRoundRect(x, y, cardWidth, cardHeight, 4,
+                           model.nightMode ? (value.pressed ? nightRed : nightOutline)
+                                           : (value.pressed ? accent : homeButtonOutline));
 }
 
 void homeSummaries(const app_state::Model& model, bool force = false)
@@ -359,10 +355,8 @@ void homeSummaries(const app_state::Model& model, bool force = false)
     const bool calendarVisible = model.calendarTelemetry.available;
     if (force || calendarVisible != lastHomeCalendarVisible)
     {
-        // Clear both slots when configuration changes, so moved text leaves no ghosts.
-        display().fillRect(20, ui_layout::homeCalendarY, 440,
-            ui_layout::homeTrainingY + ui_layout::homeSummaryHeight - ui_layout::homeCalendarY,
-            homeBackground);
+        display().fillRect(ui_layout::homeSummaryX, ui_layout::homeCalendarY,
+                           ui_layout::homeSummaryWidth, ui_layout::homeSummaryHeight, homeBackground);
         lastHomeCalendarVisible = calendarVisible;
         force = true;
     }
@@ -396,13 +390,28 @@ void homeSummaries(const app_state::Model& model, bool force = false)
                         calendar.title, sizeof(calendar.title));
     }
     if (calendarVisible)
-        drawHomeSummary(lastHomeCalendar, calendar, ui_layout::homeCalendarY, model, force);
+        drawHomeSummary(lastHomeCalendar, calendar, ui_layout::homeSummaryX, ui_layout::homeCalendarY,
+                        ui_layout::homeSummaryWidth, ui_layout::homeSummaryHeight, model, force);
+
+    HomeSummary activity{};
+    activity.pressed = model.pressedButton == 66;
+    snprintf(activity.heading, sizeof(activity.heading), "Last activity");
+    if (model.activities.count)
+    {
+        const auto& latest = model.activities.items[0];
+        snprintf(activity.heading, sizeof(activity.heading), "Last activity - %.2s.%.2s",
+                 latest.date + 8, latest.date + 5);
+        copyDisplayText(latest.title, activity.title, sizeof(activity.title));
+    }
+    else copyDisplayText("No activity yet", activity.title, sizeof(activity.title));
+    drawHomeSummary(lastHomeActivity, activity, ui_layout::homeSummaryX, ui_layout::homeWorkoutY,
+                    ui_layout::homeWorkoutWidth, ui_layout::homeWorkoutHeight, model, force);
 
     HomeSummary training{};
-    training.pressed = model.pressedButton == 9;
-    snprintf(training.heading, sizeof(training.heading), "Training");
+    training.pressed = model.pressedButton == 2;
+    snprintf(training.heading, sizeof(training.heading), "Next 7 days");
     const char* trainingFallback = !model.trainingTelemetry.available ? "Not configured"
-        : (!model.timeValid ? "Waiting for time" : "No upcoming workouts");
+        : (!model.timeValid ? "Waiting for time" : "No workouts");
     copyDisplayText(trainingFallback, training.title, sizeof(training.title));
     if (model.nextTraining >= 0)
     {
@@ -415,12 +424,13 @@ void homeSummaries(const app_state::Model& model, bool force = false)
         if (strcmp(workout.date, today) == 0) snprintf(when, sizeof(when), "TODAY");
         else if (isTomorrow(model, workout.date)) snprintf(when, sizeof(when), "TOMORROW");
         else snprintf(when, sizeof(when), "%.2s.%.2s", workout.date + 8, workout.date + 5);
-        snprintf(training.heading, sizeof(training.heading), "Training - %s%s",
+        snprintf(training.heading, sizeof(training.heading), "Next 7 days - %s%s",
                  when, cached ? " (cached)" : "");
         copyDisplayText(workout.title[0] ? workout.title : "Workout",
                         training.title, sizeof(training.title));
     }
-    drawHomeSummary(lastHomeTraining, training, ui_layout::homeTrainingTop(calendarVisible), model, force);
+    drawHomeSummary(lastHomeTraining, training, ui_layout::homeUpcomingX, ui_layout::homeWorkoutY,
+                    ui_layout::homeWorkoutWidth, ui_layout::homeWorkoutHeight, model, force);
 }
 
 void systemTelemetry(const app_state::Model& model)
@@ -816,6 +826,11 @@ void activityHistory(const app_state::Model& model, bool force = false)
 void activityDetail(const app_state::Model& model)
 {
     const auto& activity = model.selectedActivity;
+    if (!activity.title[0])
+    {
+        label("No completed activities yet", 24, 96);
+        return;
+    }
     static const char* labels[] = {"Distance", "Time", "Pace", "Avg HR", "Aerobic TE", "Load"};
     static const char* units[] = {"km", "min", "min/km", "bpm", "", ""};
     display().setTextColor(text, background);
@@ -842,34 +857,127 @@ void activityDetail(const app_state::Model& model)
 
 void activityDetailButtons(const app_state::Model& model)
 {
-    button(65, "Back", 12, 426, 180, model.pressedButton == 65);
-    button(5, "Home", 288, 426, 180, model.pressedButton == 5);
+    if (!model.activityFromHome) button(65, "Back", 12, 426, 132, model.pressedButton == 65);
+    if (model.selectedActivity.title[0])
+        button(67, model.activityChartsVisible ? "Summary" : "Charts", 174, 426, 132,
+               model.pressedButton == 67);
+    button(5, "Home", 336, 426, 132, model.pressedButton == 5);
 }
 
-void garminSparkline(const int16_t* history, int16_t x, int16_t y)
+bool chartBounds(const int16_t* samples, size_t count, int16_t& low, int16_t& high)
 {
-    int32_t low = INT16_MAX, high = INT16_MIN;
-    uint8_t count = 0;
-    for (size_t day = 0; day < secure_protocol::garminHistoryMax; ++day)
+    low = INT16_MAX;
+    high = INT16_MIN;
+    for (size_t i = 0; i < count; ++i)
     {
-        if (history[day] == INT16_MIN) continue;
-        if (history[day] < low) low = history[day];
-        if (history[day] > high) high = history[day];
-        ++count;
+        if (samples[i] == INT16_MIN) continue;
+        if (samples[i] < low) low = samples[i];
+        if (samples[i] > high) high = samples[i];
     }
-    if (count < 2) return;
+    return high != INT16_MIN;
+}
+
+void drawChart(const int16_t* samples, size_t count, int16_t low, int16_t high,
+               int16_t x, int16_t y, int16_t plotWidth, int16_t plotHeight, bool lowerIsHigher = false)
+{
     bool previous = false;
     int16_t px = 0, py = 0;
-    for (size_t day = 0; day < secure_protocol::garminHistoryMax; ++day)
+    for (size_t i = 0; i < count; ++i)
     {
-        if (history[day] == INT16_MIN) { previous = false; continue; }
-        const int16_t nx = x + static_cast<int16_t>(day * 30);
-        const int16_t ny = y + (high == low ? 7
-            : static_cast<int16_t>(14 - (int32_t(history[day]) - low) * 14 / (high - low)));
+        if (samples[i] == INT16_MIN) { previous = false; continue; }
+        const int16_t nx = x + static_cast<int16_t>(i * plotWidth / (count - 1));
+        const int32_t fromTop = lowerIsHigher ? samples[i] - low : high - samples[i];
+        const int16_t ny = y + (high == low ? plotHeight / 2 : fromTop * plotHeight / (high - low));
         if (previous) display().drawLine(px, py, nx, ny, accent);
         display().fillCircle(nx, ny, 1, accent);
         px = nx; py = ny; previous = true;
     }
+}
+
+void garminSparkline(const int16_t* history, int16_t x, int16_t y)
+{
+    int16_t low, high;
+    if (chartBounds(history, secure_protocol::garminHistoryMax, low, high))
+        drawChart(history, secure_protocol::garminHistoryMax, low, high, x, y, 180, 14);
+}
+
+void activityCharts(const app_state::Model& model)
+{
+    const auto& activity = model.selectedActivity;
+    if (!activity.chartsAvailable)
+    {
+        label("No chart data available yet", 24, 106);
+        return;
+    }
+    static const char* captions[] = {"Heart rate (bpm)", "Pace (min/km)", "Elevation (m)"};
+    for (size_t series = 0; series < secure_protocol::activityChartCount; ++series)
+    {
+        const int16_t y = 68 + series * 110;
+        label(captions[series], 24, y, 2);
+        int16_t low, high;
+        const auto& samples = activity.charts[series];
+        if (!chartBounds(samples, secure_protocol::activityChartSamples, low, high))
+        {
+            label("No measurements", 24, y + 42, 1, muted);
+            continue;
+        }
+        char range[48];
+        const bool pace = series == 1;
+        if (pace) snprintf(range, sizeof(range), "%d:%02d - %d:%02d", low / 60, low % 60,
+                           high / 60, high % 60);
+        else snprintf(range, sizeof(range), "%d - %d", low, high);
+        label(range, 322, y + 6, 1, muted);
+        display().drawFastHLine(24, y + 96, 432, muted);
+        drawChart(samples, secure_protocol::activityChartSamples, low, high, 24, y + 30, 431, 60, pace);
+    }
+    label("Start", 24, 392, 1, muted);
+    label("Finish", 420, 392, 1, muted);
+}
+
+void garminMetricDetail(const app_state::Model& model)
+{
+    const auto& metric = model.selectedGarminMetric;
+    char current[48];
+    snprintf(current, sizeof(current), "%s %s", metric.value, metric.unit);
+    label(current, 24, 70, 3);
+    int16_t low, high;
+    if (!metric.scale || !chartBounds(metric.history, secure_protocol::garminHistoryMax, low, high))
+    {
+        label("No measurement history", 24, 130, 2, muted);
+        return;
+    }
+    label("Last 7 days", 24, 110, 1, muted);
+    display().drawFastHLine(24, 214, 432, muted);
+    drawChart(metric.history, secure_protocol::garminHistoryMax, low, high, 24, 130, 431, 77);
+    label("Recent measurements", 24, 229, 1, muted);
+    int16_t y = 251;
+    for (int day = secure_protocol::garminHistoryMax - 1; day >= 0; --day)
+    {
+        if (metric.history[day] == INT16_MIN) continue;
+        char when[24] = {};
+        if (model.garminMetricHistoryEnd > secure_protocol::garminHistoryMax)
+        {
+            const time_t timestamp = (static_cast<int64_t>(model.garminMetricHistoryEnd)
+                - (secure_protocol::garminHistoryMax - 1 - day)) * 86400;
+            struct tm utc = {};
+            if (gmtime_r(&timestamp, &utc)) strftime(when, sizeof(when), "%d.%m", &utc);
+        }
+        else snprintf(when, sizeof(when), "%u days ago",
+                      static_cast<unsigned>(secure_protocol::garminHistoryMax - 1 - day));
+        const int64_t tenths = static_cast<int64_t>(metric.history[day]) * metric.scale;
+        char value[40];
+        snprintf(value, sizeof(value), metric.scale == 1 && tenths % 10 ? "%.1f %s" : "%.0f %s",
+                 tenths / 10.0, metric.unit);
+        label(when, 24, y, 1, muted);
+        label(value, 132, y - 3, 2);
+        y += 23;
+    }
+}
+
+void garminMetricButtons(const app_state::Model& model)
+{
+    button(62, "Back", 12, 426, 180, model.pressedButton == 62);
+    button(5, "Home", 288, 426, 180, model.pressedButton == 5);
 }
 
 void garminTelemetry(const app_state::Model& model, bool force = false)
@@ -907,11 +1015,12 @@ void garminTelemetry(const app_state::Model& model, bool force = false)
     for (uint8_t index = 0; index < group.count; ++index)
     {
         const auto& metric = group.metrics[index];
-        const int16_t x = 12 + (index % 2) * 234;
-        const int16_t y = 122 + (index / 2) * 96;
-        display().fillRoundRect(x, y, 222, 88, 8, card);
+        const int16_t x = ui_layout::garminMetricX(index);
+        const int16_t y = ui_layout::garminMetricY(index);
+        display().fillRoundRect(x, y, ui_layout::garminMetricWidth, ui_layout::garminMetricHeight, 8, card);
         display().setTextColor(muted, card); display().setTextSize(1);
         display().drawString(metric.label, x + 12, y + 8);
+        display().drawString(">", x + ui_layout::garminMetricWidth - 16, y + 8);
         display().setTextColor(text, card);
         display().setTextSize(strlen(metric.value) > 10 ? 2 : 3);
         display().drawString(metric.value[0] ? metric.value : "--", x + 12, y + 23);
@@ -1058,8 +1167,15 @@ void ui::page(const app_state::Model& model)
     else if (model.page == app_state::Page::ActivityDetail)
     {
         header("Activity");
-        activityDetail(model);
+        if (model.activityChartsVisible) activityCharts(model);
+        else activityDetail(model);
         activityDetailButtons(model);
+    }
+    else if (model.page == app_state::Page::GarminMetricDetail)
+    {
+        header(model.selectedGarminMetric.label);
+        garminMetricDetail(model);
+        garminMetricButtons(model);
     }
     else if (model.page == app_state::Page::Spotify)
     {
@@ -1179,6 +1295,7 @@ void ui::pressed(const app_state::Model& model)
     }
     else if (model.page == app_state::Page::ActivityHistory) activityHistory(model, true);
     else if (model.page == app_state::Page::ActivityDetail) activityDetailButtons(model);
+    else if (model.page == app_state::Page::GarminMetricDetail) garminMetricButtons(model);
     else if (model.page == app_state::Page::Spotify)
     {
         spotifyTelemetry(model, true);

@@ -13,9 +13,12 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 HISTORY = [-32768, 250, 310, 420, 500, 620, 710]
 BODY = ("DSSTATE/2\ngarmin\t1\t1794900000\ngarmin_group\tToday\n"
-        "garmin_metric\tBody Battery\t71\tpercent\t" + ",".join(map(str, HISTORY)) + "\n")
+        "garmin_metric\tBody Battery\t71\tpercent\t" + ",".join(map(str, HISTORY)) + "\t1\n"
+        "garmin_history_end\t20774\n")
 ACTIVITY_FIELDS = ("2026-11-17", "Morning run", "running", "5.20", "26", "5:00", "145", "3.2", "105.0")
 BODY += "garmin_activity\t" + "\t".join(ACTIVITY_FIELDS) + "\n"
+CHART = [128] + [-32768] * 22 + [152]
+BODY += "garmin_chart\t0\t" + ",".join(map(str, CHART)) + "\n"
 
 
 def fixture():
@@ -31,8 +34,12 @@ def fixture():
     for field, width in zip(ACTIVITY_FIELDS, (11, 49, 25, 17, 17, 17, 17, 17, 17)):
         activity.extend(field.encode().ljust(width, b"\x00"))
     activity.extend(bytes(9 * 187))
+    scaled = payload + struct.pack("<2I", 20774, 1) + bytes(23 * 4)
+    charted = activity + struct.pack("<72h", *CHART, *([-32768] * 48)) + bytes(9 * 144)
     return (b"DS\x01\x06" + struct.pack("<HQ", len(payload), 42) + payload
-            + b"DS\x01\x07" + struct.pack("<HQ", len(activity), 43) + activity)
+            + b"DS\x01\x07" + struct.pack("<HQ", len(activity), 43) + activity
+            + b"DS\x01\x06" + struct.pack("<HQ", len(scaled), 44) + scaled
+            + b"DS\x01\x07" + struct.pack("<HQ", len(charted), 45) + charted)
 
 
 CPP = r'''
@@ -76,6 +83,16 @@ int main() {
     assert(!strcmp(history.items[0].values[2], "5:00"));
     activities[15 + 11 + 48] = 'x';
     assert(!decodeActivityTelemetry(activities, sizeof(activities), sequence, history));
+    unsigned char scaled[garminScaleFrameSize];
+    assert(fread(scaled, 1, sizeof(scaled), stdin) == sizeof(scaled));
+    assert(decodeGarminTelemetry(scaled, sizeof(scaled), sequence, state));
+    assert(sequence == 44 && state.historyEnd == 20774 && state.groups[0].metrics[0].scale == 1);
+    unsigned char charted[activityChartFrameSize];
+    assert(fread(charted, 1, sizeof(charted), stdin) == sizeof(charted));
+    assert(decodeActivityTelemetry(charted, sizeof(charted), sequence, history));
+    assert(sequence == 45 && history.items[0].chartsAvailable);
+    assert(history.items[0].charts[0][0] == 128 && history.items[0].charts[0][23] == 152);
+    assert(history.items[0].charts[1][0] == INT16_MIN);
     return 0;
 }
 '''
@@ -94,11 +111,15 @@ int main(int argc, char** argv) {
     assert(fetch_controller_state(&state));
     assert(state.garmin.count == 1 && state.garmin.groups[0].count == 1);
     unsigned char frame[STATE_FRAME_MAX];
-    const size_t length = make_garmin_frame(frame, 42, 0, &state.garmin);
+    const size_t length = make_garmin_frame(frame, 42, 0, &state.garmin, 0);
     assert(fwrite(frame, 1, length, stdout) == length);
     latest_state = state;
-    const size_t activity_length = make_activity_frame(frame, 43);
+    const size_t activity_length = make_activity_frame(frame, 43, 0);
     assert(fwrite(frame, 1, activity_length, stdout) == activity_length);
+    const size_t scaled_length = make_garmin_frame(frame, 44, 0, &state.garmin, 1);
+    assert(fwrite(frame, 1, scaled_length, stdout) == scaled_length);
+    const size_t charted_length = make_activity_frame(frame, 45, 1);
+    assert(fwrite(frame, 1, charted_length, stdout) == charted_length);
     return 0;
 }
 '''

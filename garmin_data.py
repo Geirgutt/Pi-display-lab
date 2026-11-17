@@ -234,6 +234,7 @@ def build_dashboard(raw: dict, *, today: date) -> dict:
             "average_hr": _num(activity.get("averageHR")),
         }
     recent_activities = []
+    charts = _obj(raw.get("charts"))
     for day, item in valid_activities[:10]:
         kind = _title(_obj(item.get("activityType")).get("typeKey")).replace("_", " ")
         recent_activities.append({
@@ -241,10 +242,12 @@ def build_dashboard(raw: dict, *, today: date) -> dict:
             "title": _title(item.get("activityName"))[:48] or kind[:48] or "Activity",
             "kind": kind[:24],
             "values": [metric["value"] for metric in _activity_metrics(item)],
+            "charts": _obj(charts.get(str(item.get("activityId")))).get("series", []),
         })
     return {"groups": [
         {"title": "Today", "metrics": today_group},
         {"title": "Sleep", "metrics": sleep_group},
         {"title": "Health", "metrics": health_group},
         {"title": activity_title[:20], "metrics": _activity_metrics(activity)},
-    ], "last_activity": last_activity, "activities": recent_activities}
+    ], "last_activity": last_activity, "activities": recent_activities,
+        "history_end": today.toordinal() - date(1970, 1, 1).toordinal()}
