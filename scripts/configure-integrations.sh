@@ -21,7 +21,7 @@ sudo install -d -o "$RUN_USER" -g "$RUN_GROUP" -m 0700 "$CONFIG_DIR"
 
 if [[ -f "$CONFIG_FILE" ]]; then
   if ! sudo systemctl start pi-display-integrations.service; then
-    echo "Kalenderne kunne ikke synkroniseres nå. Valgene er lagret, og timeren prøver igjen senere." >&2
+    echo "Garmin/kalender kunne ikke synkroniseres fullstendig nå. Valgene er lagret, og timeren prøver igjen senere." >&2
   fi
   sudo systemctl restart pi-display-lab.service
 fi

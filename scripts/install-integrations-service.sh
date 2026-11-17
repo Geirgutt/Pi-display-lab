@@ -22,7 +22,7 @@ if [[ ! -x "$PYTHON_BIN" ]]; then
   exit 1
 fi
 
-echo "Installerer kalenderstøtte i controllerens Python-miljø ..."
+echo "Installerer Garmin- og kalenderstøtte i controllerens Python-miljø ..."
 "$PYTHON_BIN" -m pip install --disable-pip-version-check -r "$PROJECT_DIR/requirements-integrations.txt"
 
 sudo install -d -o "$RUN_USER" -g "$RUN_GROUP" -m 0700 "$CONFIG_DIR" "$CACHE_DIR"
@@ -32,7 +32,7 @@ trap 'rm -f "$TEMP_SERVICE" "$TEMP_TIMER"' EXIT
 
 cat >"$TEMP_SERVICE" <<EOF
 [Unit]
-Description=Pi Display Lab calendar synchronization
+Description=Pi Display Lab Garmin and calendar synchronization
 Wants=network-online.target
 After=network-online.target
 
@@ -52,7 +52,7 @@ EOF
 
 cat >"$TEMP_TIMER" <<EOF
 [Unit]
-Description=Refresh Pi Display Lab calendars periodically
+Description=Refresh Pi Display Lab Garmin and calendars periodically
 
 [Timer]
 OnBootSec=90s

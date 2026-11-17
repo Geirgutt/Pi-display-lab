@@ -18,6 +18,7 @@ from integration_sync import (  # noqa: E402
     parse_ics_events,
     write_json_atomic,
 )
+from garmin_api import GarminError, synchronize as sync_garmin, read_cache  # noqa: E402
 
 DEFAULT_CONFIG = Path("/etc/pi-display-lab/integrations.json")
 DEFAULT_CACHE_DIR = Path("/var/lib/pi-display-lab/integrations")
@@ -42,6 +43,22 @@ def main() -> int:
     settings = load_settings(args.config)
     failures: list[str] = []
     garmin = settings.get("garmin") if isinstance(settings.get("garmin"), dict) else {}
+    if garmin.get("api_enabled"):
+        try:
+            result = sync_garmin(str(garmin.get("api_key") or ""), args.cache_dir)
+            if result.get("status") != "ok":
+                failures.append("Garmin Personal API: incomplete sync; check the key, selected scopes and connection.")
+            else:
+                print("Garmin Personal API: health, sleep and activity summaries synchronized.")
+        except GarminError as error:
+            # Initialization/authentication errors must also reach the screen.
+            old = read_cache(args.cache_dir / "garmin.json")
+            old.update(status="auth_error" if error.status in (401, 403) else "error")
+            write_json_atomic(args.cache_dir / "garmin.json", old)
+            failures.append(f"Garmin Personal API: {error}")
+    else:
+        for filename in ("garmin.json", "garmin-raw.json", "garmin-token.json"):
+            (args.cache_dir / filename).unlink(missing_ok=True)
     if garmin.get("enabled"):
         try:
             events = parse_ics_events(fetch_ics(str(garmin.get("calendar_url") or "")))

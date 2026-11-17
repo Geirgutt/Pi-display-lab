@@ -78,6 +78,16 @@ static int ota_waiting_reconnect = 0;
 #define CALENDAR_PAYLOAD_SIZE (3 + CALENDAR_EVENT_MAX * CALENDAR_EVENT_SIZE)
 #define CALENDAR_FRAME_SIZE (FRAME_HEADER_SIZE + CALENDAR_PAYLOAD_SIZE)
 
+#define GARMIN_GROUP_MAX 4
+#define GARMIN_METRIC_MAX 6
+#define GARMIN_HISTORY_MAX 7
+#define GARMIN_LABEL_MAX 20
+#define GARMIN_VALUE_MAX 16
+#define GARMIN_UNIT_MAX 12
+#define GARMIN_METRIC_SIZE (21 + 17 + 13 + 14)
+#define GARMIN_GROUP_SIZE (22 + GARMIN_METRIC_MAX * GARMIN_METRIC_SIZE)
+#define GARMIN_PAYLOAD_SIZE (6 + GARMIN_GROUP_MAX * GARMIN_GROUP_SIZE)
+#define GARMIN_FRAME_SIZE (FRAME_HEADER_SIZE + GARMIN_PAYLOAD_SIZE)
 #define STATE_FRAME_MAX 4096
 #define SPOTIFY_TITLE_MAX 96
 #define SPOTIFY_DEVICE_MAX 48
@@ -87,6 +97,7 @@ _Static_assert(CLUSTER_FRAME_SIZE <= STATE_FRAME_MAX, "cluster frame exceeds gat
 _Static_assert(TRAINING_FRAME_SIZE <= STATE_FRAME_MAX, "training frame exceeds gateway buffer");
 _Static_assert(CALENDAR_FRAME_SIZE <= STATE_FRAME_MAX, "calendar frame exceeds gateway buffer");
 _Static_assert(SPOTIFY_FRAME_SIZE <= STATE_FRAME_MAX, "spotify frame exceeds gateway buffer");
+_Static_assert(GARMIN_FRAME_SIZE <= STATE_FRAME_MAX, "garmin frame exceeds gateway buffer");
 
 struct cluster_node {
     char name[CLUSTER_NAME_MAX + 1];
@@ -153,11 +164,28 @@ struct spotify_state {
 };
 static struct spotify_state latest_spotify = {0};
 
+struct garmin_metric {
+    char label[GARMIN_LABEL_MAX + 1], value[GARMIN_VALUE_MAX + 1], unit[GARMIN_UNIT_MAX + 1];
+    int16_t history[GARMIN_HISTORY_MAX];
+};
+struct garmin_group {
+    char title[GARMIN_LABEL_MAX + 1];
+    uint8_t count;
+    struct garmin_metric metrics[GARMIN_METRIC_MAX];
+};
+struct garmin_state {
+    uint8_t status;
+    uint32_t updated_at;
+    uint8_t count;
+    struct garmin_group groups[GARMIN_GROUP_MAX];
+};
+
 struct controller_state {
     struct cluster_state cluster;
     struct training_state training;
     struct calendar_state calendar;
     struct spotify_state spotify;
+    struct garmin_state garmin;
 };
 
 static void stop_handler(int signal_number)
@@ -303,7 +331,7 @@ static int fetch_controller_state(struct controller_state* result)
         return 0;
     }
 
-    static char response[16384];
+    static char response[32768];
     memset(response, 0, sizeof(response));
     size_t length = 0;
     while (length + 1 < sizeof(response))
@@ -394,6 +422,42 @@ static int fetch_controller_state(struct controller_state* result)
             activity->duration_seconds = (uint32_t)duration;
             activity->pace_hundredths = (uint16_t)pace;
             activity->average_hr = (uint16_t)heart_rate;
+        }
+        else if (!strcmp(fields[0], "garmin"))
+        {
+            unsigned long status = 0, updated = 0;
+            if (field_count != 3 || !parse_unsigned(fields[1], 4, &status)
+                || !parse_unsigned(fields[2], 0xFFFFFFFFUL, &updated)) return 0;
+            result->garmin.status = (uint8_t)status;
+            result->garmin.updated_at = (uint32_t)updated;
+        }
+        else if (!strcmp(fields[0], "garmin_group"))
+        {
+            if (field_count != 2 || result->garmin.count >= GARMIN_GROUP_MAX
+                || strlen(fields[1]) > GARMIN_LABEL_MAX) return 0;
+            strcpy(result->garmin.groups[result->garmin.count++].title, fields[1]);
+        }
+        else if (!strcmp(fields[0], "garmin_metric"))
+        {
+            if (field_count != 5 || result->garmin.count == 0
+                || strlen(fields[1]) > GARMIN_LABEL_MAX || strlen(fields[2]) > GARMIN_VALUE_MAX
+                || strlen(fields[3]) > GARMIN_UNIT_MAX) return 0;
+            struct garmin_group* group = &result->garmin.groups[result->garmin.count - 1];
+            if (group->count >= GARMIN_METRIC_MAX) return 0;
+            struct garmin_metric* metric = &group->metrics[group->count++];
+            strcpy(metric->label, fields[1]); strcpy(metric->value, fields[2]);
+            if (strcmp(fields[3], "-")) strcpy(metric->unit, fields[3]);
+            char* number = fields[4];
+            for (size_t day = 0; day < GARMIN_HISTORY_MAX; ++day)
+            {
+                char* comma = strchr(number, ',');
+                if ((day + 1 < GARMIN_HISTORY_MAX) != (comma != NULL)) return 0;
+                if (comma) *comma = 0;
+                long sample = 0;
+                if (!parse_signed(number, -32768, 32767, &sample)) return 0;
+                metric->history[day] = (int16_t)sample;
+                if (comma) number = comma + 1;
+            }
         }
         else if (!strcmp(fields[0], "spotify"))
         {
@@ -934,6 +998,33 @@ static size_t make_spotify_frame(unsigned char* frame, uint64_t sequence, int in
     return SPOTIFY_FRAME_SIZE;
 }
 
+static size_t make_garmin_frame(unsigned char* frame, uint64_t sequence, int invalid,
+                                const struct garmin_state* state)
+{
+    memset(frame, 0, GARMIN_FRAME_SIZE);
+    frame[0] = invalid ? 'X' : 'D'; frame[1] = 'S'; frame[2] = 1; frame[3] = 6;
+    put16(frame + 4, GARMIN_PAYLOAD_SIZE); put64(frame + 6, sequence);
+    unsigned char* p = frame + FRAME_HEADER_SIZE;
+    p[0] = state->status; put32(p + 1, state->updated_at); p[5] = state->count;
+    for (size_t group = 0; group < state->count; ++group)
+    {
+        const struct garmin_group* source = &state->groups[group];
+        unsigned char* g = p + 6 + group * GARMIN_GROUP_SIZE;
+        memcpy(g, source->title, strlen(source->title)); g[21] = source->count;
+        for (size_t index = 0; index < source->count; ++index)
+        {
+            const struct garmin_metric* metric = &source->metrics[index];
+            unsigned char* m = g + 22 + index * GARMIN_METRIC_SIZE;
+            memcpy(m, metric->label, strlen(metric->label));
+            memcpy(m + 21, metric->value, strlen(metric->value));
+            memcpy(m + 38, metric->unit, strlen(metric->unit));
+            for (size_t day = 0; day < GARMIN_HISTORY_MAX; ++day)
+                put16(m + 51 + day * 2, (uint16_t)metric->history[day]);
+        }
+    }
+    return GARMIN_FRAME_SIZE;
+}
+
 static size_t make_frame(unsigned char* frame, uint64_t sequence, int invalid)
 {
     if (!state_path[0]) return make_local_frame(frame, sequence, invalid);
@@ -955,19 +1046,22 @@ static size_t make_frame(unsigned char* frame, uint64_t sequence, int invalid)
         current.calendar.available = 0;
         memset(&current.spotify, 0, sizeof(current.spotify));
         current.spotify.status = 7;
+        current.garmin.status = current.garmin.count ? 2 : 4;
     }
     const size_t cluster_pages = current.cluster.count == 0 ? 1
         : (current.cluster.count + CLUSTER_NODE_MAX_PER_FRAME - 1) / CLUSTER_NODE_MAX_PER_FRAME;
     latest_spotify = current.spotify;
-    const size_t cycle_size = cluster_pages + 2;
+    const size_t cycle_size = cluster_pages + 3;
     if (slot >= cycle_size) slot = 0;
     size_t length = 0;
     if (slot < cluster_pages)
         length = make_cluster_frame(frame, sequence, invalid, &current.cluster, slot);
     else if (slot == cluster_pages)
         length = make_training_frame(frame, sequence, invalid, &current.training);
-    else
+    else if (slot == cluster_pages + 1)
         length = make_calendar_frame(frame, sequence, invalid, &current.calendar);
+    else
+        length = make_garmin_frame(frame, sequence, invalid, &current.garmin);
     slot = (slot + 1) % cycle_size;
     return length;
 }

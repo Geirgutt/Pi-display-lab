@@ -6,7 +6,7 @@
 
 namespace app_state
 {
-enum class Page : uint8_t { Home, Cluster, Training, TrainingDetail, Calendar, System, Alarm, Menu, AlarmNumber, Spotify };
+enum class Page : uint8_t { Home, Cluster, Training, TrainingDetail, Calendar, System, Alarm, Menu, AlarmNumber, Spotify, Garmin };
 
 struct Model
 {
@@ -22,6 +22,7 @@ struct Model
     int16_t touchY = -1;
     uint8_t pressedButton = 0;
     uint8_t selectedTraining = 0;
+    uint8_t selectedGarmin = 0;
     int8_t nextTraining = -1;
     int8_t nextCalendar = -1;
     uint8_t brightnessPercent = 100;
@@ -41,7 +42,9 @@ struct Model
     secure_protocol::TrainingTelemetry trainingTelemetry{};
     secure_protocol::CalendarTelemetry calendarTelemetry{};
     secure_protocol::SpotifyTelemetry spotifyTelemetry{};
+    secure_protocol::GarminTelemetry garminTelemetry{};
     bool spotifyConnected = false;
+    bool garminConnected = false;
     uint32_t nodeLastUpdate = 0;
     uint32_t nodeAccepted = 0;
     bool nodeOnline = false;

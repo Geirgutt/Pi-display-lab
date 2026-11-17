@@ -18,6 +18,7 @@ from typing import Any
 from calendar_data import CalendarProvider, load_calendar_provider
 from training import TrainingProvider, load_training_provider
 from spotify import SpotifyProvider
+from garmin import GarminProvider
 
 def decode_throttle_flags(flags: int, available: bool = True) -> dict[str, Any]:
     """Gjør Raspberry Pi-bitfeltet lesbart for API og grensesnitt."""
@@ -356,12 +357,14 @@ class DashboardState:
         training_provider: TrainingProvider | None = None,
         calendar_provider: CalendarProvider | None = None,
         spotify_provider: SpotifyProvider | None = None,
+        garmin_provider: GarminProvider | None = None,
     ) -> None:
         self.monitor = SystemMonitor(mock_mode=mock_mode)
         self.nodes = NodeRegistry()
         self.training_provider = training_provider or load_training_provider(mock_mode)
         self.calendar_provider = calendar_provider or load_calendar_provider(mock_mode)
         self.spotify_provider = spotify_provider or SpotifyProvider(mock=mock_mode)
+        self.garmin_provider = garmin_provider or GarminProvider()
         self.mock_mode = mock_mode
         self._screen = "home"
         self._lock = threading.Lock()
@@ -426,6 +429,7 @@ class DashboardState:
 
     def snapshot(self, cluster_status: dict[str, Any] | None = None) -> dict[str, Any]:
         now = datetime.now().astimezone()
+        garmin = self.garmin_provider.snapshot()
         system = self.monitor.read()
         demo = self._cluster_demo(cluster_status)
         with self._lock:
@@ -496,13 +500,21 @@ class DashboardState:
                 "running_jobs": [],
                 "results": [],
             },
-            "training": self.training_provider.snapshot(),
+            "training": self._training_with_activity(garmin),
             "calendar": self.calendar_provider.snapshot(),
             "spotify": self.spotify_provider.snapshot(),
+            "garmin": garmin,
             "message": message,
             "mock_mode": self.mock_mode,
             "backend": f"Python {sys.version_info.major}.{sys.version_info.minor}",
         }
+
+    def _training_with_activity(self, garmin: dict) -> dict:
+        training = self.training_provider.snapshot()
+        if isinstance(garmin.get("last_activity"), dict):
+            from training import _last_activity
+            training = dict(training, last_activity=_last_activity(garmin["last_activity"]))
+        return training
 
     @staticmethod
     def protocol_example() -> dict[str, Any]:

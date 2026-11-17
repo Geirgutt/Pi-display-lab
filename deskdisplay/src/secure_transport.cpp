@@ -63,6 +63,7 @@ secure_protocol::ClusterTelemetry latestCluster;
 secure_protocol::TrainingTelemetry latestTraining;
 secure_protocol::CalendarTelemetry latestCalendar;
 secure_protocol::SpotifyTelemetry latestSpotify;
+secure_protocol::GarminTelemetry latestGarmin;
 secure_transport::Counters stats;
 bool otaActive = false;
 uint32_t otaSize = 0;
@@ -283,6 +284,8 @@ size_t expectedFrameSize()
             return secure_protocol::calendarFrameSize;
         if (frame[3] == secure_protocol::spotifyTelemetryType)
             return secure_protocol::spotifyFrameSize;
+        if (frame[3] == secure_protocol::garminTelemetryType)
+            return secure_protocol::garminFrameSize;
         return frame[3] == secure_protocol::telemetryType ? secure_protocol::frameSize : 0;
     }
 }
@@ -362,12 +365,18 @@ bool processFrame()
     secure_protocol::TrainingTelemetry trainingValue;
     secure_protocol::CalendarTelemetry calendarValue;
     secure_protocol::SpotifyTelemetry spotifyValue;
+    // The receive loop runs on one task. Keep this additional large candidate
+    // off its small stack; publish it only after validation and sequence checks.
+    static secure_protocol::GarminTelemetry garminValue;
     const bool isCluster = frame[3] == secure_protocol::clusterTelemetryType;
     const bool isTraining = frame[3] == secure_protocol::trainingTelemetryType;
     const bool isCalendar = frame[3] == secure_protocol::calendarTelemetryType;
     const bool isSpotify = frame[3] == secure_protocol::spotifyTelemetryType;
+    const bool isGarmin = frame[3] == secure_protocol::garminTelemetryType;
     bool decoded = false;
-    if (isSpotify)
+    if (isGarmin)
+        decoded = secure_protocol::decodeGarminTelemetry(frame, frameLength, sequence, garminValue);
+    else if (isSpotify)
         decoded = secure_protocol::decodeSpotifyTelemetry(frame, frameLength, sequence, spotifyValue);
     else if (isCluster)
         decoded = secure_protocol::decodeClusterTelemetry(frame, frameLength, sequence, clusterValue);
@@ -394,10 +403,11 @@ bool processFrame()
     else if (isTraining) latestTraining = trainingValue;
     else if (isCalendar) latestCalendar = calendarValue;
     else if (isSpotify) latestSpotify = spotifyValue;
+    else if (isGarmin) latestGarmin = garminValue;
     else latest = value;
     lastValidTelemetry = millis();
     ++stats.accepted;
-    if (isSpotify) { /* Playback titles are not written to the serial log. */ }
+    if (isSpotify || isGarmin) { /* Personal data are not written to the serial log. */ }
     else if (isCluster)
     {
         Serial.printf("Secure cluster seq=%llu nodes=%u\n",
@@ -608,6 +618,7 @@ const secure_protocol::ClusterTelemetry& secure_transport::lastClusterTelemetry(
 const secure_protocol::TrainingTelemetry& secure_transport::lastTrainingTelemetry() { return latestTraining; }
 const secure_protocol::CalendarTelemetry& secure_transport::lastCalendarTelemetry() { return latestCalendar; }
 const secure_protocol::SpotifyTelemetry& secure_transport::lastSpotifyTelemetry() { return latestSpotify; }
+const secure_protocol::GarminTelemetry& secure_transport::lastGarminTelemetry() { return latestGarmin; }
 bool secure_transport::spotifyCommand(uint8_t action)
 {
     static uint32_t lastCommand = 0;
@@ -665,6 +676,11 @@ void secure_transport::printStatus(Print& out)
 #else
 
 void secure_transport::begin() {}
+const secure_protocol::GarminTelemetry& secure_transport::lastGarminTelemetry()
+{
+    static secure_protocol::GarminTelemetry value;
+    return value;
+}
 bool secure_transport::spotifyCommand(uint8_t) { return false; }
 const secure_protocol::SpotifyTelemetry& secure_transport::lastSpotifyTelemetry()
 {

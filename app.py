@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import math
 import os
 import secrets
 from datetime import datetime
@@ -132,6 +133,14 @@ def _deskdisplay_state_lines(payload: dict[str, Any], worker_hosts: tuple[str, .
                 )
             )
         )
+    activity = training.get("last_activity")
+    if isinstance(activity, dict):
+        lines.append("\t".join(("activity", _compact_text(activity.get("date"), 10),
+                                _compact_text(activity.get("activity_type"), 14, "Activity"),
+                                str(_tenths(activity.get("distance_km"))),
+                                str(int(activity.get("duration_seconds") or 0)),
+                                str(int(round(float(activity.get("average_pace_min_per_km") or 0) * 100))),
+                                str(int(activity.get("average_hr") or 0)))))
     calendar = payload.get("calendar") if isinstance(payload.get("calendar"), dict) else {}
     calendar_source = _compact_text(calendar.get("source"), 12, "none")
     lines.append(f"calendar\t{1 if calendar.get('available') else 0}\t{calendar_source}")
@@ -163,6 +172,27 @@ def _deskdisplay_state_lines(payload: dict[str, Any], worker_hosts: tuple[str, .
                             _compact_text(spotify.get("title"), 96),
                             _compact_text(spotify.get("artist"), 96),
                             _compact_text(spotify.get("device"), 48))))
+    garmin = payload.get("garmin") or {}
+    garmin_status = {"not_configured": 0, "ok": 1, "stale": 2, "auth_error": 3, "error": 4}
+    lines.append(f"garmin\t{garmin_status.get(garmin.get('status'), 4)}\t{int(garmin.get('updated_at') or 0)}")
+    for group in list(garmin.get("groups") or [])[:4]:
+        lines.append("garmin_group\t" + _compact_text(group.get("title"), 20, "Garmin"))
+        for metric in list(group.get("metrics") or [])[:6]:
+            history = []
+            values = list(metric.get("history") or [])[:7]
+            # Sparklines have no numeric axis. Scale large counts together so
+            # daily steps retain their shape within the compact signed range.
+            peak = max([abs(v) for v in values if isinstance(v, (float, int))
+                        and not isinstance(v, bool) and math.isfinite(v)] or [0])
+            divisor = max(1, peak / 3000)
+            for value in values:
+                valid = (isinstance(value, (float, int)) and not isinstance(value, bool)
+                         and math.isfinite(value))
+                history.append(str(int(round(value / divisor * 10))) if valid else "-32768")
+            history.extend(["-32768"] * (7 - len(history)))
+            lines.append("\t".join(("garmin_metric", _compact_text(metric.get("label"), 20),
+                                    _compact_text(metric.get("value"), 16, "--"),
+                                    _compact_text(metric.get("unit"), 12), ",".join(history))))
     return "\n".join(lines) + "\n"
 
 

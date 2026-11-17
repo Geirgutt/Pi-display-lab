@@ -262,10 +262,30 @@ Home-siden med røde tegn og mørke konturer på svart bakgrunn.
 
 ### Garmin og kalender
 
-Garmin-integrasjonen bruker **Publish Calendar** i Garmin Connect Web. Den
-publiserte, unike HTTPS-adressen gir kommende kalenderinnhold uten at prosjektet
-lagrer Garmin-passord eller bruker en uoffisiell innlogging. Utførte aktiviteter
-er med vilje ikke del av integrasjonen.
+Garmin-oppsettet samler to valg: den offisielle
+[Personal API](https://developer.garmin.com/gc-developer-program/personal/personal-api/)
+for helse og utførte aktiviteter, og **Publish Calendar** i Garmin Connect Web
+for kommende økter. Personal API har foreløpig ingen tilsvarende kalender for
+planlagte økter, så ICS-adressen er fortsatt nyttig.
+
+På skjermen åpner du **Menu → Garmin**. Fire sider viser inntil 24 verdier:
+Body Battery, skritt, stress, hvilepuls, kalorier og væske; søvntid, søvnscore,
+dyp søvn, REM og HRV; vekt, VO2 maks, kondisjonsalder, SpO2, respirasjon og
+intensitetsminutter; samt distanse, tid, tempo, puls, aerob treningseffekt og
+belastning for siste aktivitet. Små grafer viser de siste sju kalenderdagene
+der data finnes. Manglende målinger vises som `--`. Vekt bruker siste måling
+innen sju dager, VO2 maks siste verdi innen 30 dager. Garmin-knappen
+**Workouts** åpner den eksisterende visningen av kommende økter.
+Intensitetsminutter følger [Garmins vekting](https://support.garmin.com/en-GB/?faq=pNU9nnDzzGAHmEavp9rpY8),
+der minutter med høy intensitet teller dobbelt.
+
+Lag en personlig nøkkel i **Garmin Connect → Settings → Personal API** med
+lesetilgang til dataene du ønsker å vise, og legg den inn skjult i
+**Konfigurasjon → Garmin og kalender** i terminalmenyen. Garmin-nøkkelen har
+valgt utløpstid og må da erstattes her. Tilgangstoken hentes og fornyes
+automatisk; Garmin-passordet brukes ikke. Om klokken og kontoen faktisk
+leverer hver datatype, avgjør hvilke verdier som kan vises. Dette er første
+visningsversjon, og omfatter ikke alle feltene API-et tilbyr.
 
 Vanlig kalender støtter én eller flere private ICS-adresser, for eksempel fra
 Google Calendar eller iCloud. TimeTree avsluttet sitt integrasjons-API og kan
@@ -282,10 +302,23 @@ cd ~/Pi-display-lab
 bash scripts/configure-integrations.sh --reset
 ```
 
-Controlleren oppdaterer kalenderne hvert 15. minutt og skriver bare normaliserte
-cacher under `/var/lib/pi-display-lab/integrations`. Private kalenderadresser og
-cachedata ligger aldri i Git-repositoryet. Ved midlertidig nettfeil beholdes
-siste vellykkede cache til neste forsøk.
+Controlleren synkroniserer Garmin og kalenderne hvert 15. minutt. Private
+API-svar og tilgangstoken mellomlagres med modus 0600 under
+`/var/lib/pi-display-lab/integrations` i en katalog med modus 0700. Bare
+oppsummerte verdier sendes videre til skjermen. Nøkkel, token, kalenderadresser
+og cachedata skal aldri legges i Git. Ved nettfeil beholdes siste data og
+skjermen varsler om forsinket synkronisering. HTTP 429 respekterer ventetiden
+Garmin angir. Ved manglende API-tilgang kontrollerer du nøkkelens utløp og
+valgte tilganger.
+
+Skjermen trenger ny firmware for Garmin-siden. Velg skjermoppdatering med OTA
+eller USB i vedlikeholdsmenyen etter programoppdateringen. Kalenderoppsettet
+fra tidligere versjoner bevares; åpne konfigurasjonsmenyen for å legge til
+API-nøkkelen. Diagnose uten å vise nøkkelen:
+
+```bash
+sudo journalctl -u pi-display-integrations.service -n 50 --no-pager
+```
 
 Oppdateringsskriptet:
 

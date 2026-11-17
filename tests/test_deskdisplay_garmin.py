@@ -1,0 +1,153 @@
+"""Check Garmin framing and the actual gateway parser against firmware decoding."""
+
+import os
+import shutil
+import struct
+import subprocess
+import tempfile
+import threading
+import unittest
+from http.server import BaseHTTPRequestHandler, HTTPServer
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[1]
+HISTORY = [-32768, 250, 310, 420, 500, 620, 710]
+BODY = ("DSSTATE/2\ngarmin\t1\t1794900000\ngarmin_group\tToday\n"
+        "garmin_metric\tBody Battery\t71\tpercent\t" + ",".join(map(str, HISTORY)) + "\n")
+
+
+def fixture():
+    payload = bytearray(1654)
+    struct.pack_into("<BIB", payload, 0, 1, 1794900000, 1)
+    payload[6:11] = b"Today"
+    payload[27] = 1
+    payload[28:40] = b"Body Battery"
+    payload[49:51] = b"71"
+    payload[66:73] = b"percent"
+    struct.pack_into("<7h", payload, 79, *HISTORY)
+    return b"DS\x01\x06" + struct.pack("<HQ", len(payload), 42) + payload
+
+
+CPP = r'''
+#include "secure_protocol.h"
+#include <cassert>
+#include <cstdio>
+int main() {
+    using namespace secure_protocol;
+    unsigned char frame[garminFrameSize];
+    assert(fread(frame, 1, sizeof(frame), stdin) == sizeof(frame));
+    GarminTelemetry state;
+    uint64_t sequence = 0;
+    assert(decodeGarminTelemetry(frame, sizeof(frame), sequence, state));
+    assert(sequence == 42 && state.status == 1 && state.updatedAt == 1794900000);
+    assert(state.count == 1 && state.groups[0].count == 1);
+    assert(!strcmp(state.groups[0].title, "Today"));
+    const GarminMetric& metric = state.groups[0].metrics[0];
+    assert(!strcmp(metric.label, "Body Battery") && !strcmp(metric.value, "71"));
+    assert(!strcmp(metric.unit, "percent"));
+    assert(metric.history[0] == INT16_MIN && metric.history[1] == 250 && metric.history[6] == 710);
+    const size_t positions[] = {headerSize, headerSize + 5, headerSize + 27,
+        headerSize + 26, headerSize + 48, headerSize + 65, headerSize + 78};
+    const unsigned char bad[] = {5, 5, 7, 'x', 'x', 'x', 'x'};
+    for (size_t index = 0; index < sizeof(positions) / sizeof(positions[0]); ++index) {
+        const unsigned char saved = frame[positions[index]];
+        frame[positions[index]] = bad[index];
+        sequence = 99;
+        assert(!decodeGarminTelemetry(frame, sizeof(frame), sequence, state));
+        assert(sequence == 99 && state.groups[0].metrics[0].history[6] == 710);
+        frame[positions[index]] = saved;
+    }
+    assert(!decodeGarminTelemetry(frame, sizeof(frame) - 1, sequence, state));
+    frame[4] = 0;
+    assert(!decodeGarminTelemetry(frame, sizeof(frame), sequence, state));
+    return 0;
+}
+'''
+C = r'''
+#define main gateway_main
+#include "deskdisplay/tools/secure_peer.c"
+#undef main
+#include <assert.h>
+int main(int argc, char** argv) {
+    assert(argc == 3);
+    strcpy(state_host, "127.0.0.1");
+    strcpy(state_path, "/api/deskdisplay/state");
+    state_port = (uint16_t)atoi(argv[1]);
+    struct controller_state state;
+    if (!strcmp(argv[2], "bad")) { assert(!fetch_controller_state(&state)); return 0; }
+    assert(fetch_controller_state(&state));
+    assert(state.garmin.count == 1 && state.garmin.groups[0].count == 1);
+    unsigned char frame[GARMIN_FRAME_SIZE];
+    const size_t length = make_garmin_frame(frame, 42, 0, &state.garmin);
+    assert(fwrite(frame, 1, length, stdout) == length);
+    return 0;
+}
+'''
+
+
+class GarminWireTests(unittest.TestCase):
+    def test_firmware_decoder(self):
+        cxx = shutil.which("c++")
+        zig = ROOT / ".venv/Lib/site-packages/ziglang/zig.exe"
+        if cxx:
+            compiler = [cxx]
+        elif os.name == "nt" and zig.exists():
+            compiler = [str(zig), "c++", "-target", "x86_64-windows-gnu"]
+        else:
+            self.skipTest("C++ compiler unavailable")
+        with tempfile.TemporaryDirectory(prefix="garmin-decoder-") as directory:
+            source = Path(directory) / "decoder.cpp"
+            source.write_text(CPP)
+            executable = Path(directory) / ("decoder.exe" if os.name == "nt" else "decoder")
+            built = subprocess.run(compiler + ["-std=c++11", "-Wall", "-Wextra", "-Werror", "-I",
+                str(ROOT / "deskdisplay/src"), str(source), "-o", str(executable)], capture_output=True, text=True, timeout=120)
+            self.assertEqual(built.returncode, 0, built.stderr)
+            decoded = subprocess.run([str(executable)], input=fixture(), capture_output=True, timeout=10)
+            self.assertEqual(decoded.returncode, 0, decoded.stderr)
+
+    @unittest.skipUnless(os.name == "posix", "Linux gateway requires POSIX/OpenSSL")
+    def test_gateway_parser_and_encoder(self):
+        cc = shutil.which("cc")
+        if not cc:
+            self.skipTest("C compiler unavailable")
+        with tempfile.TemporaryDirectory(prefix="garmin-gateway-") as directory:
+            source = Path(directory) / "gateway.c"
+            executable = Path(directory) / "gateway"
+            source.write_text(C)
+            built = subprocess.run([cc, "-std=c11", "-Wall", "-Wextra", "-I", str(ROOT), str(source),
+                                    "-lssl", "-lcrypto", "-o", str(executable)], capture_output=True, text=True)
+            if "openssl/" in built.stderr and "No such file" in built.stderr:
+                self.skipTest("OpenSSL development headers unavailable")
+            self.assertEqual(built.returncode, 0, built.stderr)
+            bodies = [BODY, BODY.replace("71\tpercent", "x" * 17 + "\tpercent"),
+                      BODY.replace(",710", ",32768"), BODY.replace(",710", ""),
+                      BODY.replace("garmin_group\tToday\n", ""),
+                      BODY + "garmin_group\tMore\n" * 4,
+                      BODY + ("garmin_metric" + BODY.split("garmin_metric", 1)[1]) * 6]
+
+            class Handler(BaseHTTPRequestHandler):
+                body = BODY
+
+                def log_message(self, *args):
+                    pass
+
+                def do_GET(self):
+                    self.send_response(200)
+                    self.end_headers()
+                    self.wfile.write(self.body.encode())
+
+            with HTTPServer(("127.0.0.1", 0), Handler) as server:
+                for index, body in enumerate(bodies):
+                    Handler.body = body
+                    worker = threading.Thread(target=server.handle_request, daemon=True)
+                    worker.start()
+                    encoded = subprocess.run([str(executable), str(server.server_port), "good" if index == 0 else "bad"],
+                                             capture_output=True, timeout=10)
+                    worker.join(timeout=3)
+                    self.assertEqual(encoded.returncode, 0, encoded.stderr)
+                    if index == 0:
+                        self.assertEqual(encoded.stdout, fixture())
+
+
+if __name__ == "__main__":
+    unittest.main()

@@ -140,11 +140,13 @@ void refreshState()
         model.trainingTelemetry = secure_transport::lastTrainingTelemetry();
         model.calendarTelemetry = secure_transport::lastCalendarTelemetry();
         model.spotifyTelemetry = secure_transport::lastSpotifyTelemetry();
+        model.garminTelemetry = secure_transport::lastGarminTelemetry();
         model.nodeAccepted = secureStats.accepted;
     }
     model.nodeLastUpdate = secure_transport::lastTelemetryAt();
     model.spotifyConnected = secure_transport::connected() && model.nodeLastUpdate != 0
                           && uint32_t(millis() - model.nodeLastUpdate) < 5000;
+    model.garminConnected = model.spotifyConnected;
     model.nodeOnline = model.nodeLastUpdate != 0
                     && uint32_t(millis() - model.nodeLastUpdate) < 5000
                     && model.nodeTelemetry.online;
@@ -181,6 +183,7 @@ uint8_t hit(int16_t x, int16_t y)
     else if (model.page == app_state::Page::Menu)
     {
         if (inside(x, y, ui_layout::leftButtonX, 364, ui_layout::pairedButtonWidth)) return 54;
+        if (inside(x, y, ui_layout::rightButtonX, 364, ui_layout::pairedButtonWidth)) return 58;
         if (inside(x, y, ui_layout::leftButtonX, ui_layout::menuFirstRowY,
                    ui_layout::pairedButtonWidth)) return 1;
         if (inside(x, y, ui_layout::rightButtonX, ui_layout::menuFirstRowY,
@@ -193,6 +196,13 @@ uint8_t hit(int16_t x, int16_t y)
                    ui_layout::pairedButtonWidth)) return 4;
         if (inside(x, y, ui_layout::rightButtonX, ui_layout::menuThirdRowY,
                    ui_layout::pairedButtonWidth)) return 5;
+    }
+    else if (model.page == app_state::Page::Garmin)
+    {
+        if (inside(x, y, 12, 426, 80)) return 59;
+        if (inside(x, y, 104, 426, 80)) return 60;
+        if (inside(x, y, 196, 426, 152)) return 2;
+        if (inside(x, y, 360, 426, 108)) return 5;
     }
     else if (model.page == app_state::Page::Spotify)
     {
@@ -283,6 +293,15 @@ uint8_t hit(int16_t x, int16_t y)
 
 void action(uint8_t button)
 {
+    if (model.page == app_state::Page::Garmin && (button == 59 || button == 60))
+    {
+        const uint8_t count = model.garminTelemetry.count;
+        if (count) model.selectedGarmin = static_cast<uint8_t>(
+            (model.selectedGarmin + (button == 59 ? count - 1 : 1)) % count);
+        model.pressedButton = 0;
+        ui::page(model);
+        return;
+    }
     if (model.page == app_state::Page::Spotify && button >= 55 && button <= 57)
     {
         const uint8_t command = button == 55 ? 4 : button == 57 ? 3
@@ -323,6 +342,7 @@ void action(uint8_t button)
     }
     switch (button)
     {
+    case 58: model.page = app_state::Page::Garmin; model.pressedButton = 0; ui::page(model); break;
     case 54: model.page = app_state::Page::Spotify; model.pressedButton = 0; ui::page(model); break;
     case 1: model.page = app_state::Page::Cluster; model.pressedButton = 0; ui::page(model); break;
     case 2: model.page = app_state::Page::Training; model.pressedButton = 0; ui::page(model); break;

@@ -29,7 +29,7 @@ SECTIONS = {
     "1": ("Konfigurasjon", (
         Action("Koble til / fornye Spotify", "Koble kontoen til denne Pi-en. Client Secret trengs ikke.",
                ("@python", "scripts/configure-spotify.py")),
-        Action("Garmin og kalendere", "Velg Garmin-kalender og private ICS-kalendere på nytt.",
+        Action("Garmin og kalendere", "Sett opp Garmin API-nøkkel, kommende økter og private ICS-kalendere.",
                ("bash", "scripts/configure-integrations.sh", "--reset"), venv_required=True),
         Action("Legg til clusternoder", "Registrer og klargjør nye workers; eksisterende noder beholdes.",
                ("bash", "scripts/setup-cluster.sh", "--action", "add"), config_required=True),
