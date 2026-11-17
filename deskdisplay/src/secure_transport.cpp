@@ -20,6 +20,7 @@
 namespace
 {
 constexpr char identity[] = "DeskDisplay-peer";
+constexpr char activityIdentity[] = "DeskDisplay-peer-activities";
 constexpr char preferenceNamespace[] = "dd-secure";
 constexpr uint16_t defaultPort = 4567;
 constexpr uint32_t initialReconnectMs = 5000;
@@ -50,6 +51,7 @@ uint16_t peerPort = defaultPort;
 bool keyAvailable = false;
 bool requested = false;
 bool sessionActive = false;
+bool useActivityIdentity = true;
 uint32_t nextConnect = 0;
 uint32_t reconnectDelayMs = initialReconnectMs;
 uint32_t lastRx = 0;
@@ -64,6 +66,7 @@ secure_protocol::TrainingTelemetry latestTraining;
 secure_protocol::CalendarTelemetry latestCalendar;
 secure_protocol::SpotifyTelemetry latestSpotify;
 secure_protocol::GarminTelemetry latestGarmin;
+secure_protocol::ActivityTelemetry latestActivities;
 secure_transport::Counters stats;
 bool otaActive = false;
 uint32_t otaSize = 0;
@@ -286,6 +289,8 @@ size_t expectedFrameSize()
             return secure_protocol::spotifyFrameSize;
         if (frame[3] == secure_protocol::garminTelemetryType)
             return secure_protocol::garminFrameSize;
+        if (frame[3] == secure_protocol::activityTelemetryType)
+            return secure_protocol::activityFrameSize;
         return frame[3] == secure_protocol::telemetryType ? secure_protocol::frameSize : 0;
     }
 }
@@ -368,13 +373,17 @@ bool processFrame()
     // The receive loop runs on one task. Keep this additional large candidate
     // off its small stack; publish it only after validation and sequence checks.
     static secure_protocol::GarminTelemetry garminValue;
+    static secure_protocol::ActivityTelemetry activityValue;
     const bool isCluster = frame[3] == secure_protocol::clusterTelemetryType;
     const bool isTraining = frame[3] == secure_protocol::trainingTelemetryType;
     const bool isCalendar = frame[3] == secure_protocol::calendarTelemetryType;
     const bool isSpotify = frame[3] == secure_protocol::spotifyTelemetryType;
     const bool isGarmin = frame[3] == secure_protocol::garminTelemetryType;
+    const bool isActivity = frame[3] == secure_protocol::activityTelemetryType;
     bool decoded = false;
-    if (isGarmin)
+    if (isActivity)
+        decoded = secure_protocol::decodeActivityTelemetry(frame, frameLength, sequence, activityValue);
+    else if (isGarmin)
         decoded = secure_protocol::decodeGarminTelemetry(frame, frameLength, sequence, garminValue);
     else if (isSpotify)
         decoded = secure_protocol::decodeSpotifyTelemetry(frame, frameLength, sequence, spotifyValue);
@@ -404,10 +413,11 @@ bool processFrame()
     else if (isCalendar) latestCalendar = calendarValue;
     else if (isSpotify) latestSpotify = spotifyValue;
     else if (isGarmin) latestGarmin = garminValue;
+    else if (isActivity) latestActivities = activityValue;
     else latest = value;
     lastValidTelemetry = millis();
     ++stats.accepted;
-    if (isSpotify || isGarmin) { /* Personal data are not written to the serial log. */ }
+    if (isSpotify || isGarmin || isActivity) { /* Personal data are not written to the serial log. */ }
     else if (isCluster)
     {
         Serial.printf("Secure cluster seq=%llu nodes=%u\n",
@@ -525,7 +535,7 @@ void secure_transport::service()
         requested = false;
         return;
     }
-    client.setPreSharedKey(identity, pskHex);
+    client.setPreSharedKey(useActivityIdentity ? activityIdentity : identity, pskHex);
     Serial.printf("Secure TLS connection to %s:%u...\n", peerAddress, peerPort);
     // This overload takes milliseconds. Keep the UI loop moving while the
     // controller is unreachable; restore the long I/O timeout for OTA below.
@@ -537,7 +547,12 @@ void secure_transport::service()
         // can return the mbedTLS network errors below. Other negative values
         // are TLS setup/handshake failures.
         if (isTransportError(errorCode)) ++stats.transportFailures;
-        else ++stats.authFailures;
+        else
+        {
+            ++stats.authFailures;
+            // Previous gateways accept only the original PSK identity.
+            useActivityIdentity = !useActivityIdentity;
+        }
         nextConnect = millis() + reconnectDelayMs;
         reconnectDelayMs = reconnectDelayMs < maximumReconnectMs / 2
                          ? reconnectDelayMs * 2 : maximumReconnectMs;
@@ -546,6 +561,7 @@ void secure_transport::service()
         return;
     }
     sessionActive = true;
+    if (!useActivityIdentity) latestActivities.count = 0;
     reconnectDelayMs = initialReconnectMs;
     client.useSessionTimeout(sessionTimeoutSeconds);
     lastRx = millis();
@@ -619,6 +635,7 @@ const secure_protocol::TrainingTelemetry& secure_transport::lastTrainingTelemetr
 const secure_protocol::CalendarTelemetry& secure_transport::lastCalendarTelemetry() { return latestCalendar; }
 const secure_protocol::SpotifyTelemetry& secure_transport::lastSpotifyTelemetry() { return latestSpotify; }
 const secure_protocol::GarminTelemetry& secure_transport::lastGarminTelemetry() { return latestGarmin; }
+const secure_protocol::ActivityTelemetry& secure_transport::lastActivityTelemetry() { return latestActivities; }
 bool secure_transport::spotifyCommand(uint8_t action)
 {
     static uint32_t lastCommand = 0;
@@ -679,6 +696,11 @@ void secure_transport::begin() {}
 const secure_protocol::GarminTelemetry& secure_transport::lastGarminTelemetry()
 {
     static secure_protocol::GarminTelemetry value;
+    return value;
+}
+const secure_protocol::ActivityTelemetry& secure_transport::lastActivityTelemetry()
+{
+    static const secure_protocol::ActivityTelemetry value;
     return value;
 }
 bool secure_transport::spotifyCommand(uint8_t) { return false; }

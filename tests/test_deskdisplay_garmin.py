@@ -14,6 +14,8 @@ ROOT = Path(__file__).resolve().parents[1]
 HISTORY = [-32768, 250, 310, 420, 500, 620, 710]
 BODY = ("DSSTATE/2\ngarmin\t1\t1794900000\ngarmin_group\tToday\n"
         "garmin_metric\tBody Battery\t71\tpercent\t" + ",".join(map(str, HISTORY)) + "\n")
+ACTIVITY_FIELDS = ("2026-11-17", "Morning run", "running", "5.20", "26", "5:00", "145", "3.2", "105.0")
+BODY += "garmin_activity\t" + "\t".join(ACTIVITY_FIELDS) + "\n"
 
 
 def fixture():
@@ -25,7 +27,12 @@ def fixture():
     payload[49:51] = b"71"
     payload[66:73] = b"percent"
     struct.pack_into("<7h", payload, 79, *HISTORY)
-    return b"DS\x01\x06" + struct.pack("<HQ", len(payload), 42) + payload
+    activity = bytearray(b"\x01")
+    for field, width in zip(ACTIVITY_FIELDS, (11, 49, 25, 17, 17, 17, 17, 17, 17)):
+        activity.extend(field.encode().ljust(width, b"\x00"))
+    activity.extend(bytes(9 * 187))
+    return (b"DS\x01\x06" + struct.pack("<HQ", len(payload), 42) + payload
+            + b"DS\x01\x07" + struct.pack("<HQ", len(activity), 43) + activity)
 
 
 CPP = r'''
@@ -60,6 +67,15 @@ int main() {
     assert(!decodeGarminTelemetry(frame, sizeof(frame) - 1, sequence, state));
     frame[4] = 0;
     assert(!decodeGarminTelemetry(frame, sizeof(frame), sequence, state));
+    unsigned char activities[activityFrameSize];
+    assert(fread(activities, 1, sizeof(activities), stdin) == sizeof(activities));
+    ActivityTelemetry history;
+    assert(decodeActivityTelemetry(activities, sizeof(activities), sequence, history));
+    assert(sequence == 43 && history.count == 1);
+    assert(!strcmp(history.items[0].title, "Morning run"));
+    assert(!strcmp(history.items[0].values[2], "5:00"));
+    activities[15 + 11 + 48] = 'x';
+    assert(!decodeActivityTelemetry(activities, sizeof(activities), sequence, history));
     return 0;
 }
 '''
@@ -77,9 +93,12 @@ int main(int argc, char** argv) {
     if (!strcmp(argv[2], "bad")) { assert(!fetch_controller_state(&state)); return 0; }
     assert(fetch_controller_state(&state));
     assert(state.garmin.count == 1 && state.garmin.groups[0].count == 1);
-    unsigned char frame[GARMIN_FRAME_SIZE];
+    unsigned char frame[STATE_FRAME_MAX];
     const size_t length = make_garmin_frame(frame, 42, 0, &state.garmin);
     assert(fwrite(frame, 1, length, stdout) == length);
+    latest_state = state;
+    const size_t activity_length = make_activity_frame(frame, 43);
+    assert(fwrite(frame, 1, activity_length, stdout) == activity_length);
     return 0;
 }
 '''
@@ -125,7 +144,9 @@ class GarminWireTests(unittest.TestCase):
                       BODY.replace(",710", ",32768"), BODY.replace(",710", ""),
                       BODY.replace("garmin_group\tToday\n", ""),
                       BODY + "garmin_group\tMore\n" * 4,
-                      BODY + ("garmin_metric" + BODY.split("garmin_metric", 1)[1]) * 6]
+                      BODY + ("garmin_metric" + BODY.split("garmin_metric", 1)[1].splitlines()[0] + "\n") * 6,
+                      BODY.replace("Morning run", "x" * 49),
+                      BODY + ("garmin_activity\t" + "\t".join(ACTIVITY_FIELDS) + "\n") * 10]
 
             class Handler(BaseHTTPRequestHandler):
                 body = BODY

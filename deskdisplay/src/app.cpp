@@ -22,6 +22,7 @@ bool lastDown = false;
 navigation_gesture::Tracker gesture;
 app_state::Page touchPage = app_state::Page::Home;
 bool touchCancelled = false;
+uint32_t pressedActivityRevision = 0;
 bool alarmActive = false;
 bool alarmLit = false;
 uint32_t alarmStartedAt = 0;
@@ -141,6 +142,13 @@ void refreshState()
         model.calendarTelemetry = secure_transport::lastCalendarTelemetry();
         model.spotifyTelemetry = secure_transport::lastSpotifyTelemetry();
         model.garminTelemetry = secure_transport::lastGarminTelemetry();
+        const auto& activities = secure_transport::lastActivityTelemetry();
+        if (memcmp(&model.activities, &activities, sizeof(activities)) != 0)
+        {
+            model.activities = activities;
+            if (activities.count <= app_state::activityPageSize) model.activityPage = 0;
+            ++model.activityRevision;
+        }
         model.nodeAccepted = secureStats.accepted;
     }
     model.nodeLastUpdate = secure_transport::lastTelemetryAt();
@@ -199,10 +207,31 @@ uint8_t hit(int16_t x, int16_t y)
     }
     else if (model.page == app_state::Page::Garmin)
     {
-        if (inside(x, y, 12, 426, 80)) return 59;
-        if (inside(x, y, 104, 426, 80)) return 60;
-        if (inside(x, y, 196, 426, 152)) return 2;
+        if (inside(x, y, 12, 426, 52)) return 59;
+        if (inside(x, y, 72, 426, 52)) return 60;
+        if (inside(x, y, 132, 426, 112)) return 61;
+        if (inside(x, y, 252, 426, 120)) return 2;
+        if (inside(x, y, 380, 426, 88)) return 5;
+    }
+    else if (model.page == app_state::Page::ActivityHistory)
+    {
+        for (uint8_t row = 0; row < app_state::activityPageSize; ++row)
+        {
+            const int16_t top = ui_layout::activityFirstRowY + row * ui_layout::activityRowStep;
+            if (model.activityOffset() + row < model.activities.count
+                && x >= 20 && x < 460 && y >= top && y < top + ui_layout::activityRowHeight)
+                return 70 + row;
+        }
+        if (model.activityOffset() && inside(x, y, 12, 426, 80)) return 63;
+        if (!model.activityOffset() && model.activities.count > app_state::activityPageSize
+            && inside(x, y, 104, 426, 80)) return 64;
+        if (inside(x, y, 196, 426, 152)) return 62;
         if (inside(x, y, 360, 426, 108)) return 5;
+    }
+    else if (model.page == app_state::Page::ActivityDetail)
+    {
+        if (inside(x, y, 12, 426, 180)) return 65;
+        if (inside(x, y, 288, 426, 180)) return 5;
     }
     else if (model.page == app_state::Page::Spotify)
     {
@@ -293,6 +322,16 @@ uint8_t hit(int16_t x, int16_t y)
 
 void action(uint8_t button)
 {
+    if (model.page == app_state::Page::ActivityHistory && button >= 70
+        && button < 70 + app_state::activityPageSize)
+    {
+        const uint8_t index = model.activityOffset() + button - 70;
+        if (index >= model.activities.count || pressedActivityRevision != model.activityRevision) return;
+        model.selectedActivity = model.activities.items[index];
+        model.page = app_state::Page::ActivityDetail;
+        ui::page(model);
+        return;
+    }
     if (model.page == app_state::Page::Garmin && (button == 59 || button == 60))
     {
         const uint8_t count = model.garminTelemetry.count;
@@ -342,6 +381,11 @@ void action(uint8_t button)
     }
     switch (button)
     {
+    case 61: model.activityPage = 0; model.page = app_state::Page::ActivityHistory; ui::page(model); break;
+    case 62: model.page = app_state::Page::Garmin; ui::page(model); break;
+    case 63: model.activityPage = 0; ui::page(model); break;
+    case 64: model.activityPage = 1; ui::page(model); break;
+    case 65: model.page = app_state::Page::ActivityHistory; ui::page(model); break;
     case 58: model.page = app_state::Page::Garmin; model.pressedButton = 0; ui::page(model); break;
     case 54: model.page = app_state::Page::Spotify; model.pressedButton = 0; ui::page(model); break;
     case 1: model.page = app_state::Page::Cluster; model.pressedButton = 0; ui::page(model); break;
@@ -433,6 +477,7 @@ void processTouch()
             touchPage = model.page;
             touchCancelled = false;
             model.pressedButton = hit(point.x, point.y);
+            pressedActivityRevision = model.activityRevision;
             if (model.pressedButton == 11) updateBrightnessSlider(point.x);
             else if (model.pressedButton) ui::pressed(model);
         }

@@ -6,7 +6,9 @@
 
 namespace app_state
 {
-enum class Page : uint8_t { Home, Cluster, Training, TrainingDetail, Calendar, System, Alarm, Menu, AlarmNumber, Spotify, Garmin };
+enum class Page : uint8_t { Home, Cluster, Training, TrainingDetail, Calendar, System, Alarm, Menu, AlarmNumber, Spotify, Garmin, ActivityHistory, ActivityDetail };
+
+constexpr uint8_t activityPageSize = 5;
 
 struct Model
 {
@@ -43,6 +45,14 @@ struct Model
     secure_protocol::CalendarTelemetry calendarTelemetry{};
     secure_protocol::SpotifyTelemetry spotifyTelemetry{};
     secure_protocol::GarminTelemetry garminTelemetry{};
+    secure_protocol::ActivityTelemetry activities{};
+    secure_protocol::Activity selectedActivity{};
+    uint32_t activityRevision = 0;
+    uint8_t activityPage = 0;
+    uint8_t activityOffset() const
+    {
+        return activityPage && activities.count > activityPageSize ? activityPageSize : 0;
+    }
     bool spotifyConnected = false;
     bool garminConnected = false;
     uint32_t nodeLastUpdate = 0;

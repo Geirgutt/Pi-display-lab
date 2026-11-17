@@ -33,6 +33,7 @@ const secure_protocol::TrainingTelemetry& lastTrainingTelemetry();
 const secure_protocol::CalendarTelemetry& lastCalendarTelemetry();
 const secure_protocol::SpotifyTelemetry& lastSpotifyTelemetry();
 const secure_protocol::GarminTelemetry& lastGarminTelemetry();
+const secure_protocol::ActivityTelemetry& lastActivityTelemetry();
 bool spotifyCommand(uint8_t action);
 uint32_t lastTelemetryAt();
 const Counters& counters();

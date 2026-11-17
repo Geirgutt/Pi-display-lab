@@ -51,6 +51,8 @@ class UpdatePolicyTests(unittest.TestCase):
             classify_paths((
                 "app.py",
                 "integration_sync.py",
+                "spotify.py",
+                "garmin_data.py",
                 "deskdisplay/src/ui.cpp",
                 "scripts/stage-deskdisplay-ota.sh",
                 "scripts/update.sh",

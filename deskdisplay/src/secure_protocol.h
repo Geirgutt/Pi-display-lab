@@ -19,6 +19,9 @@ constexpr uint8_t trainingTelemetryType = 3;
 constexpr uint8_t calendarTelemetryType = 4;
 constexpr uint8_t spotifyTelemetryType = 5;
 constexpr uint8_t garminTelemetryType = 6;
+constexpr uint8_t activityTelemetryType = 7;
+constexpr size_t activityCountMax = 10;
+constexpr size_t activityMetricCount = 6;
 constexpr size_t garminGroupMax = 4;
 constexpr size_t garminMetricMax = 6;
 constexpr size_t garminHistoryMax = 7;
@@ -29,6 +32,21 @@ constexpr size_t garminMetricSize = 21 + 17 + 13 + 14;
 constexpr size_t garminGroupSize = 21 + 1 + garminMetricMax * garminMetricSize;
 constexpr size_t garminPayloadSize = 6 + garminGroupMax * garminGroupSize;
 constexpr size_t garminFrameSize = 14 + garminPayloadSize;
+struct Activity
+{
+    char date[11] = {};
+    char title[49] = {};
+    char kind[25] = {};
+    char values[activityMetricCount][17] = {};
+};
+struct ActivityTelemetry
+{
+    uint8_t count = 0;
+    Activity items[activityCountMax]{};
+};
+static_assert(sizeof(Activity) == 187, "Unexpected activity wire layout");
+constexpr size_t activityPayloadSize = 1 + activityCountMax * sizeof(Activity);
+constexpr size_t activityFrameSize = 14 + activityPayloadSize;
 constexpr uint8_t spotifyCommandType = 0x91;
 constexpr size_t spotifyTitleMax = 96;
 constexpr size_t spotifyDeviceMax = 48;
@@ -87,6 +105,7 @@ static_assert(trainingFrameSize <= maxFrameSize, "Training frame exceeds receive
 static_assert(calendarFrameSize <= maxFrameSize, "Calendar frame exceeds receive buffer");
 static_assert(spotifyFrameSize <= maxFrameSize, "Spotify frame exceeds receive buffer");
 static_assert(garminFrameSize <= maxFrameSize, "Garmin frame exceeds receive buffer");
+static_assert(activityFrameSize <= maxFrameSize, "Activity frame exceeds receive buffer");
 static_assert(otaChunkFrameSize <= maxFrameSize, "OTA frame exceeds receive buffer");
 constexpr int16_t temperatureUnavailable = INT16_MIN;
 
@@ -396,6 +415,27 @@ inline bool decodeTrainingTelemetry(const uint8_t* frame, size_t length, uint64_
     value.lastActivity.durationSeconds = get32(activity + 15 + trainingTypeMax);
     value.lastActivity.paceHundredths = get16(activity + 19 + trainingTypeMax);
     value.lastActivity.averageHr = get16(activity + 21 + trainingTypeMax);
+    return true;
+}
+
+inline bool decodeActivityTelemetry(const uint8_t* frame, size_t length, uint64_t& sequence,
+                                    ActivityTelemetry& value)
+{
+    if (!frame || length != activityFrameSize || frame[0] != magic0 || frame[1] != magic1
+        || frame[2] != version || frame[3] != activityTelemetryType
+        || get16(frame + 4) != activityPayloadSize || frame[14] > activityCountMax) return false;
+    value.count = frame[14];
+    for (size_t index = 0; index < value.count; ++index)
+    {
+        Activity& item = value.items[index];
+        memcpy(&item, frame + 15 + index * sizeof(item), sizeof(item));
+        if (item.date[10] || item.title[48] || item.kind[24]) return false;
+        for (const auto& metric : item.values)
+            if (metric[16]) return false;
+    }
+    for (size_t index = value.count; index < activityCountMax; ++index)
+        value.items[index] = Activity{};
+    sequence = get64(frame + 6);
     return true;
 }
 

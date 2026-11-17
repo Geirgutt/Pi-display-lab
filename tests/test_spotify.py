@@ -108,6 +108,33 @@ class SpotifyTests(unittest.TestCase):
             self.provider._poll()
         self.assertFalse(self.provider._state["pending"])
 
+    def test_playback_clock_advances_between_polls_and_stops_at_duration(self):
+        playback = {"is_playing": True, "progress_ms": 2000,
+                    "item": {"name": "Song", "duration_ms": 5500}}
+        with patch("spotify.spotify_request", return_value=playback):
+            with patch("spotify.time.monotonic", return_value=100):
+                self.provider._poll()
+            with patch("spotify.time.monotonic", return_value=103):
+                self.assertEqual(self.provider.snapshot()["progress_ms"], 5000)
+            with patch("spotify.time.monotonic", return_value=104):
+                self.assertEqual(self.provider.snapshot()["progress_ms"], 5500)
+                self.provider._state.update(status="paused", is_playing=False)
+                self.assertEqual(self.provider.snapshot()["progress_ms"], 2000)
+
+    def test_skip_tolerates_one_empty_snapshot_without_resending_command(self):
+        self.provider._state.update(can_next=True, status="playing", title="Old song", pending=True)
+        self.provider._command_busy = True
+        with patch("spotify.spotify_request", return_value=None) as request:
+            self.provider._command("next")
+            self.provider._poll()
+            self.assertEqual(self.provider.snapshot()["title"], "Old song")
+            self.assertTrue(self.provider.snapshot()["pending"])
+            self.provider._poll()
+            self.assertEqual(self.provider.snapshot()["status"], "no_device")
+            self.assertFalse(self.provider.snapshot()["pending"])
+        self.assertEqual([call.kwargs["method"] for call in request.call_args_list],
+                         ["POST", "GET", "GET"])
+
     def test_rate_limit_preserves_retry_after_and_401_refreshes_once(self):
         with patch("spotify.spotify_request", side_effect=SpotifyError("rate_limited", 240)):
             before = time.monotonic()

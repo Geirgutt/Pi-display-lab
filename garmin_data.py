@@ -53,6 +53,25 @@ def _title(value: Any) -> str:
     return value if isinstance(value, str) else ""
 
 
+def _activity_metrics(activity: dict) -> list[dict[str, Any]]:
+    distance = _num(activity.get("distance"))
+    duration = _num(activity.get("duration"))
+    seconds_per_km = _num(duration / distance * 1000) if duration and distance else None
+    if seconds_per_km is not None:
+        pace_seconds = round(seconds_per_km)
+        pace_text = f"{pace_seconds // 60}:{pace_seconds % 60:02d}"
+    else:
+        pace_text = "--"
+    return [
+        _metric("Distance", distance / 1000 if distance is not None else None, "km", [None] * 7, 2),
+        _metric("Time", duration / 60 if duration is not None else None, "min", [None] * 7),
+        {**_metric("Pace", None, "min/km", [None] * 7), "value": pace_text[:16]},
+        _metric("Avg HR", activity.get("averageHR"), "bpm", [None] * 7),
+        _metric("Aerobic TE", activity.get("aerobicTrainingEffect"), "", [None] * 7, 1),
+        _metric("Load", activity.get("activityTrainingLoad"), "", [None] * 7, 1),
+    ]
+
+
 def build_dashboard(raw: dict, *, today: date) -> dict:
     """Build four compact groups from documented Garmin DTOs.
 
@@ -142,7 +161,8 @@ def build_dashboard(raw: dict, *, today: date) -> dict:
     weight_series = []
     for d in days:
         item = _obj(_obj(weight_by_date.get(d)).get("latestWeight"))
-        weight_series.append(item.get("weight"))
+        grams = _num(item.get("weight"), allow_zero=False)
+        weight_series.append(grams / 1000 if grams is not None else None)
     last_weight_index = next((i for i in range(6, -1, -1) if _num(weight_series[i]) is not None), None)
     last_weight = weight_series[last_weight_index] if last_weight_index is not None else None
 
@@ -193,14 +213,15 @@ def build_dashboard(raw: dict, *, today: date) -> dict:
     for activity in activities:
         activity = _obj(activity)
         d = _day(activity.get("startTimeLocal"))
-        if d:
+        if d and d <= today:
             valid_activities.append((d, activity))
-    activity = max(valid_activities, key=lambda p: (_title(p[1].get("startTimeLocal")), p[0]))[1] if valid_activities else {}
+    valid_activities.sort(key=lambda entry: entry[1]["startTimeLocal"], reverse=True)
+    activity = valid_activities[0][1] if valid_activities else {}
     activity_day = _day(activity.get("startTimeLocal"))
     activity_title = f"Activity {activity_day.isoformat()}" if activity_day else "Last activity"
     act_distance = _num(activity.get("distance"))
     duration = _num(activity.get("duration"))
-    pace = (duration / 60) / (act_distance / 1000) if duration and act_distance else None
+    pace = _num(duration / act_distance * (1000 / 60)) if duration and act_distance else None
     atype = _obj(activity.get("activityType"))
     last_activity = None
     if activity:
@@ -212,17 +233,18 @@ def build_dashboard(raw: dict, *, today: date) -> dict:
             "average_pace_min_per_km": round(pace, 2) if pace is not None else None,
             "average_hr": _num(activity.get("averageHR")),
         }
-    activity_group = [
-        _metric("Distance", act_distance / 1000 if act_distance is not None else None, "km", [None] * 7, 2),
-        _metric("Time", duration / 60 if duration is not None else None, "min", [None] * 7),
-        _metric("Pace", pace, "min/km", [None] * 7, 2),
-        _metric("Avg HR", activity.get("averageHR"), "bpm", [None] * 7),
-        _metric("Aerobic TE", activity.get("aerobicTrainingEffect"), "", [None] * 7, 1),
-        _metric("Load", activity.get("activityTrainingLoad"), "", [None] * 7, 1),
-    ]
+    recent_activities = []
+    for day, item in valid_activities[:10]:
+        kind = _title(_obj(item.get("activityType")).get("typeKey")).replace("_", " ")
+        recent_activities.append({
+            "date": day.isoformat(),
+            "title": _title(item.get("activityName"))[:48] or kind[:48] or "Activity",
+            "kind": kind[:24],
+            "values": [metric["value"] for metric in _activity_metrics(item)],
+        })
     return {"groups": [
         {"title": "Today", "metrics": today_group},
         {"title": "Sleep", "metrics": sleep_group},
         {"title": "Health", "metrics": health_group},
-        {"title": activity_title[:20], "metrics": activity_group},
-    ], "last_activity": last_activity}
+        {"title": activity_title[:20], "metrics": _activity_metrics(activity)},
+    ], "last_activity": last_activity, "activities": recent_activities}

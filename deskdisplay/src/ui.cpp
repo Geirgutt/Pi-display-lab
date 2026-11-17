@@ -714,14 +714,11 @@ void trainingDetail(const app_state::Model& model)
         snprintf(details, sizeof(details), "%u minutes", workout.durationMinutes);
     else snprintf(details, sizeof(details), "Scheduled workout");
     label(details, 28, 178, 2, muted);
-    display().drawFastHLine(28, 210, 424, muted);
-    label("WORKOUT DETAILS", 28, 226, 1, muted);
     if (workout.description[0])
-        wrappedText(workout.description, 28, 248, 424, 2, text, card, 7);
-    else
     {
-        label("Garmin did not include the workout", 28, 254, 2, muted);
-        label("steps in the published calendar.", 28, 280, 2, muted);
+        display().drawFastHLine(28, 210, 424, muted);
+        label("WORKOUT DETAILS", 28, 226, 1, muted);
+        wrappedText(workout.description, 28, 248, 424, 2, text, card, 7);
     }
 }
 
@@ -778,10 +775,75 @@ namespace
 {
 void garminButtons(const app_state::Model& model)
 {
-    button(59, "<", 12, 426, 80, model.pressedButton == 59);
-    button(60, ">", 104, 426, 80, model.pressedButton == 60);
-    button(2, "Workouts", 196, 426, 152, model.pressedButton == 2);
+    button(59, "<", 12, 426, 52, model.pressedButton == 59);
+    button(60, ">", 72, 426, 52, model.pressedButton == 60);
+    button(61, "History", 132, 426, 112, model.pressedButton == 61);
+    button(2, "Workouts", 252, 426, 120, model.pressedButton == 2);
+    button(5, "Home", 380, 426, 88, model.pressedButton == 5);
+}
+
+void activityHistory(const app_state::Model& model, bool force = false)
+{
+    static uint32_t lastRevision = UINT32_MAX;
+    if (!force && lastRevision == model.activityRevision) return;
+    lastRevision = model.activityRevision;
+    display().fillRect(0, 58, width, 422, background);
+    const uint8_t offset = model.activityOffset();
+    const uint8_t count = model.activities.count;
+    if (!count) label("No completed activities yet", 24, 96);
+    for (uint8_t row = 0; row < app_state::activityPageSize && offset + row < count; ++row)
+    {
+        const auto& activity = model.activities.items[offset + row];
+        const int16_t y = ui_layout::activityFirstRowY + row * ui_layout::activityRowStep;
+        const uint16_t fill = model.pressedButton == 70 + row ? accent : card;
+        display().fillRoundRect(20, y, 440, ui_layout::activityRowHeight, 8, fill);
+        display().setTextColor(text, fill);
+        display().setTextSize(2);
+        clippedText(activity.title, 32, y + 7, 384);
+        display().drawString(">", 432, y + 17);
+        display().setTextColor(muted, fill);
+        display().setTextSize(1);
+        clippedText(activity.date, 32, y + 34, 110);
+        if (strcmp(activity.kind, "-")) clippedText(activity.kind, 152, y + 34, 260);
+    }
+    if (offset) button(63, "<", 12, 426, 80, model.pressedButton == 63);
+    if (!offset && count > app_state::activityPageSize)
+        button(64, ">", 104, 426, 80, model.pressedButton == 64);
+    button(62, "Garmin", 196, 426, 152, model.pressedButton == 62);
     button(5, "Home", 360, 426, 108, model.pressedButton == 5);
+}
+
+void activityDetail(const app_state::Model& model)
+{
+    const auto& activity = model.selectedActivity;
+    static const char* labels[] = {"Distance", "Time", "Pace", "Avg HR", "Aerobic TE", "Load"};
+    static const char* units[] = {"km", "min", "min/km", "bpm", "", ""};
+    display().setTextColor(text, background);
+    display().setTextSize(2);
+    clippedText(activity.title, 16, 72, 448);
+    label(activity.date, 16, 104, 1, muted);
+    if (strcmp(activity.kind, "-")) clippedText(activity.kind, 136, 104, 320);
+    for (size_t index = 0; index < secure_protocol::activityMetricCount; ++index)
+    {
+        const int16_t x = 12 + (index % 2) * 234;
+        const int16_t y = 126 + (index / 2) * 92;
+        display().fillRoundRect(x, y, 222, 82, 8, card);
+        display().setTextColor(muted, card);
+        display().setTextSize(1);
+        display().drawString(labels[index], x + 12, y + 9);
+        display().setTextColor(text, card);
+        display().setTextSize(2);
+        clippedText(activity.values[index], x + 12, y + 28, 198);
+        display().setTextColor(muted, card);
+        display().setTextSize(1);
+        display().drawString(units[index], x + 12, y + 58);
+    }
+}
+
+void activityDetailButtons(const app_state::Model& model)
+{
+    button(65, "Back", 12, 426, 180, model.pressedButton == 65);
+    button(5, "Home", 288, 426, 180, model.pressedButton == 5);
 }
 
 void garminSparkline(const int16_t* history, int16_t x, int16_t y)
@@ -869,11 +931,36 @@ void spotifyLine(const char* value, int16_t y, uint16_t color = text)
     label(line, 26, y, 2, color);
 }
 
+void spotifyProgress(uint32_t elapsed, uint32_t duration)
+{
+    char progress[32];
+    snprintf(progress, sizeof(progress), "%lu:%02lu / %lu:%02lu",
+             static_cast<unsigned long>(elapsed / 60), static_cast<unsigned long>(elapsed % 60),
+             static_cast<unsigned long>(duration / 60), static_cast<unsigned long>(duration % 60));
+    label(progress, 26, 274, 2, muted);
+}
+
 void spotifyTelemetry(const app_state::Model& model, bool force = false)
 {
     const auto& state = model.spotifyTelemetry;
-    if (!force && spotifyDrawn && lastSpotifyConnected == model.spotifyConnected
-        && memcmp(&lastSpotify, &state, sizeof(state)) == 0) return;
+    const bool hasPlayback = model.spotifyConnected && (state.status == 1 || state.status == 2);
+    const bool showProgress = hasPlayback && state.durationMs > 0;
+    const uint32_t elapsed = state.progressMs / 1000;
+    const uint32_t duration = state.durationMs / 1000;
+    if (!force && spotifyDrawn && lastSpotifyConnected == model.spotifyConnected)
+    {
+        const uint32_t previousElapsed = lastSpotify.progressMs / 1000;
+        lastSpotify.progressMs = state.progressMs;
+        if (memcmp(&lastSpotify, &state, sizeof(state)) == 0)
+        {
+            if (showProgress && elapsed != previousElapsed)
+            {
+                display().fillRect(26, 274, 428, 20, background);
+                spotifyProgress(elapsed, duration);
+            }
+            return;
+        }
+    }
     spotifyDrawn = true;
     lastSpotify = state;
     lastSpotifyConnected = model.spotifyConnected;
@@ -884,18 +971,12 @@ void spotifyTelemetry(const app_state::Model& model, bool force = false)
     spotifyLine(model.spotifyConnected ? (state.capabilities & 8 ? "Updating playback..."
                                       : statuses[state.status <= 7 ? state.status : 7])
                                       : "Controller disconnected", 88, good);
-    if (model.spotifyConnected && (state.status == 1 || state.status == 2))
+    if (hasPlayback)
     {
-        spotifyLine(state.title, 144);
+        spotifyLine(state.title[0] ? state.title : "Track info unavailable", 144);
         spotifyLine(state.artist, 184, muted);
         spotifyLine(state.device, 230, muted);
-        char progress[32];
-        const uint32_t elapsed = state.progressMs / 1000;
-        const uint32_t duration = state.durationMs / 1000;
-        snprintf(progress, sizeof(progress), "%lu:%02lu / %lu:%02lu",
-                 static_cast<unsigned long>(elapsed / 60), static_cast<unsigned long>(elapsed % 60),
-                 static_cast<unsigned long>(duration / 60), static_cast<unsigned long>(duration % 60));
-        label(progress, 26, 274, 2, muted);
+        if (showProgress) spotifyProgress(elapsed, duration);
     }
     else if (model.spotifyConnected && (state.status == 0 || state.status == 4))
     {
@@ -968,6 +1049,17 @@ void ui::page(const app_state::Model& model)
         header("Garmin");
         garminTelemetry(model, true);
         garminButtons(model);
+    }
+    else if (model.page == app_state::Page::ActivityHistory)
+    {
+        header("Activity history");
+        activityHistory(model, true);
+    }
+    else if (model.page == app_state::Page::ActivityDetail)
+    {
+        header("Activity");
+        activityDetail(model);
+        activityDetailButtons(model);
     }
     else if (model.page == app_state::Page::Spotify)
     {
@@ -1050,6 +1142,7 @@ void ui::page(const app_state::Model& model)
 void ui::telemetry(const app_state::Model& model)
 {
     if (model.page == app_state::Page::Garmin) { garminTelemetry(model); return; }
+    if (model.page == app_state::Page::ActivityHistory) { activityHistory(model); return; }
     if (model.page == app_state::Page::Spotify) { spotifyTelemetry(model); return; }
     if (model.page == app_state::Page::System)
     {
@@ -1084,6 +1177,8 @@ void ui::pressed(const app_state::Model& model)
     {
         garminButtons(model);
     }
+    else if (model.page == app_state::Page::ActivityHistory) activityHistory(model, true);
+    else if (model.page == app_state::Page::ActivityDetail) activityDetailButtons(model);
     else if (model.page == app_state::Page::Spotify)
     {
         spotifyTelemetry(model, true);

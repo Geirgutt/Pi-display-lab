@@ -36,7 +36,8 @@ class GarminDashboardTests(unittest.TestCase):
                 {"calendarDate": "2026-11-16", "lastNightAvg": -1, "status": "LOW"},
             ]},
             "weight": {"dailyWeightSummaries": [
-                {"summaryDate": "2026-11-16", "latestWeight": {"weight": 71.25}}
+                {"summaryDate": "2026-11-15", "latestWeight": {"weight": 71250}},
+                {"summaryDate": "2026-11-16", "latestWeight": {"weight": 77000}}
             ]},
             "hydration": [
                 {"calendarDate": "2026-11-11", "valueInML": 900},
@@ -45,7 +46,11 @@ class GarminDashboardTests(unittest.TestCase):
             "vo2": [{"generic": {"calendarDate": "2026-11-15", "vo2MaxValue": 48.6}}],
             "fitness_age": {"fitnessAge": 32.5},
             "activities": [{
+                "startTimeLocal": "2026-11-15 08:15:00",
+                "activityName": "Morning walk", "activityType": {"typeKey": "walking"},
+            }, {
                 "startTimeLocal": "2026-11-16 08:15:00", "activityType": {"typeKey": "running"},
+                "activityName": "Evening run",
                 "distance": 5200, "duration": 1560, "averageHR": 145,
                 "aerobicTrainingEffect": 3.2, "activityTrainingLoad": 105,
             }],
@@ -62,7 +67,8 @@ class GarminDashboardTests(unittest.TestCase):
         self.assertEqual(groups[1]["metrics"][1]["value"], "84")
         self.assertEqual(groups[1]["metrics"][4]["value"], "52")
         self.assertEqual(groups[1]["metrics"][4]["history"][5], None)
-        self.assertEqual(groups[2]["metrics"][0]["value"], "71.2")
+        self.assertEqual(groups[2]["metrics"][0]["value"], "77.0")
+        self.assertEqual(groups[2]["metrics"][0]["history"][-3:], [71.25, 77.0, None])
         self.assertEqual(groups[2]["metrics"][1]["value"], "48.6")
         self.assertEqual(groups[2]["metrics"][2]["value"], "32.5")
         self.assertEqual(groups[2]["metrics"][5]["value"], "50")
@@ -72,6 +78,9 @@ class GarminDashboardTests(unittest.TestCase):
             "date": "2026-11-16", "activity_type": "running", "distance_km": 5.2,
             "duration_seconds": 1560.0, "average_pace_min_per_km": 5.0, "average_hr": 145.0,
         })
+        self.assertEqual([item["title"] for item in result["activities"]], ["Evening run", "Morning walk"])
+        self.assertEqual(result["activities"][0]["values"], ["5.20", "26", "5:00", "145", "3.2", "105.0"])
+        self.assertEqual(result["activities"][1]["values"], ["--"] * 6)
 
     def test_missing_or_malformed_data_stays_missing_and_current_day_is_not_backfilled(self):
         out = build_dashboard({

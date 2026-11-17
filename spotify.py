@@ -121,8 +121,10 @@ class SpotifyProvider:
         self._lock = threading.Lock()
         self._operation = threading.Lock()
         self._next_poll = 0.0
+        self._sampled_at = 0.0
         self._busy = False
         self._command_busy = False
+        self._retry_empty_after_skip = False
         self._signature = None
         self._reauthorize = False
 
@@ -133,7 +135,11 @@ class SpotifyProvider:
             if not self._busy and not self._command_busy and time.monotonic() >= self._next_poll:
                 self._busy = True
                 threading.Thread(target=self._poll, daemon=True, name="spotify-poll").start()
-            return dict(self._state)
+            state = dict(self._state)
+            if state["is_playing"] and state["duration_ms"] and not state["pending"]:
+                elapsed_ms = int(max(0, time.monotonic() - self._sampled_at) * 1000)
+                state["progress_ms"] = min(state["duration_ms"], state["progress_ms"] + elapsed_ms)
+            return state
 
     def _credentials(self) -> dict:
         try:
@@ -210,8 +216,16 @@ class SpotifyProvider:
             delay = 30
         finally:
             with self._lock:
-                state["pending"] = self._command_busy
-                self._state = state
+                # Spotify can have no playback snapshot between two tracks.
+                # Give a successful skip one extra status poll before clearing the screen.
+                retry_empty = self._retry_empty_after_skip and state["status"] == "no_device"
+                self._retry_empty_after_skip = False
+                if retry_empty:
+                    delay = 1
+                else:
+                    state["pending"] = self._command_busy
+                    self._state = state
+                    self._sampled_at = time.monotonic()
                 self._next_poll = time.monotonic() + delay
                 self._busy = False
 
@@ -245,6 +259,7 @@ class SpotifyProvider:
             method, suffix = COMMANDS[action]
             self._api(suffix, method)
             with self._lock:
+                self._retry_empty_after_skip = action in {"next", "previous"}
                 self._next_poll = time.monotonic() + 1
         except SpotifyError as error:
             with self._lock:

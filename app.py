@@ -57,7 +57,8 @@ def _epoch(value: Any) -> int:
         return 0
 
 
-def _deskdisplay_state_lines(payload: dict[str, Any], worker_hosts: tuple[str, ...]) -> str:
+def _deskdisplay_state_lines(payload: dict[str, Any], worker_hosts: tuple[str, ...],
+                             *, include_activities: bool = False) -> str:
     """Render compact controller state for the local DeskDisplay gateway."""
 
     nodes = list(payload.get("nodes") or [])
@@ -193,6 +194,18 @@ def _deskdisplay_state_lines(payload: dict[str, Any], worker_hosts: tuple[str, .
             lines.append("\t".join(("garmin_metric", _compact_text(metric.get("label"), 20),
                                     _compact_text(metric.get("value"), 16, "--"),
                                     _compact_text(metric.get("unit"), 12), ",".join(history))))
+    activities = garmin.get("activities")
+    if include_activities and isinstance(activities, list):
+        for activity in activities[:10]:
+            if not isinstance(activity, dict):
+                continue
+            values = activity.get("values")
+            if not isinstance(values, list) or len(values) != 6:
+                continue
+            lines.append("\t".join(("garmin_activity", _compact_text(activity.get("date"), 10),
+                                    _compact_text(activity.get("title"), 48, "Activity"),
+                                    _compact_text(activity.get("kind"), 24),
+                                    *(_compact_text(value, 16, "--") for value in values))))
     return "\n".join(lines) + "\n"
 
 
@@ -241,6 +254,9 @@ def create_app(
     @app.get("/api/state")
     def get_state() -> Any:
         payload = dashboard.snapshot(cluster_status=cluster_status.snapshot())
+        garmin = payload.get("garmin")
+        if isinstance(garmin, dict):
+            payload["garmin"] = {key: value for key, value in garmin.items() if key != "activities"}
         transports.publish(payload)
         return jsonify(browser.latest())
 
@@ -252,7 +268,8 @@ def create_app(
             return jsonify({"ok": False, "error": "Kun lokal gateway er tillatt"}), 403
         payload = dashboard.snapshot(cluster_status=cluster_status.snapshot())
         return Response(
-            _deskdisplay_state_lines(payload, settings.worker_hosts),
+            _deskdisplay_state_lines(payload, settings.worker_hosts,
+                                     include_activities=request.headers.get("X-DeskDisplay-Activities") == "1"),
             mimetype="text/plain",
             headers={"Cache-Control": "no-store"},
         )

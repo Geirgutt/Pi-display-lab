@@ -89,6 +89,14 @@ static int ota_waiting_reconnect = 0;
 #define GARMIN_PAYLOAD_SIZE (6 + GARMIN_GROUP_MAX * GARMIN_GROUP_SIZE)
 #define GARMIN_FRAME_SIZE (FRAME_HEADER_SIZE + GARMIN_PAYLOAD_SIZE)
 #define STATE_FRAME_MAX 4096
+#define ACTIVITY_COUNT_MAX 10
+#define ACTIVITY_FIELD_COUNT 9
+#define ACTIVITY_RECORD_SIZE (11 + 49 + 25 + 6 * 17)
+#define ACTIVITY_PAYLOAD_SIZE (1 + ACTIVITY_COUNT_MAX * ACTIVITY_RECORD_SIZE)
+#define ACTIVITY_FRAME_SIZE (FRAME_HEADER_SIZE + ACTIVITY_PAYLOAD_SIZE)
+static const size_t activity_fields[ACTIVITY_FIELD_COUNT] = {11, 49, 25, 17, 17, 17, 17, 17, 17};
+static const char activity_identity[] = "DeskDisplay-peer-activities";
+_Static_assert(ACTIVITY_FRAME_SIZE <= STATE_FRAME_MAX, "activity frame exceeds gateway buffer");
 #define SPOTIFY_TITLE_MAX 96
 #define SPOTIFY_DEVICE_MAX 48
 #define SPOTIFY_PAYLOAD_SIZE (10 + 2 * (SPOTIFY_TITLE_MAX + 1) + SPOTIFY_DEVICE_MAX + 1)
@@ -186,6 +194,8 @@ struct controller_state {
     struct calendar_state calendar;
     struct spotify_state spotify;
     struct garmin_state garmin;
+    uint8_t activity_count;
+    unsigned char activities[ACTIVITY_COUNT_MAX][ACTIVITY_RECORD_SIZE];
 };
 
 static void stop_handler(int signal_number)
@@ -228,7 +238,8 @@ static unsigned int psk_callback(SSL* ssl, const char* identity,
                                  unsigned char* output, unsigned int max_length)
 {
     (void)ssl;
-    if (!identity || strcmp(identity, "DeskDisplay-peer") != 0 || max_length < sizeof(psk)) return 0;
+    if (!identity || (strcmp(identity, "DeskDisplay-peer") && strcmp(identity, activity_identity))
+        || max_length < sizeof(psk)) return 0;
     memcpy(output, psk, sizeof(psk));
     return sizeof(psk);
 }
@@ -322,7 +333,8 @@ static int fetch_controller_state(struct controller_state* result)
 
     char request[256];
     const int request_length = snprintf(request, sizeof(request),
-                                        "GET %s HTTP/1.0\r\nHost: %s\r\nConnection: close\r\n\r\n",
+                                        "GET %s HTTP/1.0\r\nHost: %s\r\n"
+                                        "X-DeskDisplay-Activities: 1\r\nConnection: close\r\n\r\n",
                                         state_path, state_host);
     if (request_length <= 0 || (size_t)request_length >= sizeof(request) ||
         !send_socket_all(fd, request, (size_t)request_length))
@@ -356,8 +368,8 @@ static int fetch_controller_state(struct controller_state* result)
     memset(result, 0, sizeof(*result));
     while ((line = strtok_r(NULL, "\r\n", &save)) != NULL)
     {
-        char* fields[9] = {0};
-        const int field_count = split_fields(line, fields, 9);
+        char* fields[1 + ACTIVITY_FIELD_COUNT] = {0};
+        const int field_count = split_fields(line, fields, 1 + ACTIVITY_FIELD_COUNT);
         if (field_count < 1) return 0;
         if (!strcmp(fields[0], "node"))
         {
@@ -457,6 +469,19 @@ static int fetch_controller_state(struct controller_state* result)
                 if (!parse_signed(number, -32768, 32767, &sample)) return 0;
                 metric->history[day] = (int16_t)sample;
                 if (comma) number = comma + 1;
+            }
+        }
+        else if (!strcmp(fields[0], "garmin_activity"))
+        {
+            if (field_count != 1 + ACTIVITY_FIELD_COUNT
+                || result->activity_count >= ACTIVITY_COUNT_MAX) return 0;
+            unsigned char* field = result->activities[result->activity_count++];
+            for (size_t i = 0; i < ACTIVITY_FIELD_COUNT; ++i)
+            {
+                const size_t length = strlen(fields[1 + i]);
+                if (length >= activity_fields[i]) return 0;
+                memcpy(field, fields[1 + i], length);
+                field += activity_fields[i];
             }
         }
         else if (!strcmp(fields[0], "spotify"))
@@ -1025,21 +1050,32 @@ static size_t make_garmin_frame(unsigned char* frame, uint64_t sequence, int inv
     return GARMIN_FRAME_SIZE;
 }
 
+static struct controller_state latest_state = {0};
+
+static size_t make_activity_frame(unsigned char* frame, uint64_t sequence)
+{
+    memset(frame, 0, ACTIVITY_FRAME_SIZE);
+    frame[0] = 'D'; frame[1] = 'S'; frame[2] = 1; frame[3] = 7;
+    put16(frame + 4, ACTIVITY_PAYLOAD_SIZE); put64(frame + 6, sequence);
+    frame[FRAME_HEADER_SIZE] = latest_state.activity_count;
+    memcpy(frame + FRAME_HEADER_SIZE + 1, latest_state.activities, sizeof(latest_state.activities));
+    return ACTIVITY_FRAME_SIZE;
+}
+
 static size_t make_frame(unsigned char* frame, uint64_t sequence, int invalid)
 {
     if (!state_path[0]) return make_local_frame(frame, sequence, invalid);
-    static struct controller_state latest = {0};
     static int state_available = 0;
     static size_t slot = 0;
     struct controller_state current = {0};
     if (fetch_controller_state(&current))
     {
-        latest = current;
+        latest_state = current;
         state_available = 1;
     }
     else if (state_available)
     {
-        current = latest;
+        current = latest_state;
         for (size_t index = 0; index < current.cluster.count; ++index)
             current.cluster.nodes[index].online = 0;
         current.training.available = 0;
@@ -1239,6 +1275,9 @@ int main(int argc, char** argv)
         }
         uint64_t sequence = 1;
         uint64_t command_sequence = 0;
+        const char* identity = SSL_get_psk_identity(ssl);
+        const int send_activities = identity && !strcmp(identity, activity_identity);
+        unsigned activity_round = 0;
         const struct timeval command_timeout = {.tv_sec = 2, .tv_usec = 0};
         setsockopt(socket_fd, SOL_SOCKET, SO_RCVTIMEO, &command_timeout, sizeof(command_timeout));
         int replay_sent = 0, malformed_sent = 0;
@@ -1257,6 +1296,11 @@ int main(int argc, char** argv)
             {
                 const size_t spotify_length = make_spotify_frame(frame, sequence++, 0, &latest_spotify);
                 if (!send_all(ssl, frame, spotify_length)) break;
+                if (send_activities && activity_round++ % 5 == 0)
+                {
+                    const size_t activity_length = make_activity_frame(frame, sequence++);
+                    if (!send_all(ssl, frame, activity_length)) break;
+                }
             }
             if (!wait_display_command(ssl, socket_fd, &command_sequence)) break;
         }
