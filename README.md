@@ -34,16 +34,15 @@ Etter programoppdatering lastes menyen på nytt fra den hentede versjonen. Hvis 
 kode ble hentet før en feil eller et avbrudd, beholdes feilmeldingen til du trykker
 Enter; deretter lastes menyen på nytt også i dette tilfellet.
 
-For Spotify trenger SSH-forbindelsen portviderekobling, slik at du kan bruke
-PC-nettleseren til innloggingen som kjører på Pi-en:
+Spotify-oppsettet kan kjøres fra den vanlige terminalen på controlleren:
 
 ```bash
-ssh -L 8888:127.0.0.1:8888 BRUKER@CONTROLLER
 cd ~/Pi-display-lab
 python3 meny.py
 ```
 
-Velg **Konfigurasjon → Koble til / fornye Spotify**. Se
+Velg **Konfigurasjon → Koble til / fornye Spotify** og følg instruksjonene for
+å lime inn returadressen fra nettleseren. Se
 [Spotify-oppsettet](deskdisplay/docs/spotify.md) for detaljer.
 Direkte skriptkommandoer nedenfor kan fortsatt brukes ved avansert arbeid.
 

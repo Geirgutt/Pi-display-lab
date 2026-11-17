@@ -24,15 +24,7 @@ Installer først denne revisjonen av controlleren, gatewayen og secure-firmwaren
 med prosjektets vanlige oppdateringsløp. Oppsettsskriptet bruker bare Pythons
 standardbibliotek og trenger ingen ny pip-pakke.
 
-Åpne en terminal på PC-en og koble til **controlleren**, med lokal portviderekobling.
-Bytt ut `BRUKER` og `CONTROLLER` med samme bruker og adresse som du vanligvis
-bruker til Pi-en:
-
-```sh
-ssh -o ExitOnForwardFailure=yes -L 8888:127.0.0.1:8888 BRUKER@CONTROLLER
-```
-
-Kjør deretter på Pi-en, som **samme bruker som pi-display-lab-tjenesten**, uten sudo:
+Kjør på Pi-en, som **samme bruker som pi-display-lab-tjenesten**, uten sudo:
 
 ```sh
 cd ~/Pi-display-lab
@@ -40,11 +32,19 @@ python3 meny.py
 ```
 
 Velg **Konfigurasjon → Koble til / fornye Spotify**.
-Hvis prosjektet ligger et annet sted, bruk den faktiske prosjektmappen. Tast inn
-Client ID når du blir spurt. Åpne lenken skriptet skriver ut i nettleseren på
-PC-en og godkjenn tilgangen hos Spotify. Behold SSH-vinduet åpent til terminalen
-bekrefter at tilgangen er lagret. Callback-serveren kjører på Pi-en og lytter kun
-på 127.0.0.1; SSH-tunnelen fører nettleserens lokale returadresse dit.
+Tast inn Client ID, eller trykk Enter for å gjenbruke den lagrede ID-en.
+Åpne innloggingslenken på PC-en og godkjenn tilgangen. Nettleseren kan vise
+at den ikke får åpnet `127.0.0.1`. Kopier da hele returadressen fra
+adressefeltet og lim den inn i det skjulte terminalfeltet på Pi-en.
+
+For automatisk retur kan du fortsatt bruke en tunnel fra PC-en, og deretter
+kjøre skriptet direkte på Pi-en med `--tunnel`:
+
+```sh
+ssh -o ExitOnForwardFailure=yes -L 127.0.0.1:8888:127.0.0.1:8888 BRUKER@CONTROLLER
+cd ~/Pi-display-lab
+python3 scripts/configure-spotify.py --tunnel
+```
 
 Tokenene lagres atomisk med filmodus 0600 i:
 
@@ -75,8 +75,9 @@ SSH-tunnelen kan lukkes når oppsettet er fullført.
   utviklermodus og tilgangen du godkjente. Kjør oppsettet på nytt ved behov.
 - `Spotify request limit; waiting`: controlleren respekterer Spotifys Retry-After.
 - `Controller disconnected`: knappene deaktiveres til forbindelsen er tilbake.
-- Returadressen åpnes ikke: kontroller SSH-tunnelen, at lokal port 8888 er ledig,
-  at Pi-skriptet fortsatt venter, og at Redirect URI-en er identisk i Spotify.
+- Ved vanlig oppsett kan du kopiere returadressen selv om nettleseren viser
+  en tilkoblingsfeil. Ved oppsett med `--tunnel` må port 8888 være ledig og
+  skriptet på Pi-en fortsatt vente på returen.
 
 **+ Like** legger sporet som vises til i Likte sanger. Kjør Spotify-oppsettet på
 nytt hvis det allerede var koblet til før likerknappen ble innført, slik at du

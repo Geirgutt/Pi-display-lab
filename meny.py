@@ -170,10 +170,6 @@ class Menu:
             print("Valgte workers: " + ", ".join(workers))
         if command[0] == "@python":
             command[0] = self._python()
-        if section == "1" and index == 1:
-            print("\nÅpne SSH fra PC-en med portviderekobling før Spotify-innlogging:")
-            print("  ssh -L 8888:127.0.0.1:8888 BRUKER@CONTROLLER")
-            print("Åpne deretter innloggingslenken i nettleseren på PC-en.")
         print("\nKjører: " + shlex.join(command), flush=True)
         before = self.revision() if action.reload_after else None
         try:

@@ -4,10 +4,13 @@ import base64
 import hashlib
 import importlib.util
 import json
+import io
+import sys
 import tempfile
 import time
 import unittest
 from pathlib import Path
+from contextlib import redirect_stdout
 from unittest.mock import patch
 from urllib.parse import parse_qs, urlsplit
 
@@ -58,6 +61,30 @@ class SpotifyTests(unittest.TestCase):
         self.assertNotIn("client_secret", saved)
         retained = token_credentials("id", {"access_token": "new"}, previous=saved)
         self.assertEqual(retained["refresh_token"], "rotated")
+
+    def test_pasted_callback_requires_exact_redirect_and_matching_session(self):
+        expected = "http://127.0.0.1:8888/callback"
+        self.assertEqual(setup.pasted_callback_code(expected + "?code=once&state=expected", "expected"), "once")
+        for url in (expected + "?code=once&state=old", expected.replace("8888", "8889") + "?code=once&state=expected",
+                    "https://other.example/callback?code=once&state=expected",
+                    "/callback?code=once&state=expected"):
+            self.assertIsNone(setup.pasted_callback_code(url, "expected"))
+
+    def test_renewal_uses_saved_client_id_and_does_not_open_listener(self):
+        callback = "http://127.0.0.1:8888/callback?code=one-use-code&state=expected"
+        with patch.object(sys, "argv", ["configure-spotify", "--credentials", str(self.path)]), \
+             patch("builtins.input", return_value=""), \
+             patch.object(setup, "authorization_request", return_value=("https://accounts.spotify.com/", "expected", "verifier")), \
+             patch.object(setup.getpass, "getpass", return_value=callback), \
+             patch.object(setup, "HTTPServer") as server, \
+             patch.object(setup, "spotify_request", return_value={"access_token": "new-access", "refresh_token": "new-refresh"}) as request, \
+             redirect_stdout(io.StringIO()) as output:
+            self.assertEqual(setup.main(), 0)
+        server.assert_not_called()
+        self.assertEqual(request.call_args.kwargs["form"]["client_id"], "a" * 32)
+        self.assertEqual(request.call_args.kwargs["form"]["code"], "one-use-code")
+        self.assertNotIn("one-use-code", output.getvalue())
+        self.assertEqual(json.loads(self.path.read_text())["access_token"], "new-access")
 
     def test_expired_refresh_requires_reconnect_and_new_file_recovers(self):
         data = json.loads(self.path.read_text())

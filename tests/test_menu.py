@@ -45,7 +45,7 @@ class MenuTests(unittest.TestCase):
         args, kwargs = self.runner.call_args
         self.assertEqual(args[0][1:], ["scripts/configure-spotify.py"])
         self.assertEqual(kwargs, {"cwd": self.project.resolve(), "check": False})
-        self.assertIn("ssh -L 8888:127.0.0.1:8888", output.getvalue())
+        self.assertNotIn("portviderekobling", output.getvalue())
 
     def test_missing_config_does_not_start_cluster_action(self):
         with redirect_stdout(io.StringIO()):
