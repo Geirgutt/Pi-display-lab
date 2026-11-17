@@ -241,9 +241,16 @@ uint8_t hit(int16_t x, int16_t y)
     }
     else if (model.page == app_state::Page::ActivityDetail)
     {
-        if (inside(x, y, 12, 426, 132)) return model.activityFromHome ? 61 : 65;
-        if (model.selectedActivity.title[0] && inside(x, y, 174, 426, 132)) return 67;
-        if (inside(x, y, 336, 426, 132)) return 5;
+        if (inside(x, y, 12, 426, 108)) return model.activityFromHome ? 61 : 65;
+        if (model.selectedActivity.title[0] && inside(x, y, 128, 426, 108)) return 67;
+        if (model.selectedActivity.title[0] && inside(x, y, 244, 426, 108)) return 76;
+        if (inside(x, y, 360, 426, 108)) return 5;
+        if (model.activityView == app_state::ActivityView::Laps)
+        {
+            if (model.lapOffset && inside(x, y, 12, 376, 72)) return 68;
+            if (model.lapOffset + app_state::lapsPageSize < model.selectedActivity.lapCount
+                && inside(x, y, 396, 376, 72)) return 69;
+        }
     }
     else if (model.page == app_state::Page::GarminMetricDetail)
     {
@@ -360,7 +367,8 @@ void action(uint8_t button)
         if (index >= model.activities.count || pressedActivityRevision != model.activityRevision) return;
         model.selectedActivity = model.activities.items[index];
         model.activityFromHome = false;
-        model.activityChartsVisible = false;
+        model.activityView = app_state::ActivityView::Summary;
+        model.lapOffset = 0;
         model.page = app_state::Page::ActivityDetail;
         ui::page(model);
         return;
@@ -419,7 +427,18 @@ void action(uint8_t button)
     case 63: model.activityPage = 0; ui::page(model); break;
     case 64: model.activityPage = 1; ui::page(model); break;
     case 65: model.page = app_state::Page::ActivityHistory; ui::page(model); break;
-    case 67: model.activityChartsVisible = !model.activityChartsVisible; ui::page(model); break;
+    case 67:
+        model.activityView = model.activityView == app_state::ActivityView::Charts
+            ? app_state::ActivityView::Summary : app_state::ActivityView::Charts;
+        ui::page(model);
+        break;
+    case 68: model.lapOffset -= app_state::lapsPageSize; ui::page(model); break;
+    case 69: model.lapOffset += app_state::lapsPageSize; ui::page(model); break;
+    case 76:
+        model.activityView = model.activityView == app_state::ActivityView::Laps
+            ? app_state::ActivityView::Summary : app_state::ActivityView::Laps;
+        ui::page(model);
+        break;
     case 58: model.page = app_state::Page::Garmin; model.pressedButton = 0; ui::page(model); break;
     case 54: model.page = app_state::Page::Spotify; model.pressedButton = 0; ui::page(model); break;
     case 1: model.page = app_state::Page::Cluster; model.pressedButton = 0; ui::page(model); break;
@@ -436,7 +455,8 @@ void action(uint8_t button)
     case 66:
         model.selectedActivity = model.activities.count ? model.activities.items[0] : secure_protocol::Activity{};
         model.activityFromHome = true;
-        model.activityChartsVisible = false;
+        model.activityView = app_state::ActivityView::Summary;
+        model.lapOffset = 0;
         model.page = app_state::Page::ActivityDetail;
         ui::page(model);
         break;

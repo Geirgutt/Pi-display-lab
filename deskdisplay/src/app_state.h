@@ -7,8 +7,10 @@
 namespace app_state
 {
 enum class Page : uint8_t { Home, Cluster, Training, TrainingDetail, Calendar, System, Alarm, Menu, AlarmNumber, Spotify, Garmin, ActivityHistory, ActivityDetail, GarminMetricDetail };
+enum class ActivityView : uint8_t { Summary, Charts, Laps };
 
 constexpr uint8_t activityPageSize = 5;
+constexpr uint8_t lapsPageSize = 6;
 
 struct Model
 {
@@ -48,7 +50,8 @@ struct Model
     secure_protocol::ActivityTelemetry activities{};
     secure_protocol::Activity selectedActivity{};
     bool activityFromHome = false;
-    bool activityChartsVisible = false;
+    ActivityView activityView = ActivityView::Summary;
+    uint8_t lapOffset = 0;
     secure_protocol::GarminMetric selectedGarminMetric{};
     uint32_t garminMetricHistoryEnd = 0;
     uint32_t activityRevision = 0;

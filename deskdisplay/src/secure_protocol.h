@@ -24,6 +24,9 @@ constexpr size_t activityCountMax = 10;
 constexpr size_t activityMetricCount = 6;
 constexpr size_t activityChartCount = 3;
 constexpr size_t activityChartSamples = 24;
+constexpr size_t activityLapMax = 20;
+constexpr size_t activityLapSize = 10;
+constexpr size_t activityLapGroupSize = 3 + activityLapMax * activityLapSize;
 constexpr size_t activityRecordSize = 187;
 constexpr size_t garminGroupMax = 4;
 constexpr size_t garminMetricMax = 6;
@@ -36,6 +39,12 @@ constexpr size_t garminGroupSize = 21 + 1 + garminMetricMax * garminMetricSize;
 constexpr size_t garminPayloadSize = 6 + garminGroupMax * garminGroupSize;
 constexpr size_t garminFrameSize = 14 + garminPayloadSize;
 constexpr size_t garminScaleFrameSize = garminFrameSize + 4 + 4 * garminGroupMax * garminMetricMax;
+struct ActivityLap
+{
+    uint32_t seconds = 0;
+    uint32_t metres = 0;
+    uint16_t heartRate = 0;
+};
 struct Activity
 {
     char date[11] = {};
@@ -44,6 +53,9 @@ struct Activity
     char values[activityMetricCount][17] = {};
     bool chartsAvailable = false;
     int16_t charts[activityChartCount][activityChartSamples] = {};
+    uint16_t lapTotal = 0;
+    uint8_t lapCount = 0;
+    ActivityLap laps[activityLapMax]{};
 };
 struct ActivityTelemetry
 {
@@ -54,6 +66,11 @@ static_assert(offsetof(Activity, chartsAvailable) == activityRecordSize, "Unexpe
 constexpr size_t activityPayloadSize = 1 + activityCountMax * activityRecordSize;
 constexpr size_t activityFrameSize = 14 + activityPayloadSize;
 constexpr size_t activityChartFrameSize = activityFrameSize + activityCountMax * activityChartCount * activityChartSamples * 2;
+constexpr size_t activityLapFrameSize = activityChartFrameSize + activityCountMax * activityLapGroupSize;
+constexpr bool validActivityFrameSize(size_t length)
+{
+    return length == activityFrameSize || length == activityChartFrameSize || length == activityLapFrameSize;
+}
 constexpr uint8_t spotifyCommandType = 0x91;
 constexpr size_t spotifyTitleMax = 96;
 constexpr size_t spotifyDeviceMax = 48;
@@ -105,14 +122,14 @@ constexpr size_t otaChunkFrameSize = headerSize + otaChunkHeaderSize + otaChunkD
 constexpr size_t otaCompleteFrameSize = headerSize;
 constexpr size_t otaAckPayloadSize = 1 + 4;
 constexpr size_t otaAckFrameSize = headerSize + otaAckPayloadSize;
-constexpr size_t maxFrameSize = otaChunkFrameSize > clusterFrameSize
-                              ? otaChunkFrameSize : clusterFrameSize;
+constexpr size_t maxFrameSize = otaChunkFrameSize > activityLapFrameSize
+                              ? otaChunkFrameSize : activityLapFrameSize;
 static_assert(clusterFrameSize <= maxFrameSize, "Cluster frame exceeds receive buffer");
 static_assert(trainingFrameSize <= maxFrameSize, "Training frame exceeds receive buffer");
 static_assert(calendarFrameSize <= maxFrameSize, "Calendar frame exceeds receive buffer");
 static_assert(spotifyFrameSize <= maxFrameSize, "Spotify frame exceeds receive buffer");
 static_assert(garminScaleFrameSize <= maxFrameSize, "Garmin frame exceeds receive buffer");
-static_assert(activityChartFrameSize <= maxFrameSize, "Activity frame exceeds receive buffer");
+static_assert(activityLapFrameSize <= maxFrameSize, "Activity frame exceeds receive buffer");
 static_assert(otaChunkFrameSize <= maxFrameSize, "OTA frame exceeds receive buffer");
 constexpr int16_t temperatureUnavailable = INT16_MIN;
 
@@ -430,7 +447,7 @@ inline bool decodeTrainingTelemetry(const uint8_t* frame, size_t length, uint64_
 inline bool decodeActivityTelemetry(const uint8_t* frame, size_t length, uint64_t& sequence,
                                     ActivityTelemetry& value)
 {
-    if (!frame || (length != activityFrameSize && length != activityChartFrameSize)
+    if (!frame || !validActivityFrameSize(length)
         || frame[0] != magic0 || frame[1] != magic1
         || frame[2] != version || frame[3] != activityTelemetryType
         || get16(frame + 4) != length - 14 || frame[14] > activityCountMax) return false;
@@ -447,7 +464,7 @@ inline bool decodeActivityTelemetry(const uint8_t* frame, size_t length, uint64_
         if (item.date[10] || item.title[48] || item.kind[24]) return false;
         for (const auto& metric : item.values)
             if (metric[16]) return false;
-        if (length == activityChartFrameSize)
+        if (length >= activityChartFrameSize)
         {
             p = frame + activityFrameSize + index * activityChartCount * activityChartSamples * 2;
             for (auto& series : item.charts)
@@ -457,6 +474,21 @@ inline bool decodeActivityTelemetry(const uint8_t* frame, size_t length, uint64_
                     item.chartsAvailable |= sample != INT16_MIN;
                     p += 2;
                 }
+        }
+        if (length == activityLapFrameSize)
+        {
+            p = frame + activityChartFrameSize + index * activityLapGroupSize;
+            item.lapTotal = get16(p);
+            item.lapCount = p[2];
+            if (item.lapCount > activityLapMax || item.lapCount > item.lapTotal) return false;
+            p += 3;
+            for (size_t lap = 0; lap < item.lapCount; ++lap, p += activityLapSize)
+            {
+                item.laps[lap].seconds = get32(p);
+                item.laps[lap].metres = get32(p + 4);
+                item.laps[lap].heartRate = get16(p + 8);
+                if (item.laps[lap].heartRate > 255) return false;
+            }
         }
     }
     for (size_t index = value.count; index < activityCountMax; ++index)

@@ -11,7 +11,7 @@ from unittest.mock import Mock, patch
 from urllib.error import HTTPError
 
 from garmin import GarminProvider
-from garmin_api import GarminClient, GarminError, NoRedirect, read_cache, synchronize
+from garmin_api import GarminClient, GarminError, NoRedirect, _sync_activity_charts, read_cache, synchronize
 from integration_sync import write_json_atomic
 from app import _deskdisplay_state_lines
 from display_state import DashboardState
@@ -106,6 +106,23 @@ class GarminApiTests(unittest.TestCase):
         state = GarminProvider(path).snapshot()
         self.assertEqual(state["updated_at"], 0)
         self.assertIsNone(state["groups"][0]["metrics"][0]["history"][0])
+
+    def test_old_chart_cache_is_backfilled_without_losing_charts_on_failure(self):
+        client = Mock()
+        raw = {"activities": [{"activityId": 42}], "charts": {"42": {"series": [[145]]}}}
+        client.download_activity.side_effect = GarminError("temporarily unavailable")
+        _sync_activity_charts(client, raw, now=100)
+        self.assertEqual(raw["charts"]["42"]["series"], [[145]])
+        _sync_activity_charts(client, raw, now=101)
+        client.download_activity.assert_called_once_with(42)
+        client.download_activity.side_effect = None
+        with patch("garmin_api.decode_activity_file", return_value={
+            "series": [[146]], "lap_total": 1, "laps": [[300, 1000, 146]],
+        }):
+            _sync_activity_charts(client, raw, now=86501)
+            _sync_activity_charts(client, raw, now=86502)
+        self.assertEqual(raw["charts"]["42"]["laps"], [[300, 1000, 146]])
+        self.assertEqual(client.download_activity.call_count, 2)
 
     def test_cached_garmin_reaches_dashboard_and_compact_transport(self):
         path = self.cache / "garmin.json"

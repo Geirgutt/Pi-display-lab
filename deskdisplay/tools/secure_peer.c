@@ -89,7 +89,7 @@ static int ota_waiting_reconnect = 0;
 #define GARMIN_PAYLOAD_SIZE (6 + GARMIN_GROUP_MAX * GARMIN_GROUP_SIZE)
 #define GARMIN_FRAME_SIZE (FRAME_HEADER_SIZE + GARMIN_PAYLOAD_SIZE)
 #define GARMIN_SCALE_PAYLOAD_SIZE (GARMIN_PAYLOAD_SIZE + 4 + 4 * GARMIN_GROUP_MAX * GARMIN_METRIC_MAX)
-#define STATE_FRAME_MAX 4096
+#define STATE_FRAME_MAX 5400
 #define ACTIVITY_COUNT_MAX 10
 #define ACTIVITY_FIELD_COUNT 9
 #define ACTIVITY_RECORD_SIZE (11 + 49 + 25 + 6 * 17)
@@ -98,10 +98,15 @@ static int ota_waiting_reconnect = 0;
 #define ACTIVITY_CHART_COUNT 3
 #define ACTIVITY_CHART_SAMPLES 24
 #define ACTIVITY_CHART_PAYLOAD_SIZE (ACTIVITY_PAYLOAD_SIZE + ACTIVITY_COUNT_MAX * ACTIVITY_CHART_COUNT * ACTIVITY_CHART_SAMPLES * 2)
+#define ACTIVITY_LAP_MAX 20
+#define ACTIVITY_LAP_SIZE 10
+#define ACTIVITY_LAP_GROUP_SIZE (3 + ACTIVITY_LAP_MAX * ACTIVITY_LAP_SIZE)
+#define ACTIVITY_LAP_PAYLOAD_SIZE (ACTIVITY_CHART_PAYLOAD_SIZE + ACTIVITY_COUNT_MAX * ACTIVITY_LAP_GROUP_SIZE)
 static const size_t activity_fields[ACTIVITY_FIELD_COUNT] = {11, 49, 25, 17, 17, 17, 17, 17, 17};
 static const char activity_identity[] = "DeskDisplay-peer-activities";
 static const char chart_identity[] = "DeskDisplay-peer-charts";
-_Static_assert(FRAME_HEADER_SIZE + ACTIVITY_CHART_PAYLOAD_SIZE <= STATE_FRAME_MAX, "activity frame exceeds gateway buffer");
+static const char lap_identity[] = "DeskDisplay-peer-laps";
+_Static_assert(FRAME_HEADER_SIZE + ACTIVITY_LAP_PAYLOAD_SIZE <= STATE_FRAME_MAX, "activity frame exceeds gateway buffer");
 #define SPOTIFY_TITLE_MAX 96
 #define SPOTIFY_DEVICE_MAX 48
 #define SPOTIFY_PAYLOAD_SIZE (10 + 2 * (SPOTIFY_TITLE_MAX + 1) + SPOTIFY_DEVICE_MAX + 1)
@@ -195,6 +200,17 @@ struct garmin_state {
     uint32_t history_end;
 };
 
+struct activity_lap {
+    uint32_t seconds, metres;
+    uint16_t heart_rate;
+};
+
+struct activity_laps {
+    uint16_t total;
+    uint8_t count;
+    struct activity_lap items[ACTIVITY_LAP_MAX];
+};
+
 struct controller_state {
     struct cluster_state cluster;
     struct training_state training;
@@ -204,6 +220,7 @@ struct controller_state {
     uint8_t activity_count;
     unsigned char activities[ACTIVITY_COUNT_MAX][ACTIVITY_RECORD_SIZE];
     int16_t charts[ACTIVITY_COUNT_MAX][ACTIVITY_CHART_COUNT][ACTIVITY_CHART_SAMPLES];
+    struct activity_laps laps[ACTIVITY_COUNT_MAX];
 };
 
 static void stop_handler(int signal_number)
@@ -247,7 +264,7 @@ static unsigned int psk_callback(SSL* ssl, const char* identity,
 {
     (void)ssl;
     if (!identity || (strcmp(identity, "DeskDisplay-peer") && strcmp(identity, activity_identity)
-                      && strcmp(identity, chart_identity))
+                      && strcmp(identity, chart_identity) && strcmp(identity, lap_identity))
         || max_length < sizeof(psk)) return 0;
     memcpy(output, psk, sizeof(psk));
     return sizeof(psk);
@@ -343,7 +360,8 @@ static int fetch_controller_state(struct controller_state* result)
     char request[320];
     const int request_length = snprintf(request, sizeof(request),
                                         "GET %s HTTP/1.0\r\nHost: %s\r\n"
-                                        "X-DeskDisplay-Activities: 1\r\nX-DeskDisplay-Charts: 1\r\nConnection: close\r\n\r\n",
+                                        "X-DeskDisplay-Activities: 1\r\nX-DeskDisplay-Charts: 1\r\n"
+                                        "X-DeskDisplay-Laps: 1\r\nConnection: close\r\n\r\n",
                                         state_path, state_host);
     if (request_length <= 0 || (size_t)request_length >= sizeof(request) ||
         !send_socket_all(fd, request, (size_t)request_length))
@@ -525,6 +543,27 @@ static int fetch_controller_state(struct controller_state* result)
                 result->charts[result->activity_count - 1][index][sample] = (int16_t)value;
                 if (comma) number = comma + 1;
             }
+        }
+        else if (!strcmp(fields[0], "garmin_lap_total"))
+        {
+            unsigned long total;
+            if (!result->activity_count || field_count != 2
+                || !parse_unsigned(fields[1], UINT16_MAX, &total)) return 0;
+            struct activity_laps* laps = &result->laps[result->activity_count - 1];
+            if (laps->total || laps->count) return 0;
+            laps->total = (uint16_t)total;
+        }
+        else if (!strcmp(fields[0], "garmin_lap"))
+        {
+            unsigned long seconds, metres, heart_rate;
+            if (!result->activity_count || field_count != 4
+                || !parse_unsigned(fields[1], UINT32_MAX, &seconds)
+                || !parse_unsigned(fields[2], UINT32_MAX, &metres)
+                || !parse_unsigned(fields[3], UINT8_MAX, &heart_rate)) return 0;
+            struct activity_laps* laps = &result->laps[result->activity_count - 1];
+            if (laps->count >= ACTIVITY_LAP_MAX || laps->count >= laps->total) return 0;
+            laps->items[laps->count++] = (struct activity_lap){
+                (uint32_t)seconds, (uint32_t)metres, (uint16_t)heart_rate};
         }
         else if (!strcmp(fields[0], "spotify"))
         {
@@ -1099,9 +1138,10 @@ static size_t make_garmin_frame(unsigned char* frame, uint64_t sequence, int inv
 
 static struct controller_state latest_state = {0};
 
-static size_t make_activity_frame(unsigned char* frame, uint64_t sequence, int with_charts)
+static size_t make_activity_frame(unsigned char* frame, uint64_t sequence, int with_charts, int with_laps)
 {
-    const size_t payload = with_charts ? ACTIVITY_CHART_PAYLOAD_SIZE : ACTIVITY_PAYLOAD_SIZE;
+    const size_t payload = with_laps ? ACTIVITY_LAP_PAYLOAD_SIZE
+        : with_charts ? ACTIVITY_CHART_PAYLOAD_SIZE : ACTIVITY_PAYLOAD_SIZE;
     memset(frame, 0, FRAME_HEADER_SIZE + payload);
     frame[0] = 'D'; frame[1] = 'S'; frame[2] = 1; frame[3] = 7;
     put16(frame + 4, payload); put64(frame + 6, sequence);
@@ -1114,6 +1154,24 @@ static size_t make_activity_frame(unsigned char* frame, uint64_t sequence, int w
             for (size_t series = 0; series < ACTIVITY_CHART_COUNT; ++series)
                 for (size_t sample = 0; sample < ACTIVITY_CHART_SAMPLES; ++sample, p += 2)
                     put16(p, (uint16_t)latest_state.charts[record][series][sample]);
+    }
+    if (with_laps)
+    {
+        for (size_t record = 0; record < latest_state.activity_count; ++record)
+        {
+            const struct activity_laps* laps = &latest_state.laps[record];
+            unsigned char* group = frame + FRAME_HEADER_SIZE + ACTIVITY_CHART_PAYLOAD_SIZE
+                + record * ACTIVITY_LAP_GROUP_SIZE;
+            put16(group, laps->total);
+            group[2] = laps->count;
+            for (size_t index = 0; index < laps->count; ++index)
+            {
+                unsigned char* p = group + 3 + index * ACTIVITY_LAP_SIZE;
+                put32(p, laps->items[index].seconds);
+                put32(p + 4, laps->items[index].metres);
+                put16(p + 8, laps->items[index].heart_rate);
+            }
+        }
     }
     return FRAME_HEADER_SIZE + payload;
 }
@@ -1332,7 +1390,8 @@ int main(int argc, char** argv)
         uint64_t sequence = 1;
         uint64_t command_sequence = 0;
         const char* identity = SSL_get_psk_identity(ssl);
-        const int send_charts = identity && !strcmp(identity, chart_identity);
+        const int send_laps = identity && !strcmp(identity, lap_identity);
+        const int send_charts = send_laps || (identity && !strcmp(identity, chart_identity));
         const int send_activities = send_charts || (identity && !strcmp(identity, activity_identity));
         unsigned activity_round = 0;
         const struct timeval command_timeout = {.tv_sec = 2, .tv_usec = 0};
@@ -1355,7 +1414,7 @@ int main(int argc, char** argv)
                 if (!send_all(ssl, frame, spotify_length)) break;
                 if (send_activities && activity_round++ % 5 == 0)
                 {
-                    const size_t activity_length = make_activity_frame(frame, sequence++, send_charts);
+                    const size_t activity_length = make_activity_frame(frame, sequence++, send_charts, send_laps);
                     if (!send_all(ssl, frame, activity_length)) break;
                 }
             }

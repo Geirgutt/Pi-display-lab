@@ -22,6 +22,7 @@ from cluster_client import (
 from cluster_jobs import validate_monte_carlo, validate_prime_range, validate_slot_limit
 from config import AppConfig, load_config
 from display_state import DashboardState
+from garmin_charts import LAP_LIMIT
 from transports import BrowserTransport, Esp32Transport, TransportHub
 from updates import UpdateManager
 from spotify import COMMANDS
@@ -58,7 +59,8 @@ def _epoch(value: Any) -> int:
 
 
 def _deskdisplay_state_lines(payload: dict[str, Any], worker_hosts: tuple[str, ...],
-                             *, include_activities: bool = False, include_charts: bool = False) -> str:
+                             *, include_activities: bool = False, include_charts: bool = False,
+                             include_laps: bool = False) -> str:
     """Render compact controller state for the local DeskDisplay gateway."""
 
     nodes = list(payload.get("nodes") or [])
@@ -216,6 +218,15 @@ def _deskdisplay_state_lines(payload: dict[str, Any], worker_hosts: tuple[str, .
                         samples = ",".join(str(value) if type(value) is int and -32768 <= value <= 32767
                                            else "-32768" for value in series)
                         lines.append(f"garmin_chart\t{index}\t{samples}")
+            laps = activity.get("laps")
+            total = activity.get("lap_total")
+            if include_laps and isinstance(laps, list) and type(total) is int and 0 < total <= 65535:
+                lines.append(f"garmin_lap_total\t{total}")
+                for lap in laps[:min(total, LAP_LIMIT)]:
+                    if (isinstance(lap, list) and len(lap) == 3
+                        and all(type(value) is int and 0 <= value <= limit
+                                for value, limit in zip(lap, (0xFFFFFFFF, 0xFFFFFFFF, 255)))):
+                        lines.append("\t".join(("garmin_lap", *map(str, lap))))
     return "\n".join(lines) + "\n"
 
 
@@ -280,7 +291,8 @@ def create_app(
         return Response(
             _deskdisplay_state_lines(payload, settings.worker_hosts,
                                      include_activities=request.headers.get("X-DeskDisplay-Activities") == "1",
-                                     include_charts=request.headers.get("X-DeskDisplay-Charts") == "1"),
+                                     include_charts=request.headers.get("X-DeskDisplay-Charts") == "1",
+                                     include_laps=request.headers.get("X-DeskDisplay-Laps") == "1"),
             mimetype="text/plain",
             headers={"Cache-Control": "no-store"},
         )

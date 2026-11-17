@@ -23,6 +23,10 @@ class GarminChartTests(unittest.TestCase):
         except ImportError:
             self.skipTest("Garmin FIT SDK unavailable")
         encoder = Encoder()
+        encoder.on_mesg(Profile["mesg_num"]["LAP"], {
+            "total_timer_time": 300, "total_elapsed_time": 315,
+            "total_distance": 1000, "avg_heart_rate": 145,
+        })
         for seconds, heart_rate in [(1_160_000_000, 124), (1_160_000_100, 142)]:
             encoder.on_mesg(Profile["mesg_num"]["RECORD"], {
                 "timestamp": seconds, "heart_rate": heart_rate,
@@ -31,7 +35,10 @@ class GarminChartTests(unittest.TestCase):
         output = io.BytesIO()
         with zipfile.ZipFile(output, "w") as archive:
             archive.writestr("session.fit", encoder.close())
-        heart, pace, altitude = decode_activity_file(output.getvalue())
+        details = decode_activity_file(output.getvalue())
+        heart, pace, altitude = details["series"]
         self.assertEqual((heart[0], heart[-1]), (124, 142))
         self.assertEqual(pace[-1], 250)
         self.assertEqual(altitude[-1], 75)
+        self.assertEqual(details["lap_total"], 1)
+        self.assertEqual(details["laps"], [[300, 1000, 145]])

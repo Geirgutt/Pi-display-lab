@@ -230,12 +230,15 @@ def build_dashboard(raw: dict, *, today: date) -> dict:
     charts = _obj(raw.get("charts"))
     for day, item in valid_activities[:10]:
         kind = _title(_obj(item.get("activityType")).get("typeKey")).replace("_", " ")
+        details = _obj(charts.get(str(item.get("activityId"))))
         recent_activities.append({
             "date": day.isoformat(),
             "title": _title(item.get("activityName"))[:48] or kind[:48] or "Activity",
             "kind": kind[:24],
             "values": [metric["value"] for metric in _activity_metrics(item)],
-            "charts": _obj(charts.get(str(item.get("activityId")))).get("series", []),
+            "charts": details.get("series", []),
+            "lap_total": details.get("lap_total", 0),
+            "laps": details.get("laps", []),
         })
     return {"groups": [
         {"title": "Today", "metrics": today_group},

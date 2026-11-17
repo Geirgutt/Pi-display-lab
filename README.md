@@ -283,6 +283,8 @@ I en fullført aktivitet åpner **Charts** grafer for puls, tempo og høyde når
 aktivitetsfila inneholder målingene. Controlleren henter inntil to nye
 aktivitetsfiler per synkronisering, beholder grafpunktene lokalt og sender dem
 til displayet. Eldre økter fylles derfor inn etter hvert.
+**Laps** viser de første 20 registrerte rundene eller intervallene med
+rundetid, distanse, tempo og snittpuls der data finnes.
 Intensitetsminutter følger [Garmins vekting](https://support.garmin.com/en-GB/?faq=pNU9nnDzzGAHmEavp9rpY8),
 der minutter med høy intensitet teller dobbelt.
 

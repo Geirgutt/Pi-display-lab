@@ -13,6 +13,8 @@ constexpr uint16_t homeButtonOutline = 0x1082;
 constexpr uint16_t nightRed = 0xF800;
 constexpr uint16_t nightOutline = 0x3000;
 constexpr uint16_t nightPressed = 0x6000;
+constexpr uint16_t menuOutline = 0x7BEF;
+constexpr uint16_t nightMenuOutline = 0xA800;
 constexpr uint16_t background = 0x1082;
 constexpr uint16_t card = 0x18E3;
 constexpr uint16_t accent = 0x05BF;
@@ -118,7 +120,7 @@ void homeButton(uint8_t id, const char* caption, int16_t x, int16_t y,
                 const app_state::Model& model)
 {
     button(id, caption, x, y, ui_layout::pairedButtonWidth, model.pressedButton == id,
-           homeBackground, model.nightMode ? nightOutline : homeButtonOutline,
+           homeBackground, model.nightMode ? nightMenuOutline : menuOutline,
            model.nightMode ? nightRed : text, model.nightMode ? nightPressed : accent);
 }
 
@@ -857,12 +859,72 @@ void activityDetail(const app_state::Model& model)
 
 void activityDetailButtons(const app_state::Model& model)
 {
-    if (model.activityFromHome) button(61, "History", 12, 426, 132, model.pressedButton == 61);
-    else button(65, "Back", 12, 426, 132, model.pressedButton == 65);
+    if (model.activityFromHome) button(61, "History", 12, 426, 108, model.pressedButton == 61);
+    else button(65, "Back", 12, 426, 108, model.pressedButton == 65);
     if (model.selectedActivity.title[0])
-        button(67, model.activityChartsVisible ? "Summary" : "Charts", 174, 426, 132,
-               model.pressedButton == 67);
-    button(5, "Home", 336, 426, 132, model.pressedButton == 5);
+    {
+        button(67, model.activityView == app_state::ActivityView::Charts ? "Summary" : "Charts",
+               128, 426, 108, model.pressedButton == 67);
+        button(76, model.activityView == app_state::ActivityView::Laps ? "Summary" : "Laps",
+               244, 426, 108, model.pressedButton == 76);
+    }
+    button(5, "Home", 360, 426, 108, model.pressedButton == 5);
+}
+
+void lapNavigation(const app_state::Model& model)
+{
+    if (model.lapOffset) button(68, "<", 12, 376, 72, model.pressedButton == 68);
+    if (model.lapOffset + app_state::lapsPageSize < model.selectedActivity.lapCount)
+        button(69, ">", 396, 376, 72, model.pressedButton == 69);
+}
+
+void lapTime(uint64_t seconds, char* value, size_t capacity)
+{
+    if (seconds >= 3600)
+        snprintf(value, capacity, "%llu:%02llu:%02llu", static_cast<unsigned long long>(seconds / 3600),
+                 static_cast<unsigned long long>(seconds / 60 % 60),
+                 static_cast<unsigned long long>(seconds % 60));
+    else
+        snprintf(value, capacity, "%llu:%02llu", static_cast<unsigned long long>(seconds / 60),
+                 static_cast<unsigned long long>(seconds % 60));
+}
+
+void activityLaps(const app_state::Model& model)
+{
+    const auto& activity = model.selectedActivity;
+    if (!activity.lapCount)
+    {
+        label("No laps available yet", 24, 106);
+        return;
+    }
+    static const int16_t columns[] = {24, 66, 169, 266, 382, 458};
+    static const char* headings[] = {"#", "Time", "Dist km", "Pace min/km", "HR bpm"};
+    for (size_t i = 0; i < 5; ++i) label(headings[i], columns[i], 102, 1, muted);
+    for (uint8_t index = model.lapOffset;
+         index < activity.lapCount && index < model.lapOffset + app_state::lapsPageSize; ++index)
+    {
+        const int16_t y = 124 + (index - model.lapOffset) * 40;
+        const auto& lap = activity.laps[index];
+        char cells[5][20] = {{}, "--", "--", "--", "--"};
+        snprintf(cells[0], sizeof(cells[0]), "%u", index + 1);
+        if (lap.seconds) lapTime(lap.seconds, cells[1], sizeof(cells[1]));
+        if (lap.metres) snprintf(cells[2], sizeof(cells[2]), "%.2f", lap.metres / 1000.0);
+        if (lap.seconds && lap.metres)
+            lapTime((uint64_t(lap.seconds) * 1000 + lap.metres / 2) / lap.metres,
+                    cells[3], sizeof(cells[3]));
+        if (lap.heartRate) snprintf(cells[4], sizeof(cells[4]), "%u", lap.heartRate);
+        display().fillRoundRect(12, y, 456, 34, 5, card);
+        display().setTextColor(text, card);
+        display().setTextSize(2);
+        for (size_t i = 0; i < 5; ++i)
+            clippedText(cells[i], columns[i], y + 8, columns[i + 1] - columns[i] - 5);
+    }
+    char position[48];
+    const unsigned pageEnd = model.lapOffset + app_state::lapsPageSize;
+    const unsigned end = pageEnd < activity.lapCount ? pageEnd : activity.lapCount;
+    snprintf(position, sizeof(position), "Laps %u-%u of %u", model.lapOffset + 1, end, activity.lapTotal);
+    label(position, 161, 392, 1, muted);
+    lapNavigation(model);
 }
 
 bool chartBounds(const int16_t* samples, size_t count, int16_t& low, int16_t& high)
@@ -1167,8 +1229,9 @@ void ui::page(const app_state::Model& model)
     }
     else if (model.page == app_state::Page::ActivityDetail)
     {
-        header("Activity");
-        if (model.activityChartsVisible) activityCharts(model);
+        header(model.activityView == app_state::ActivityView::Laps ? "Laps / intervals" : "Activity");
+        if (model.activityView == app_state::ActivityView::Laps) activityLaps(model);
+        else if (model.activityView == app_state::ActivityView::Charts) activityCharts(model);
         else activityDetail(model);
         activityDetailButtons(model);
     }
@@ -1295,7 +1358,11 @@ void ui::pressed(const app_state::Model& model)
         garminButtons(model);
     }
     else if (model.page == app_state::Page::ActivityHistory) activityHistory(model, true);
-    else if (model.page == app_state::Page::ActivityDetail) activityDetailButtons(model);
+    else if (model.page == app_state::Page::ActivityDetail)
+    {
+        activityDetailButtons(model);
+        if (model.activityView == app_state::ActivityView::Laps) lapNavigation(model);
+    }
     else if (model.page == app_state::Page::GarminMetricDetail) garminMetricButtons(model);
     else if (model.page == app_state::Page::Spotify)
     {

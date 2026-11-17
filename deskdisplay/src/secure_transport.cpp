@@ -19,7 +19,7 @@
 
 namespace
 {
-constexpr const char* identities[] = {"DeskDisplay-peer-charts", "DeskDisplay-peer-activities",
+constexpr const char* identities[] = {"DeskDisplay-peer-laps", "DeskDisplay-peer-charts", "DeskDisplay-peer-activities",
                                       "DeskDisplay-peer"};
 constexpr char preferenceNamespace[] = "dd-secure";
 constexpr uint16_t defaultPort = 4567;
@@ -296,8 +296,7 @@ size_t expectedFrameSize()
         if (frame[3] == secure_protocol::activityTelemetryType)
         {
             const size_t length = secure_protocol::headerSize + payloadLength;
-            return length == secure_protocol::activityFrameSize || length == secure_protocol::activityChartFrameSize
-                ? length : 0;
+            return secure_protocol::validActivityFrameSize(length) ? length : 0;
         }
         return frame[3] == secure_protocol::telemetryType ? secure_protocol::frameSize : 0;
     }
@@ -569,7 +568,7 @@ void secure_transport::service()
         return;
     }
     sessionActive = true;
-    if (identityIndex == 2) latestActivities.count = 0;
+    if (identityIndex == sizeof(identities) / sizeof(identities[0]) - 1) latestActivities.count = 0;
     reconnectDelayMs = initialReconnectMs;
     client.useSessionTimeout(sessionTimeoutSeconds);
     lastRx = millis();
