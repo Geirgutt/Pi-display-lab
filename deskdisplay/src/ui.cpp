@@ -1090,7 +1090,8 @@ void garminMetricButtons(const app_state::Model& model)
 void garminTelemetry(const app_state::Model& model, bool force = false)
 {
     const auto& state = model.garminTelemetry;
-    const uint8_t page = state.count ? model.selectedGarmin % state.count : 0;
+    const uint8_t pages = model.garminPageCount();
+    const uint8_t page = model.garminPage();
     const time_t now = time(nullptr);
     const uint32_t age = model.timeValid && state.updatedAt && now >= state.updatedAt
         ? static_cast<uint32_t>(now - state.updatedAt) / 60 : UINT32_MAX;
@@ -1108,20 +1109,23 @@ void garminTelemetry(const app_state::Model& model, bool force = false)
         snprintf(status, sizeof(status), "Synced %lu min ago - charts: last 7 days", (unsigned long)age);
     else snprintf(status, sizeof(status), "%s", statuses[state.status <= 4 ? state.status : 4]);
     label(status, 16, 68, 1, state.status == 1 ? muted : warning);
-    if (!state.count)
+    if (!pages)
     {
         label("No Garmin measurements yet", 28, 150, 2, muted);
         label("Configure Garmin in the terminal menu.", 28, 190, 1, muted);
         label("Upcoming workouts use the calendar feed.", 28, 214, 1, muted);
         return;
     }
-    const auto& group = state.groups[page];
+    const char* title = "Garmin";
+    model.garminCard(0, &title);
     char heading[48];
-    snprintf(heading, sizeof(heading), "%s  %u/%u", group.title, page + 1, state.count);
+    snprintf(heading, sizeof(heading), "%s  %u/%u", title, page + 1, pages);
     label(heading, 16, 92, 2);
-    for (uint8_t index = 0; index < group.count; ++index)
+    for (uint8_t index = 0; index < secure_protocol::garminMetricMax; ++index)
     {
-        const auto& metric = group.metrics[index];
+        const auto* cardMetric = model.garminCard(index);
+        if (!cardMetric) break;
+        const auto& metric = *cardMetric;
         const int16_t x = ui_layout::garminMetricX(index);
         const int16_t y = ui_layout::garminMetricY(index);
         display().fillRoundRect(x, y, ui_layout::garminMetricWidth, ui_layout::garminMetricHeight, 8, card);

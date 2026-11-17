@@ -23,6 +23,7 @@ navigation_gesture::Tracker gesture;
 app_state::Page touchPage = app_state::Page::Home;
 bool touchCancelled = false;
 uint32_t pressedActivityRevision = 0;
+bool activityDetailNeedsRedraw = false;
 bool alarmActive = false;
 bool alarmLit = false;
 uint32_t alarmStartedAt = 0;
@@ -148,6 +149,25 @@ void refreshState()
             model.activities = activities;
             if (activities.count <= app_state::activityPageSize) model.activityPage = 0;
             ++model.activityRevision;
+            if (model.page == app_state::Page::ActivityDetail)
+            {
+                auto& selected = model.selectedActivity;
+                for (uint8_t i = 0; i < activities.count; ++i)
+                {
+                    const auto& candidate = activities.items[i];
+                    const bool sameActivity = strcmp(selected.date, candidate.date) == 0
+                        && strcmp(selected.title, candidate.title) == 0
+                        && strcmp(selected.kind, candidate.kind) == 0
+                        && memcmp(selected.values, candidate.values, sizeof(selected.values)) == 0;
+                    if (sameActivity || (!selected.title[0] && model.activityFromHome && i == 0))
+                    {
+                        activityDetailNeedsRedraw = memcmp(&selected, &candidate, sizeof(selected)) != 0;
+                        selected = candidate;
+                        if (model.lapOffset >= selected.lapCount) model.lapOffset = 0;
+                        break;
+                    }
+                }
+            }
         }
         model.nodeAccepted = secureStats.accepted;
     }
@@ -206,17 +226,12 @@ uint8_t hit(int16_t x, int16_t y)
     }
     else if (model.page == app_state::Page::Garmin)
     {
-        const auto& state = model.garminTelemetry;
-        if (state.count)
+        for (uint8_t i = 0; i < secure_protocol::garminMetricMax && model.garminCard(i); ++i)
         {
-            const auto& group = state.groups[model.selectedGarmin % state.count];
-            for (uint8_t i = 0; i < group.count; ++i)
-            {
-                const int16_t left = ui_layout::garminMetricX(i);
-                const int16_t top = ui_layout::garminMetricY(i);
-                if (x >= left && x < left + ui_layout::garminMetricWidth
-                    && y >= top && y < top + ui_layout::garminMetricHeight) return 80 + i;
-            }
+            const int16_t left = ui_layout::garminMetricX(i);
+            const int16_t top = ui_layout::garminMetricY(i);
+            if (x >= left && x < left + ui_layout::garminMetricWidth
+                && y >= top && y < top + ui_layout::garminMetricHeight) return 80 + i;
         }
         if (inside(x, y, 12, 426, 52)) return 59;
         if (inside(x, y, 72, 426, 52)) return 60;
@@ -353,11 +368,9 @@ void action(uint8_t button)
         && button < 80 + secure_protocol::garminMetricMax)
     {
         const auto& state = model.garminTelemetry;
-        if (!state.count) return;
-        const auto& group = state.groups[model.selectedGarmin % state.count];
-        const uint8_t index = button - 80;
-        if (index >= group.count) return;
-        model.selectedGarminMetric = group.metrics[index];
+        const auto* metric = model.garminCard(button - 80);
+        if (!metric) return;
+        model.selectedGarminMetric = *metric;
         model.garminMetricHistoryEnd = state.historyEnd;
         model.page = app_state::Page::GarminMetricDetail;
         ui::page(model);
@@ -379,7 +392,7 @@ void action(uint8_t button)
     }
     if (model.page == app_state::Page::Garmin && (button == 59 || button == 60))
     {
-        const uint8_t count = model.garminTelemetry.count;
+        const uint8_t count = model.garminPageCount();
         if (count) model.selectedGarmin = static_cast<uint8_t>(
             (model.selectedGarmin + (button == 59 ? count - 1 : 1)) % count);
         model.pressedButton = 0;
@@ -652,7 +665,13 @@ void app::service()
         nextTelemetry = now + 1000;
         refreshState();
         checkAlarm();
-        if (!alarmActive) ui::telemetry(model);
+        if (!alarmActive)
+        {
+            if (activityDetailNeedsRedraw && model.page == app_state::Page::ActivityDetail)
+                ui::page(model);
+            else ui::telemetry(model);
+        }
+        activityDetailNeedsRedraw = false;
     }
     // checkAlarm() may have started the alarm after the telemetry timestamp.
     // Use a fresh time so unsigned elapsed arithmetic cannot underflow.

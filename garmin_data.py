@@ -6,6 +6,8 @@ import math
 from datetime import date, datetime, timedelta
 from typing import Any
 
+from garmin_charts import activity_download_id
+
 
 def _obj(value: Any) -> dict[str, Any]:
     return value if isinstance(value, dict) else {}
@@ -230,7 +232,7 @@ def build_dashboard(raw: dict, *, today: date) -> dict:
     charts = _obj(raw.get("charts"))
     for day, item in valid_activities[:10]:
         kind = _title(_obj(item.get("activityType")).get("typeKey")).replace("_", " ")
-        details = _obj(charts.get(str(item.get("activityId"))))
+        details = _obj(charts.get(str(activity_download_id(item.get("activityId")))))
         recent_activities.append({
             "date": day.isoformat(),
             "title": _title(item.get("activityName"))[:48] or kind[:48] or "Activity",

@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import io
 import math
+import xml.etree.ElementTree as ET
 import zipfile
 
 SAMPLES = 24
@@ -10,6 +11,13 @@ MISSING = -32768
 MAX_FIT_BYTES = 8 * 1024 * 1024
 LAP_LIMIT = 20
 ROUTE_LIMIT = 80
+ROUTE_FORMAT = 2
+
+
+def activity_download_id(value) -> int | None:
+    if isinstance(value, str) and 1 <= len(value) <= 19 and value.isascii() and value.isdecimal():
+        value = int(value)
+    return value if type(value) is int and 0 < value < 2**63 else None
 
 
 def _finite(value):
@@ -94,20 +102,9 @@ def summarize_laps(records: list[dict]) -> tuple[int, list[list[int]]]:
     return min(len(laps), 65535), laps[:LAP_LIMIT]
 
 
-def decode_activity_file(data: bytes) -> dict:
+def _decode_fit(data: bytes) -> dict:
     from garmin_fit_sdk import Decoder, Stream
 
-    if data[:4] == b"PK\x03\x04":
-        with zipfile.ZipFile(io.BytesIO(data)) as archive:
-            member = next((item for item in archive.infolist()
-                           if not item.is_dir() and item.filename.lower().endswith(".fit")
-                           and item.file_size <= MAX_FIT_BYTES), None)
-            if member is None:
-                return {}
-            with archive.open(member) as handle:
-                data = handle.read(MAX_FIT_BYTES + 1)
-    if len(data) > MAX_FIT_BYTES:
-        return {}
     messages, errors = Decoder(Stream.from_byte_array(bytearray(data))).read(
         convert_datetimes_to_dates=False)
     if errors:
@@ -116,3 +113,57 @@ def decode_activity_file(data: bytes) -> dict:
     records = messages.get("record_mesgs", [])
     return {"series": summarize_records(records), "route": summarize_route(records),
             "lap_total": total, "laps": laps}
+
+
+def _decode_xml_route(data: bytes) -> dict:
+    try:
+        root = ET.fromstring(data)
+    except ET.ParseError:
+        return {}
+    kind = root.tag.rsplit("}", 1)[-1]
+    if kind not in {"gpx", "TrainingCenterDatabase"}:
+        return {}
+    positions = []
+    for point in root.iter():
+        tag = point.tag.rsplit("}", 1)[-1]
+        if kind == "gpx" and tag == "trkpt":
+            lat, lon = point.get("lat"), point.get("lon")
+        elif kind == "TrainingCenterDatabase" and tag == "Position":
+            lat = point.findtext("{*}LatitudeDegrees")
+            lon = point.findtext("{*}LongitudeDegrees")
+        else:
+            continue
+        try:
+            lat, lon = float(lat), float(lon)
+        except (TypeError, ValueError):
+            continue
+        if -90 <= lat <= 90 and -180 <= lon <= 180:
+            semicircle_lon = (round(lon * 2**31 / 180) + 2**31) % 2**32 - 2**31
+            positions.append({"position_lat": round(lat * 2**31 / 180),
+                              "position_long": semicircle_lon})
+    return {"route": summarize_route(positions)}
+
+
+def decode_activity_file(data: bytes) -> dict:
+    if len(data) > MAX_FIT_BYTES:
+        return {}
+    if data[:4] != b"PK\x03\x04":
+        return _decode_fit(data) if data[8:12] == b".FIT" else _decode_xml_route(data)
+    with zipfile.ZipFile(io.BytesIO(data)) as archive:
+        details: dict = {}
+        for extension in (".fit", ".gpx", ".tcx"):
+            member = next((item for item in archive.infolist()
+                           if not item.is_dir() and item.filename.lower().endswith(extension)
+                           and item.file_size <= MAX_FIT_BYTES), None)
+            if member is None:
+                continue
+            with archive.open(member) as handle:
+                contents = handle.read(MAX_FIT_BYTES + 1)
+            if len(contents) > MAX_FIT_BYTES:
+                continue
+            result = _decode_fit(contents) if extension == ".fit" else _decode_xml_route(contents)
+            if result:
+                details.update(result)
+                if details.get("route"):
+                    break
+        return details

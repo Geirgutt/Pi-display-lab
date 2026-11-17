@@ -109,7 +109,8 @@ class GarminApiTests(unittest.TestCase):
 
     def test_old_chart_cache_is_backfilled_without_losing_charts_on_failure(self):
         client = Mock()
-        raw = {"activities": [{"activityId": 42}], "charts": {"42": {"series": [[145]]}}}
+        raw = {"activities": [{"activityId": "42"}],
+               "charts": {"42": {"series": [[145]], "route": [], "media_retry": True, "checked": 99}}}
         client.download_activity.side_effect = GarminError("temporarily unavailable")
         _sync_activity_charts(client, raw, now=100)
         self.assertEqual(raw["charts"]["42"]["series"], [[145]])

@@ -20,7 +20,7 @@ from urllib.parse import urlencode
 from urllib.request import Request, HTTPRedirectHandler, build_opener
 
 from integration_sync import write_json_atomic
-from garmin_charts import MAX_FIT_BYTES, decode_activity_file
+from garmin_charts import MAX_FIT_BYTES, ROUTE_FORMAT, activity_download_id, decode_activity_file
 
 BASE_URL = "https://personal.connectapi.garmin.com"
 TOKEN_PATH = "/personalapitoken-service/personal-api/personal-api-key/token"
@@ -60,9 +60,11 @@ class GarminClient:
 
     def _request(self, path: str, authorization: str, *, post=False, download=False) -> bytes:
         limit = MAX_FIT_BYTES if download else MAX_RESPONSE
+        accept = "application/zip, application/x-zip-compressed, application/octet-stream" if download else (
+            "*/*" if post else "application/json")
         request = Request(BASE_URL + path, data=b"" if post else None,
                           headers={"Authorization": authorization,
-                                   "Accept": "*/*" if post or download else "application/json"},
+                                   "Accept": accept},
                           method="POST" if post else "GET")
         try:
             with self.opener.open(request, timeout=15) as reply:
@@ -146,9 +148,8 @@ def _sync_activity_charts(client: GarminClient, raw: dict, now: int) -> int:
         return 0
     ordered = sorted((item for item in activities if isinstance(item, dict)),
                      key=lambda item: str(item.get("startTimeLocal") or ""), reverse=True)
-    ids = [item.get("activityId") for item in ordered]
-    ids = list(dict.fromkeys(value for value in ids
-                             if type(value) is int and 0 < value < 2**63))[:10]
+    ids = [activity_download_id(item.get("activityId")) for item in ordered]
+    ids = list(dict.fromkeys(value for value in ids if value is not None))[:10]
     old = raw.get("charts")
     old = old if isinstance(old, dict) else {}
     charts = {str(value): old[str(value)] for value in ids if isinstance(old.get(str(value)), dict)}
@@ -158,22 +159,31 @@ def _sync_activity_charts(client: GarminClient, raw: dict, now: int) -> int:
         key = str(activity_id)
         cached = charts.get(key, {})
         checked = cached.get("checked")
-        if "route" in cached or (cached.get("media_retry") and type(checked) is int
-                                and 0 <= now - checked < 86400):
+        if cached.get("route") or (cached.get("route_format") == ROUTE_FORMAT and (
+            not cached.get("media_retry") or (type(checked) is int and 0 <= now - checked < 86400)
+        )):
             continue
         attempted += 1
+        media_error = None
         try:
             details = decode_activity_file(client.download_activity(activity_id))
+            if not details:
+                media_error = "unreadable_file"
         except GarminError as error:
+            media_error = f"http_{error.status}" if error.status else "connection_or_file_size"
             if error.status in (401, 429):
+                charts[key] = {**cached, "media_error": media_error}
                 return now + (error.retry_after or 900)
             if error.status == 403:
-                charts[key] = {**cached, "checked": now, "media_retry": True}
+                charts[key] = {**cached, "checked": now, "media_retry": True,
+                               "route_format": ROUTE_FORMAT, "media_error": media_error}
                 break
             details = {}
         except (ImportError, OSError, ValueError, RuntimeError, zipfile.BadZipFile):
             details = {}
-        charts[key] = {**cached, **details, "checked": now, "media_retry": not details}
+            media_error = "unreadable_file"
+        charts[key] = {**cached, **details, "checked": now, "media_retry": not details,
+                       "route_format": ROUTE_FORMAT, "media_error": media_error}
         if attempted == 2:
             break
     return 0

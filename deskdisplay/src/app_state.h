@@ -61,6 +61,33 @@ struct Model
     {
         return activityPage && activities.count > activityPageSize ? activityPageSize : 0;
     }
+    uint8_t garminPageCount() const
+    {
+        uint8_t cards = 0;
+        for (uint8_t i = 0; i < garminTelemetry.count; ++i)
+            cards += garminTelemetry.groups[i].count;
+        return (cards + secure_protocol::garminMetricMax - 1) / secure_protocol::garminMetricMax;
+    }
+    uint8_t garminPage() const
+    {
+        const uint8_t pages = garminPageCount();
+        return pages ? selectedGarmin % pages : 0;
+    }
+    const secure_protocol::GarminMetric* garminCard(uint8_t slot, const char** groupTitle = nullptr) const
+    {
+        uint8_t index = garminPage() * secure_protocol::garminMetricMax + slot;
+        for (uint8_t i = 0; i < garminTelemetry.count; ++i)
+        {
+            const auto& group = garminTelemetry.groups[i];
+            if (index < group.count)
+            {
+                if (groupTitle) *groupTitle = group.title;
+                return &group.metrics[index];
+            }
+            index -= group.count;
+        }
+        return nullptr;
+    }
     bool spotifyConnected = false;
     bool garminConnected = false;
     uint32_t nodeLastUpdate = 0;

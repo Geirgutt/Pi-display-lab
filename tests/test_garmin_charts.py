@@ -25,6 +25,16 @@ class GarminChartTests(unittest.TestCase):
         self.assertEqual(route, [[0, 180], [240, 60]])
         self.assertEqual(summarize_route([{"position_lat": 0, "position_long": 2**31 - 1}]), [])
 
+    def test_download_with_gpx_or_tcx_recovers_a_route(self):
+        gpx = b'<gpx xmlns="http://www.topografix.com/GPX/1/1"><trk><trkseg><trkpt lat="59" lon="10"/>\n<trkpt lat="59.001" lon="10"/></trkseg></trk></gpx>'
+        tcx = b'<TrainingCenterDatabase xmlns="http://www.garmin.com/xmlschemas/TrainingCenterDatabase/v2"><Track><Trackpoint><Position><LatitudeDegrees>59</LatitudeDegrees><LongitudeDegrees>10</LongitudeDegrees></Position></Trackpoint><Trackpoint><Position><LatitudeDegrees>59.001</LatitudeDegrees><LongitudeDegrees>10</LongitudeDegrees></Position></Trackpoint></Track></TrainingCenterDatabase>'
+        for name, contents in (("track.gpx", gpx), ("track.tcx", tcx)):
+            with self.subTest(name=name):
+                output = io.BytesIO()
+                with zipfile.ZipFile(output, "w") as archive:
+                    archive.writestr(name, contents)
+                self.assertEqual(decode_activity_file(output.getvalue())["route"], [[120, 240], [120, 0]])
+
     def test_decodes_fit_inside_garmin_download(self):
         try:
             from garmin_fit_sdk import Encoder, Profile
