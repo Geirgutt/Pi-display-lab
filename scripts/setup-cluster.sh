@@ -29,4 +29,4 @@ sudo_session_start
 platform_install_packages
 platform_setup_ansible
 cd "$PROJECT_DIR"
-PI_DISPLAY_SETUP_READY=1 python3 scripts/setup-cluster.py
+PI_DISPLAY_SETUP_READY=1 python3 scripts/setup-cluster.py "$@"

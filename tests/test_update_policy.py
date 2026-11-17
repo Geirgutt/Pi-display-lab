@@ -6,6 +6,9 @@ from update_policy import classify_paths
 
 
 class UpdatePolicyTests(unittest.TestCase):
+    def test_terminal_menu_update_does_not_redeploy_workers(self) -> None:
+        self.assertEqual(classify_paths(("meny.py", "README.md", "tests/test_menu.py")), ("controller", False, ()))
+
     def test_maintenance_tools_only_update_controller(self) -> None:
         paths = (
             "cluster_maintenance.py", "maintenance_output.py",

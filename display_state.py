@@ -17,6 +17,7 @@ from typing import Any
 
 from calendar_data import CalendarProvider, load_calendar_provider
 from training import TrainingProvider, load_training_provider
+from spotify import SpotifyProvider
 
 def decode_throttle_flags(flags: int, available: bool = True) -> dict[str, Any]:
     """Gjør Raspberry Pi-bitfeltet lesbart for API og grensesnitt."""
@@ -354,11 +355,13 @@ class DashboardState:
         mock_mode: bool = False,
         training_provider: TrainingProvider | None = None,
         calendar_provider: CalendarProvider | None = None,
+        spotify_provider: SpotifyProvider | None = None,
     ) -> None:
         self.monitor = SystemMonitor(mock_mode=mock_mode)
         self.nodes = NodeRegistry()
         self.training_provider = training_provider or load_training_provider(mock_mode)
         self.calendar_provider = calendar_provider or load_calendar_provider(mock_mode)
+        self.spotify_provider = spotify_provider or SpotifyProvider(mock=mock_mode)
         self.mock_mode = mock_mode
         self._screen = "home"
         self._lock = threading.Lock()
@@ -495,6 +498,7 @@ class DashboardState:
             },
             "training": self.training_provider.snapshot(),
             "calendar": self.calendar_provider.snapshot(),
+            "spotify": self.spotify_provider.snapshot(),
             "message": message,
             "mock_mode": self.mock_mode,
             "backend": f"Python {sys.version_info.major}.{sys.version_info.minor}",

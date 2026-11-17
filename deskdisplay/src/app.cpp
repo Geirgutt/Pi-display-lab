@@ -139,9 +139,12 @@ void refreshState()
         model.clusterTelemetry = secure_transport::lastClusterTelemetry();
         model.trainingTelemetry = secure_transport::lastTrainingTelemetry();
         model.calendarTelemetry = secure_transport::lastCalendarTelemetry();
+        model.spotifyTelemetry = secure_transport::lastSpotifyTelemetry();
         model.nodeAccepted = secureStats.accepted;
     }
     model.nodeLastUpdate = secure_transport::lastTelemetryAt();
+    model.spotifyConnected = secure_transport::connected() && model.nodeLastUpdate != 0
+                          && uint32_t(millis() - model.nodeLastUpdate) < 5000;
     model.nodeOnline = model.nodeLastUpdate != 0
                     && uint32_t(millis() - model.nodeLastUpdate) < 5000
                     && model.nodeTelemetry.online;
@@ -177,6 +180,7 @@ uint8_t hit(int16_t x, int16_t y)
     }
     else if (model.page == app_state::Page::Menu)
     {
+        if (inside(x, y, ui_layout::leftButtonX, 364, ui_layout::pairedButtonWidth)) return 54;
         if (inside(x, y, ui_layout::leftButtonX, ui_layout::menuFirstRowY,
                    ui_layout::pairedButtonWidth)) return 1;
         if (inside(x, y, ui_layout::rightButtonX, ui_layout::menuFirstRowY,
@@ -189,6 +193,16 @@ uint8_t hit(int16_t x, int16_t y)
                    ui_layout::pairedButtonWidth)) return 4;
         if (inside(x, y, ui_layout::rightButtonX, ui_layout::menuThirdRowY,
                    ui_layout::pairedButtonWidth)) return 5;
+    }
+    else if (model.page == app_state::Page::Spotify)
+    {
+        if (inside(x, y, ui_layout::singleButtonX, ui_layout::singleButtonY,
+                   ui_layout::singleButtonWidth)) return 5;
+        if (!model.spotifyConnected || (model.spotifyTelemetry.capabilities & 8)) return 0;
+        const uint8_t flags = model.spotifyTelemetry.capabilities;
+        if ((flags & 4) && inside(x, y, 20, 324, 132)) return 55;
+        if ((flags & 1) && inside(x, y, 174, 324, 132)) return 56;
+        if ((flags & 2) && inside(x, y, 328, 324, 132)) return 57;
     }
     else if (model.page == app_state::Page::System)
     {
@@ -269,6 +283,15 @@ uint8_t hit(int16_t x, int16_t y)
 
 void action(uint8_t button)
 {
+    if (model.page == app_state::Page::Spotify && button >= 55 && button <= 57)
+    {
+        const uint8_t command = button == 55 ? 4 : button == 57 ? 3
+                              : model.spotifyTelemetry.status == 1 ? 2 : 1;
+        secure_transport::spotifyCommand(command);
+        model.pressedButton = 0;
+        ui::pressed(model);
+        return;
+    }
     if (model.page == app_state::Page::AlarmNumber)
     {
         model.pressedButton = 0;
@@ -300,6 +323,7 @@ void action(uint8_t button)
     }
     switch (button)
     {
+    case 54: model.page = app_state::Page::Spotify; model.pressedButton = 0; ui::page(model); break;
     case 1: model.page = app_state::Page::Cluster; model.pressedButton = 0; ui::page(model); break;
     case 2: model.page = app_state::Page::Training; model.pressedButton = 0; ui::page(model); break;
     case 3: model.page = app_state::Page::Calendar; model.pressedButton = 0; ui::page(model); break;

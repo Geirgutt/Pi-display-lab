@@ -30,6 +30,9 @@ secure_protocol::TrainingTelemetry lastTraining{};
 secure_protocol::CalendarTelemetry lastCalendar{};
 bool trainingDrawn = false;
 bool calendarDrawn = false;
+secure_protocol::SpotifyTelemetry lastSpotify{};
+bool spotifyDrawn = false;
+bool lastSpotifyConnected = false;
 struct HomeSummary
 {
     char heading[64] = {};
@@ -143,6 +146,7 @@ void homeNavigation(const app_state::Model& model)
 
 void menuButtons(const app_state::Model& model)
 {
+    homeButton(54, "Spotify", ui_layout::leftButtonX, 364, model);
     homeButton(1, "Cluster", ui_layout::leftButtonX, ui_layout::menuFirstRowY, model);
     homeButton(2, "Training", ui_layout::rightButtonX, ui_layout::menuFirstRowY, model);
     homeButton(3, "Calendar", ui_layout::leftButtonX, ui_layout::menuSecondRowY, model);
@@ -764,6 +768,61 @@ void calendarTelemetry(const app_state::Model& model, bool force = false)
 }
 }
 
+namespace
+{
+void spotifyLine(const char* value, int16_t y, uint16_t color = text)
+{
+    char line[200];
+    copyDisplayText(value, line, sizeof(line));
+    display().setTextSize(2);
+    size_t length = strlen(line);
+    while (length && display().textWidth(line) > 428) line[--length] = 0;
+    label(line, 26, y, 2, color);
+}
+
+void spotifyTelemetry(const app_state::Model& model, bool force = false)
+{
+    const auto& state = model.spotifyTelemetry;
+    if (!force && spotifyDrawn && lastSpotifyConnected == model.spotifyConnected
+        && memcmp(&lastSpotify, &state, sizeof(state)) == 0) return;
+    spotifyDrawn = true;
+    lastSpotify = state;
+    lastSpotifyConnected = model.spotifyConnected;
+    display().fillRect(12, 68, 456, 340, background);
+    const char* statuses[] = {"Not connected to Spotify", "Playing", "Paused",
+        "Start Spotify on a device", "Reconnect Spotify on the Pi",
+        "Spotify access denied", "Spotify request limit; waiting", "Spotify unavailable"};
+    spotifyLine(model.spotifyConnected ? (state.capabilities & 8 ? "Updating playback..."
+                                      : statuses[state.status <= 7 ? state.status : 7])
+                                      : "Controller disconnected", 88, good);
+    if (model.spotifyConnected && (state.status == 1 || state.status == 2))
+    {
+        spotifyLine(state.title, 144);
+        spotifyLine(state.artist, 184, muted);
+        spotifyLine(state.device, 230, muted);
+        char progress[32];
+        const uint32_t elapsed = state.progressMs / 1000;
+        const uint32_t duration = state.durationMs / 1000;
+        snprintf(progress, sizeof(progress), "%lu:%02lu / %lu:%02lu",
+                 static_cast<unsigned long>(elapsed / 60), static_cast<unsigned long>(elapsed % 60),
+                 static_cast<unsigned long>(duration / 60), static_cast<unsigned long>(duration % 60));
+        label(progress, 26, 274, 2, muted);
+    }
+    else if (model.spotifyConnected && (state.status == 0 || state.status == 4))
+    {
+        label("Run configure-spotify.py on the Pi", 26, 160, 2, muted);
+        label("Approve access in your browser", 26, 200, 2, muted);
+    }
+    const uint8_t flags = model.spotifyConnected && !(state.capabilities & 8) ? state.capabilities : 0;
+    button(55, "Previous", 20, 324, 132, model.pressedButton == 55,
+           card, flags & 4 ? good : muted, flags & 4 ? text : muted);
+    button(56, state.status == 1 ? "Pause" : "Play", 174, 324, 132, model.pressedButton == 56,
+           card, flags & 1 ? good : muted, flags & 1 ? text : muted);
+    button(57, "Next", 328, 324, 132, model.pressedButton == 57,
+           card, flags & 2 ? good : muted, flags & 2 ? text : muted);
+}
+}
+
 void ui::begin(const app_state::Model& model) { page(model); }
 
 void ui::showSystemUpdate()
@@ -815,7 +874,14 @@ void ui::page(const app_state::Model& model)
 {
     display().fillScreen((model.page == app_state::Page::Home || model.page == app_state::Page::Menu)
                         ? homeBackground : background);
-    if (model.page == app_state::Page::Home)
+    if (model.page == app_state::Page::Spotify)
+    {
+        header("Spotify");
+        spotifyTelemetry(model, true);
+        button(5, "Home", ui_layout::singleButtonX, ui_layout::singleButtonY,
+               ui_layout::singleButtonWidth, model.pressedButton == 5);
+    }
+    else if (model.page == app_state::Page::Home)
     {
         homeClock(model, true);
         homeAlarm(model);
@@ -828,7 +894,7 @@ void ui::page(const app_state::Model& model)
         display().setTextSize(1);
         display().setTextColor(model.nightMode ? nightRed : muted, homeBackground);
         display().drawString("Choose a page", 200, 80);
-        display().drawString("Swipe down for clock", 180, 386);
+        display().drawString("Swipe down for clock", 180, 414);
         menuButtons(model);
     }
     else if (model.page == app_state::Page::AlarmNumber)
@@ -888,6 +954,7 @@ void ui::page(const app_state::Model& model)
 
 void ui::telemetry(const app_state::Model& model)
 {
+    if (model.page == app_state::Page::Spotify) { spotifyTelemetry(model); return; }
     if (model.page == app_state::Page::System)
     {
         systemTelemetry(model);
@@ -917,7 +984,13 @@ void ui::telemetry(const app_state::Model& model)
 }
 void ui::pressed(const app_state::Model& model)
 {
-    if (model.page == app_state::Page::Home)
+    if (model.page == app_state::Page::Spotify)
+    {
+        spotifyTelemetry(model, true);
+        button(5, "Home", ui_layout::singleButtonX, ui_layout::singleButtonY,
+               ui_layout::singleButtonWidth, model.pressedButton == 5);
+    }
+    else if (model.page == app_state::Page::Home)
     {
         homeAlarm(model);
         homeSummaries(model);

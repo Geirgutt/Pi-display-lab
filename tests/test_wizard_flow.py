@@ -14,7 +14,7 @@ from setup_cluster import DetectedValues, build_controller_config, run_wizard, s
 
 
 class WizardFlowTests(unittest.TestCase):
-    def run_add(self, outdated=False, approve_update=True, install_result=0, remove=False, heartbeat=True):
+    def run_add(self, outdated=False, approve_update=True, install_result=0, remove=False, heartbeat=True, direct=False):
         with tempfile.TemporaryDirectory() as directory, ExitStack() as stack:
             root = Path(directory)
             config_path = root / "config.local.json"
@@ -42,11 +42,13 @@ class WizardFlowTests(unittest.TestCase):
             run = stack.enter_context(patch("setup_cluster.subprocess.run", return_value=subprocess.CompletedProcess([], install_result)))
             stack.enter_context(patch("builtins.print"))
             answers = ["6", "2", "j"] if remove else ["3", "1", "three.example"]
+            if direct:
+                answers = answers[1:]
             if outdated:
                 answers += ["j" if approve_update else "n"]
             answers += ["j"]
             responses = iter(answers)
-            code = run_wizard(root, lambda _: next(responses))
+            code = run_wizard(root, lambda _: next(responses), action=("remove" if remove else "add") if direct else None)
             if remove and install_result == 0:
                 stop.assert_called_once()
                 self.assertEqual(stop.call_args.args[0]["worker_hosts"], ["one.example"])
@@ -66,6 +68,13 @@ class WizardFlowTests(unittest.TestCase):
         self.assertEqual(command.count("--limit-worker"), 1)
         self.assertIn("--sudo-socket", command)
         self.assertNotIn("test-private", " ".join(command))
+
+    def test_direct_menu_actions_preserve_add_and_removal_flows(self):
+        for remove in (False, True):
+            code, config, _, _, _ = self.run_add(remove=remove, direct=True)
+            self.assertEqual(code, 0)
+            expected = ["one.example"] if remove else ["one.example", "two.example", "three.example"]
+            self.assertEqual(config["worker_hosts"], expected)
 
     def test_outdated_existing_worker_is_included_only_after_approval(self):
         code, _, prepare, run, _ = self.run_add(outdated=True)

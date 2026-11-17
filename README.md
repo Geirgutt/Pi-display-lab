@@ -11,6 +11,42 @@ bruker `DashboardState`, mens DeskDisplay kobler sikkert til controllerens
 cluster-gateway. Controlleren samler status fra seg selv og de registrerte
 workerne, slik at ESP32-en bare trenger én TLS-forbindelse.
 
+## Én meny for administrasjon
+
+På controlleren trenger du bare denne kommandoen fra prosjektmappen:
+
+```bash
+python3 meny.py
+```
+
+- **Konfigurasjon:** Spotify, Garmin/kalendere, legge til eller fjerne clusternoder,
+  endre nettverksinnstillinger og førstegangsoppsett.
+- **Vedlikehold:** programoppdatering, skjermoppdatering, pakkevedlikehold på valgte
+  workers, kalendersynk og reinstallasjon/reparasjon.
+- **Status og feilsøking:** lokalt oppsett, clusterkontroll, tjenestestatus og logger.
+
+Kjør menyen som vanlig controller-bruker, uten `sudo`. Handlingene bruker de
+eksisterende skriptene og ber om sudo eller bekreftelse når det trengs. Menyen
+krever ingen ekstra Python-pakker og kan åpnes før førstegangsinstallasjon.
+Velg **Konfigurasjon → Cluster-oppsett / førstegangsinstallasjon** på en ny Pi.
+Ved worker-vedlikehold velger du noder fra en nummerert liste; skriv `a` for alle.
+Etter programoppdatering lastes menyen på nytt fra den hentede versjonen. Hvis ny
+kode ble hentet før en feil eller et avbrudd, beholdes feilmeldingen til du trykker
+Enter; deretter lastes menyen på nytt også i dette tilfellet.
+
+For Spotify trenger SSH-forbindelsen portviderekobling, slik at du kan bruke
+PC-nettleseren til innloggingen som kjører på Pi-en:
+
+```bash
+ssh -L 8888:127.0.0.1:8888 BRUKER@CONTROLLER
+cd ~/Pi-display-lab
+python3 meny.py
+```
+
+Velg **Konfigurasjon → Koble til / fornye Spotify**. Se
+[Spotify-oppsettet](deskdisplay/docs/spotify.md) for detaljer.
+Direkte skriptkommandoer nedenfor kan fortsatt brukes ved avansert arbeid.
+
 ## DeskDisplay-firmware
 
 Home får kommende kalender- og treningssammendrag. Naviger med den lille
@@ -59,6 +95,9 @@ alternativer.
 - **Nerd:** Monte Carlo-estimat av pi med levende sirkelgrafikk for treff og bom.
 - **Training:** kommende økter fra Garmins offisielle publiserte kalender.
 - **Calendar:** samler valgfritt flere private ICS-kalendere på controlleren.
+- **Spotify:** valgfri låt-/artist-/enhetsvisning og spill/pause, neste/forrige
+  på DeskDisplay. Krever Premium og kontotilkobling på controlleren med PKCE.
+  Se [Spotify-oppsett](deskdisplay/docs/spotify.md).
 - **Alarm:** avslått som standard. Trykk alarmfeltet øverst på klokkeskjermen
   for å stille en daglig påminnelse. Juster timer/minutter, slå den på og trykk
   Home. Ved tidspunktet blinker skjermen i 30 sekunder med hvitt lys, eller

@@ -23,6 +23,7 @@ from config import AppConfig, load_config
 from display_state import DashboardState
 from transports import BrowserTransport, Esp32Transport, TransportHub
 from updates import UpdateManager
+from spotify import COMMANDS
 
 
 DESKDISPLAY_NAME_MAX = 16
@@ -149,6 +150,19 @@ def _deskdisplay_state_lines(payload: dict[str, Any], worker_hosts: tuple[str, .
                 )
             )
         )
+    spotify = payload.get("spotify") or {}
+    statuses = {"not_configured": 0, "playing": 1, "paused": 2, "no_device": 3,
+                "reauthorize": 4, "unauthorized": 4, "forbidden": 5, "rate_limited": 6, "unavailable": 7}
+    flags = (int(bool(spotify.get("can_control")))
+             | int(bool(spotify.get("can_next"))) << 1
+             | int(bool(spotify.get("can_previous"))) << 2
+             | int(bool(spotify.get("pending"))) << 3)
+    lines.append("\t".join(("spotify", str(statuses.get(spotify.get("status"), 7)),
+                            str(flags), str(int(spotify.get("progress_ms") or 0)),
+                            str(int(spotify.get("duration_ms") or 0)),
+                            _compact_text(spotify.get("title"), 96),
+                            _compact_text(spotify.get("artist"), 96),
+                            _compact_text(spotify.get("device"), 48))))
     return "\n".join(lines) + "\n"
 
 
@@ -212,6 +226,20 @@ def create_app(
             mimetype="text/plain",
             headers={"Cache-Control": "no-store"},
         )
+
+    @app.post("/api/deskdisplay/spotify/command")
+    def spotify_command() -> Any:
+        # JSON-only prevents browser form posts; numeric Host prevents DNS rebinding.
+        if (request.remote_addr not in {"127.0.0.1", "::1"}
+                or request.host.split(":", 1)[0] != "127.0.0.1"
+                or not request.is_json or request.headers.get("Origin")):
+            return jsonify({"ok": False}), 403
+        body = request.get_json(silent=True)
+        action = body.get("action") if isinstance(body, dict) else None
+        if not isinstance(action, str) or action not in COMMANDS:
+            return jsonify({"ok": False}), 400
+        accepted = dashboard.spotify_provider.command(action)
+        return jsonify({"ok": accepted}), 202 if accepted else 409
 
     @app.post("/api/screen")
     def set_screen() -> Any:

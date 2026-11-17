@@ -425,7 +425,10 @@ def setup_firewall(raw: dict[str, Any], input_fn: InputFunction) -> None:
                     subprocess.run(["sudo", "-n", "ufw", "allow", port], check=True)
 
 
-def run_wizard(project_dir: str | Path, input_fn: InputFunction = input) -> int:
+def run_wizard(project_dir: str | Path, input_fn: InputFunction = input, *, action: str | None = None) -> int:
+    action_choices = {"verify": "1", "reinstall": "2", "add": "3", "network": "4", "remove": "6"}
+    if action is not None and action not in action_choices:
+        raise ValueError("Ukjent cluster-handling")
     project = Path(project_dir).resolve()
     if os.name != "posix" or not sys.platform.startswith("linux"):
         print("Setup-veiviseren må kjøres på controlleren med Raspberry Pi OS/Linux.")
@@ -448,6 +451,10 @@ def run_wizard(project_dir: str | Path, input_fn: InputFunction = input) -> int:
     mode = "fresh"
     original_workers: list[str] = []
 
+    if action is not None and not config_path.exists():
+        print("Clusteret er ikke konfigurert. Start førstegangsoppsett fra hovedmenyen.")
+        return 2
+
     if config_path.exists():
         try:
             raw = migrate_config(_load_raw_config(config_path))
@@ -455,7 +462,7 @@ def run_wizard(project_dir: str | Path, input_fn: InputFunction = input) -> int:
         except ConfigValidationError as error:
             print(f"! {error}")
             return 2
-        choice = _existing_config_choice(input_fn)
+        choice = action_choices[action] if action is not None else _existing_config_choice(input_fn)
         if choice == "1":
             return subprocess.run(["bash", "scripts/verify-cluster.sh"], cwd=project).returncode
         if choice == "5" or choice not in {"2", "3", "4", "6"}:

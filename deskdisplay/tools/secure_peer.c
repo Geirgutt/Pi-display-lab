@@ -23,6 +23,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/socket.h>
+#include <sys/select.h>
 #include <sys/stat.h>
 #include <sys/time.h>
 #include <unistd.h>
@@ -78,9 +79,14 @@ static int ota_waiting_reconnect = 0;
 #define CALENDAR_FRAME_SIZE (FRAME_HEADER_SIZE + CALENDAR_PAYLOAD_SIZE)
 
 #define STATE_FRAME_MAX 4096
+#define SPOTIFY_TITLE_MAX 96
+#define SPOTIFY_DEVICE_MAX 48
+#define SPOTIFY_PAYLOAD_SIZE (10 + 2 * (SPOTIFY_TITLE_MAX + 1) + SPOTIFY_DEVICE_MAX + 1)
+#define SPOTIFY_FRAME_SIZE (FRAME_HEADER_SIZE + SPOTIFY_PAYLOAD_SIZE)
 _Static_assert(CLUSTER_FRAME_SIZE <= STATE_FRAME_MAX, "cluster frame exceeds gateway buffer");
 _Static_assert(TRAINING_FRAME_SIZE <= STATE_FRAME_MAX, "training frame exceeds gateway buffer");
 _Static_assert(CALENDAR_FRAME_SIZE <= STATE_FRAME_MAX, "calendar frame exceeds gateway buffer");
+_Static_assert(SPOTIFY_FRAME_SIZE <= STATE_FRAME_MAX, "spotify frame exceeds gateway buffer");
 
 struct cluster_node {
     char name[CLUSTER_NAME_MAX + 1];
@@ -139,10 +145,19 @@ struct calendar_state {
     struct calendar_event events[CALENDAR_EVENT_MAX];
 };
 
+struct spotify_state {
+    uint8_t status, capabilities;
+    uint32_t progress_ms, duration_ms;
+    char title[SPOTIFY_TITLE_MAX + 1], artist[SPOTIFY_TITLE_MAX + 1];
+    char device[SPOTIFY_DEVICE_MAX + 1];
+};
+static struct spotify_state latest_spotify = {0};
+
 struct controller_state {
     struct cluster_state cluster;
     struct training_state training;
     struct calendar_state calendar;
+    struct spotify_state spotify;
 };
 
 static void stop_handler(int signal_number)
@@ -264,6 +279,9 @@ static int fetch_controller_state(struct controller_state* result)
     if (!state_host[0] || !state_path[0] || !result) return 0;
     const int fd = socket(AF_INET, SOCK_STREAM, 0);
     if (fd < 0) return 0;
+    const struct timeval timeout = {.tv_sec = 2, .tv_usec = 0};
+    setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout));
+    setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &timeout, sizeof(timeout));
     struct sockaddr_in endpoint = {0};
     endpoint.sin_family = AF_INET;
     endpoint.sin_port = htons(state_port);
@@ -376,6 +394,23 @@ static int fetch_controller_state(struct controller_state* result)
             activity->duration_seconds = (uint32_t)duration;
             activity->pace_hundredths = (uint16_t)pace;
             activity->average_hr = (uint16_t)heart_rate;
+        }
+        else if (!strcmp(fields[0], "spotify"))
+        {
+            unsigned long status = 0, capabilities = 0, progress = 0, duration = 0;
+            if (field_count != 8 || !parse_unsigned(fields[1], 7, &status)
+                || !parse_unsigned(fields[2], 15, &capabilities)
+                || !parse_unsigned(fields[3], 0xFFFFFFFFUL, &progress)
+                || !parse_unsigned(fields[4], 0xFFFFFFFFUL, &duration)
+                || strlen(fields[5]) > SPOTIFY_TITLE_MAX || strlen(fields[6]) > SPOTIFY_TITLE_MAX
+                || strlen(fields[7]) > SPOTIFY_DEVICE_MAX) return 0;
+            result->spotify.status = (uint8_t)status;
+            result->spotify.capabilities = (uint8_t)capabilities;
+            result->spotify.progress_ms = (uint32_t)progress;
+            result->spotify.duration_ms = (uint32_t)duration;
+            if (strcmp(fields[5], "-")) strcpy(result->spotify.title, fields[5]);
+            if (strcmp(fields[6], "-")) strcpy(result->spotify.artist, fields[6]);
+            if (strcmp(fields[7], "-")) strcpy(result->spotify.device, fields[7]);
         }
         else if (!strcmp(fields[0], "calendar"))
         {
@@ -883,6 +918,22 @@ static size_t make_calendar_frame(unsigned char* frame, uint64_t sequence, int i
     return CALENDAR_FRAME_SIZE;
 }
 
+static size_t make_spotify_frame(unsigned char* frame, uint64_t sequence, int invalid,
+                                 const struct spotify_state* state)
+{
+    memset(frame, 0, SPOTIFY_FRAME_SIZE);
+    frame[0] = invalid ? 'X' : 'D'; frame[1] = 'S'; frame[2] = 1; frame[3] = 5;
+    put16(frame + 4, SPOTIFY_PAYLOAD_SIZE);
+    put64(frame + 6, sequence);
+    unsigned char* p = frame + FRAME_HEADER_SIZE;
+    p[0] = state->status; p[1] = state->capabilities;
+    put32(p + 2, state->progress_ms); put32(p + 6, state->duration_ms);
+    memcpy(p + 10, state->title, strlen(state->title));
+    memcpy(p + 11 + SPOTIFY_TITLE_MAX, state->artist, strlen(state->artist));
+    memcpy(p + 12 + 2 * SPOTIFY_TITLE_MAX, state->device, strlen(state->device));
+    return SPOTIFY_FRAME_SIZE;
+}
+
 static size_t make_frame(unsigned char* frame, uint64_t sequence, int invalid)
 {
     if (!state_path[0]) return make_local_frame(frame, sequence, invalid);
@@ -902,9 +953,12 @@ static size_t make_frame(unsigned char* frame, uint64_t sequence, int invalid)
             current.cluster.nodes[index].online = 0;
         current.training.available = 0;
         current.calendar.available = 0;
+        memset(&current.spotify, 0, sizeof(current.spotify));
+        current.spotify.status = 7;
     }
     const size_t cluster_pages = current.cluster.count == 0 ? 1
         : (current.cluster.count + CLUSTER_NODE_MAX_PER_FRAME - 1) / CLUSTER_NODE_MAX_PER_FRAME;
+    latest_spotify = current.spotify;
     const size_t cycle_size = cluster_pages + 2;
     if (slot >= cycle_size) slot = 0;
     size_t length = 0;
@@ -916,6 +970,57 @@ static size_t make_frame(unsigned char* frame, uint64_t sequence, int invalid)
         length = make_calendar_frame(frame, sequence, invalid, &current.calendar);
     slot = (slot + 1) % cycle_size;
     return length;
+}
+
+static void forward_spotify_command(uint8_t action)
+{
+    static const char* actions[] = {"", "play", "pause", "next", "previous"};
+    if (action < 1 || action > 4 || !state_host[0] || !state_port) return;
+    const int fd = socket(AF_INET, SOCK_STREAM, 0);
+    if (fd < 0) return;
+    const struct timeval timeout = {.tv_sec = 2, .tv_usec = 0};
+    setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout));
+    setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &timeout, sizeof(timeout));
+    struct sockaddr_in endpoint = {0};
+    endpoint.sin_family = AF_INET; endpoint.sin_port = htons(state_port);
+    if (inet_pton(AF_INET, state_host, &endpoint.sin_addr) == 1
+        && connect(fd, (struct sockaddr*)&endpoint, sizeof(endpoint)) == 0)
+    {
+        char body[48], request[512], response[128];
+        const int body_length = snprintf(body, sizeof(body), "{\"action\":\"%s\"}", actions[action]);
+        const int length = snprintf(request, sizeof(request),
+            "POST /api/deskdisplay/spotify/command HTTP/1.0\r\nHost: %s:%u\r\n"
+            "Content-Type: application/json\r\nContent-Length: %d\r\nConnection: close\r\n\r\n%s",
+            state_host, state_port, body_length, body);
+        if (length > 0 && (size_t)length < sizeof(request)
+            && send_socket_all(fd, request, (size_t)length))
+            (void)recv(fd, response, sizeof(response), 0);
+    }
+    close(fd); // No retries: next/previous must never execute twice.
+}
+
+/* Read only authenticated, bounded commands. Sequence is scoped to this TLS session. */
+static int wait_display_command(SSL* ssl, int fd, uint64_t* last_sequence)
+{
+    if (!SSL_pending(ssl))
+    {
+        fd_set readable;
+        FD_ZERO(&readable); FD_SET(fd, &readable);
+        struct timeval wait = {.tv_sec = 1, .tv_usec = 0};
+        const int ready = select(fd + 1, &readable, NULL, NULL, &wait);
+        if (ready < 0) return errno == EINTR;
+        if (ready == 0) return 1;
+    }
+    unsigned char frame[15];
+    size_t length = 0;
+    if (!read_frame(ssl, frame, sizeof(frame), &length) || length != sizeof(frame)
+        || frame[3] != 0x91 || frame[14] < 1 || frame[14] > 4) return 0;
+    uint64_t sequence = 0;
+    for (unsigned i = 0; i < 8; ++i) sequence |= (uint64_t)frame[6 + i] << (8 * i);
+    if (!sequence || sequence <= *last_sequence) return 0;
+    *last_sequence = sequence;
+    forward_spotify_command(frame[14]);
+    return 1;
 }
 
 static int make_listener(const char* address, uint16_t port)
@@ -1039,6 +1144,9 @@ int main(int argc, char** argv)
             continue;
         }
         uint64_t sequence = 1;
+        uint64_t command_sequence = 0;
+        const struct timeval command_timeout = {.tv_sec = 2, .tv_usec = 0};
+        setsockopt(socket_fd, SOL_SOCKET, SO_RCVTIMEO, &command_timeout, sizeof(command_timeout));
         int replay_sent = 0, malformed_sent = 0;
         while (running)
         {
@@ -1049,7 +1157,14 @@ int main(int argc, char** argv)
             if (malformed_once && !malformed_sent) malformed_sent = 1;
             else if (replay_once && !replay_sent) replay_sent = 1;
             else ++sequence;
-            sleep(1);
+            // Playback feedback must not wait for all cluster pages. Diagnostic
+            // replay/malformed modes keep their original single-frame behavior.
+            if (state_path[0] && !replay_once && !malformed_once)
+            {
+                const size_t spotify_length = make_spotify_frame(frame, sequence++, 0, &latest_spotify);
+                if (!send_all(ssl, frame, spotify_length)) break;
+            }
+            if (!wait_display_command(ssl, socket_fd, &command_sequence)) break;
         }
         SSL_shutdown(ssl);
         SSL_free(ssl); close(socket_fd);

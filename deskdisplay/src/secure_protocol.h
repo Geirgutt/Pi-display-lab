@@ -17,6 +17,12 @@ constexpr uint8_t telemetryType = 1;
 constexpr uint8_t clusterTelemetryType = 2;
 constexpr uint8_t trainingTelemetryType = 3;
 constexpr uint8_t calendarTelemetryType = 4;
+constexpr uint8_t spotifyTelemetryType = 5;
+constexpr uint8_t spotifyCommandType = 0x91;
+constexpr size_t spotifyTitleMax = 96;
+constexpr size_t spotifyDeviceMax = 48;
+constexpr size_t spotifyPayloadSize = 10 + 2 * (spotifyTitleMax + 1) + spotifyDeviceMax + 1;
+constexpr size_t spotifyFrameSize = 14 + spotifyPayloadSize;
 constexpr uint8_t controlTypeBase = 0x80;
 constexpr uint8_t otaOfferType = 0x80;
 constexpr uint8_t otaChunkType = 0x81;
@@ -68,6 +74,7 @@ constexpr size_t maxFrameSize = otaChunkFrameSize > clusterFrameSize
 static_assert(clusterFrameSize <= maxFrameSize, "Cluster frame exceeds receive buffer");
 static_assert(trainingFrameSize <= maxFrameSize, "Training frame exceeds receive buffer");
 static_assert(calendarFrameSize <= maxFrameSize, "Calendar frame exceeds receive buffer");
+static_assert(spotifyFrameSize <= maxFrameSize, "Spotify frame exceeds receive buffer");
 static_assert(otaChunkFrameSize <= maxFrameSize, "OTA frame exceeds receive buffer");
 constexpr int16_t temperatureUnavailable = INT16_MIN;
 
@@ -149,6 +156,17 @@ struct CalendarTelemetry
     DataSource source = DataSource::None;
     uint8_t count = 0;
     CalendarEvent events[calendarEventMax]{};
+};
+
+struct SpotifyTelemetry
+{
+    uint8_t status = 0; // 0 unconfigured, 1 playing, 2 paused, 3 no device, 4 reauthorize.
+    uint8_t capabilities = 0; // toggle, next, previous, command pending.
+    uint32_t progressMs = 0;
+    uint32_t durationMs = 0;
+    char title[spotifyTitleMax + 1] = {};
+    char artist[spotifyTitleMax + 1] = {};
+    char device[spotifyDeviceMax + 1] = {};
 };
 
 inline void put16(uint8_t* p, uint16_t value)
@@ -345,6 +363,27 @@ inline bool decodeTrainingTelemetry(const uint8_t* frame, size_t length, uint64_
     value.lastActivity.durationSeconds = get32(activity + 15 + trainingTypeMax);
     value.lastActivity.paceHundredths = get16(activity + 19 + trainingTypeMax);
     value.lastActivity.averageHr = get16(activity + 21 + trainingTypeMax);
+    return true;
+}
+
+inline bool decodeSpotifyTelemetry(const uint8_t* frame, size_t length, uint64_t& sequence,
+                                   SpotifyTelemetry& value)
+{
+    if (!frame || length != spotifyFrameSize || frame[0] != magic0 || frame[1] != magic1
+        || frame[2] != version || frame[3] != spotifyTelemetryType
+        || get16(frame + 4) != spotifyPayloadSize) return false;
+    const uint8_t* p = frame + headerSize;
+    if (p[0] > 7 || p[1] > 15 || p[10 + spotifyTitleMax] != 0
+        || p[11 + 2 * spotifyTitleMax] != 0 || p[spotifyPayloadSize - 1] != 0) return false;
+    sequence = get64(frame + 6);
+    value = SpotifyTelemetry{};
+    value.status = p[0];
+    value.capabilities = p[1];
+    value.progressMs = get32(p + 2);
+    value.durationMs = get32(p + 6);
+    memcpy(value.title, p + 10, spotifyTitleMax + 1);
+    memcpy(value.artist, p + 11 + spotifyTitleMax, spotifyTitleMax + 1);
+    memcpy(value.device, p + 12 + 2 * spotifyTitleMax, spotifyDeviceMax + 1);
     return true;
 }
 

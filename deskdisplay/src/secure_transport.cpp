@@ -62,6 +62,7 @@ secure_protocol::Telemetry latest;
 secure_protocol::ClusterTelemetry latestCluster;
 secure_protocol::TrainingTelemetry latestTraining;
 secure_protocol::CalendarTelemetry latestCalendar;
+secure_protocol::SpotifyTelemetry latestSpotify;
 secure_transport::Counters stats;
 bool otaActive = false;
 uint32_t otaSize = 0;
@@ -280,6 +281,8 @@ size_t expectedFrameSize()
             return secure_protocol::trainingFrameSize;
         if (frame[3] == secure_protocol::calendarTelemetryType)
             return secure_protocol::calendarFrameSize;
+        if (frame[3] == secure_protocol::spotifyTelemetryType)
+            return secure_protocol::spotifyFrameSize;
         return frame[3] == secure_protocol::telemetryType ? secure_protocol::frameSize : 0;
     }
 }
@@ -358,11 +361,15 @@ bool processFrame()
     secure_protocol::ClusterTelemetry clusterValue;
     secure_protocol::TrainingTelemetry trainingValue;
     secure_protocol::CalendarTelemetry calendarValue;
+    secure_protocol::SpotifyTelemetry spotifyValue;
     const bool isCluster = frame[3] == secure_protocol::clusterTelemetryType;
     const bool isTraining = frame[3] == secure_protocol::trainingTelemetryType;
     const bool isCalendar = frame[3] == secure_protocol::calendarTelemetryType;
+    const bool isSpotify = frame[3] == secure_protocol::spotifyTelemetryType;
     bool decoded = false;
-    if (isCluster)
+    if (isSpotify)
+        decoded = secure_protocol::decodeSpotifyTelemetry(frame, frameLength, sequence, spotifyValue);
+    else if (isCluster)
         decoded = secure_protocol::decodeClusterTelemetry(frame, frameLength, sequence, clusterValue);
     else if (isTraining)
         decoded = secure_protocol::decodeTrainingTelemetry(frame, frameLength, sequence, trainingValue);
@@ -386,10 +393,12 @@ bool processFrame()
     if (isCluster) latestCluster = clusterValue;
     else if (isTraining) latestTraining = trainingValue;
     else if (isCalendar) latestCalendar = calendarValue;
+    else if (isSpotify) latestSpotify = spotifyValue;
     else latest = value;
     lastValidTelemetry = millis();
     ++stats.accepted;
-    if (isCluster)
+    if (isSpotify) { /* Playback titles are not written to the serial log. */ }
+    else if (isCluster)
     {
         Serial.printf("Secure cluster seq=%llu nodes=%u\n",
                       static_cast<unsigned long long>(sequence), latestCluster.count);
@@ -598,6 +607,26 @@ const secure_protocol::Telemetry& secure_transport::lastTelemetry() { return lat
 const secure_protocol::ClusterTelemetry& secure_transport::lastClusterTelemetry() { return latestCluster; }
 const secure_protocol::TrainingTelemetry& secure_transport::lastTrainingTelemetry() { return latestTraining; }
 const secure_protocol::CalendarTelemetry& secure_transport::lastCalendarTelemetry() { return latestCalendar; }
+const secure_protocol::SpotifyTelemetry& secure_transport::lastSpotifyTelemetry() { return latestSpotify; }
+bool secure_transport::spotifyCommand(uint8_t action)
+{
+    static uint32_t lastCommand = 0;
+    if (action < 1 || action > 4 || !connected() || otaActive
+        || uint32_t(millis() - lastValidTelemetry) > 5000
+        || (lastCommand && uint32_t(millis() - lastCommand) < 750)) return false;
+    uint8_t response[secure_protocol::headerSize + 1] = {};
+    response[0] = secure_protocol::magic0;
+    response[1] = secure_protocol::magic1;
+    response[2] = secure_protocol::version;
+    response[3] = secure_protocol::spotifyCommandType;
+    secure_protocol::put16(response + 4, 1);
+    secure_protocol::put64(response + 6, txSequence++);
+    response[secure_protocol::headerSize] = action;
+    lastCommand = millis();
+    if (client.write(response, sizeof(response)) == sizeof(response)) return true;
+    closeSession(true); // Never retry a partially written playback command.
+    return false;
+}
 uint32_t secure_transport::lastTelemetryAt() { return lastValidTelemetry; }
 const secure_transport::Counters& secure_transport::counters() { return stats; }
 
@@ -636,6 +665,12 @@ void secure_transport::printStatus(Print& out)
 #else
 
 void secure_transport::begin() {}
+bool secure_transport::spotifyCommand(uint8_t) { return false; }
+const secure_protocol::SpotifyTelemetry& secure_transport::lastSpotifyTelemetry()
+{
+    static secure_protocol::SpotifyTelemetry value;
+    return value;
+}
 void secure_transport::service() {}
 bool secure_transport::displaySuppressed() { return false; }
 bool secure_transport::takeDisplayRestoreRequest() { return false; }

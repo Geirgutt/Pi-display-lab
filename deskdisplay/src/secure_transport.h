@@ -31,6 +31,8 @@ const secure_protocol::Telemetry& lastTelemetry();
 const secure_protocol::ClusterTelemetry& lastClusterTelemetry();
 const secure_protocol::TrainingTelemetry& lastTrainingTelemetry();
 const secure_protocol::CalendarTelemetry& lastCalendarTelemetry();
+const secure_protocol::SpotifyTelemetry& lastSpotifyTelemetry();
+bool spotifyCommand(uint8_t action);
 uint32_t lastTelemetryAt();
 const Counters& counters();
 }

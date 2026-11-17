@@ -6,7 +6,7 @@
 
 namespace app_state
 {
-enum class Page : uint8_t { Home, Cluster, Training, TrainingDetail, Calendar, System, Alarm, Menu, AlarmNumber };
+enum class Page : uint8_t { Home, Cluster, Training, TrainingDetail, Calendar, System, Alarm, Menu, AlarmNumber, Spotify };
 
 struct Model
 {
@@ -40,6 +40,8 @@ struct Model
     secure_protocol::ClusterTelemetry clusterTelemetry{};
     secure_protocol::TrainingTelemetry trainingTelemetry{};
     secure_protocol::CalendarTelemetry calendarTelemetry{};
+    secure_protocol::SpotifyTelemetry spotifyTelemetry{};
+    bool spotifyConnected = false;
     uint32_t nodeLastUpdate = 0;
     uint32_t nodeAccepted = 0;
     bool nodeOnline = false;

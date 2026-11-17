@@ -95,6 +95,7 @@ def classify_paths(paths: Iterable[str]) -> tuple[str, bool, tuple[str, ...]]:
         return ("display" if display_changed else "none"), display_changed, ()
 
     controller_files = {
+        "meny.py",
         "app.py",
         "calendar_data.py",
         "display_state.py",
