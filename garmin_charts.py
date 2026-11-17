@@ -5,13 +5,14 @@ import io
 import math
 import xml.etree.ElementTree as ET
 import zipfile
+from pathlib import PurePosixPath
 
 SAMPLES = 24
 MISSING = -32768
 MAX_FIT_BYTES = 8 * 1024 * 1024
 LAP_LIMIT = 20
 ROUTE_LIMIT = 80
-ROUTE_FORMAT = 3
+ROUTE_FORMAT = 4
 
 
 def activity_download_id(value) -> int | None:
@@ -124,7 +125,10 @@ def _decode_fit(data: bytes) -> dict:
         return {}
     total, laps = summarize_laps(messages.get("lap_mesgs", []))
     records = messages.get("record_mesgs", [])
-    return {"series": summarize_records(records), "route": summarize_route(records),
+    route = summarize_route(records) or summarize_route(messages.get("gps_metadata_mesgs", []))
+    if not (records or total or route):
+        return {}
+    return {"series": summarize_records(records), "route": route,
             "lap_total": total, "laps": laps,
             "pace_target": summarize_pace_target(messages.get("workout_step_mesgs", []))}
 
@@ -155,7 +159,8 @@ def _decode_xml_route(data: bytes) -> dict:
             semicircle_lon = (round(lon * 2**31 / 180) + 2**31) % 2**32 - 2**31
             positions.append({"position_lat": round(lat * 2**31 / 180),
                               "position_long": semicircle_lon})
-    return {"route": summarize_route(positions)}
+    route = summarize_route(positions)
+    return {"route": route} if route else {}
 
 
 def decode_activity_file(data: bytes) -> dict:
@@ -165,19 +170,28 @@ def decode_activity_file(data: bytes) -> dict:
         return _decode_fit(data) if data[8:12] == b".FIT" else _decode_xml_route(data)
     with zipfile.ZipFile(io.BytesIO(data)) as archive:
         details: dict = {}
-        for extension in (".fit", ".gpx", ".tcx"):
-            member = next((item for item in archive.infolist()
-                           if not item.is_dir() and item.filename.lower().endswith(extension)
-                           and item.file_size <= MAX_FIT_BYTES), None)
-            if member is None:
+        priority = {".fit": 0, ".gpx": 1, ".tcx": 2}
+        members = []
+        for member in archive.infolist():
+            extension = PurePosixPath(member.filename).suffix.lower()
+            if extension in priority and not member.is_dir():
+                members.append((priority[extension], member))
+        remaining = MAX_FIT_BYTES
+        for kind, member in sorted(members, key=lambda candidate: candidate[0]):
+            if not 0 < member.file_size <= remaining:
                 continue
-            with archive.open(member) as handle:
-                contents = handle.read(MAX_FIT_BYTES + 1)
-            if len(contents) > MAX_FIT_BYTES:
+            remaining -= member.file_size
+            try:
+                with archive.open(member) as handle:
+                    contents = handle.read(member.file_size)
+            except (zipfile.BadZipFile, RuntimeError):
                 continue
-            result = _decode_fit(contents) if extension == ".fit" else _decode_xml_route(contents)
-            if result:
-                details.update(result)
-                if details.get("route"):
-                    break
+            result = _decode_fit(contents) if kind == 0 else _decode_xml_route(contents)
+            if result.get("route"):
+                if not details:
+                    return result
+                details.update({key: value for key, value in result.items() if value})
+                return details
+            if not details and result:
+                details = result
         return details

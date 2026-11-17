@@ -169,6 +169,8 @@ def _sync_activity_charts(client: GarminClient, raw: dict, now: int) -> int:
             details = decode_activity_file(client.download_activity(activity_id))
             if not details:
                 media_error = "unreadable_file"
+            elif not details.get("route") and not cached.get("route"):
+                media_error = "no_gps_points"
         except GarminError as error:
             media_error = f"http_{error.status}" if error.status else "connection_or_file_size"
             if error.status in (401, 429):
@@ -179,7 +181,10 @@ def _sync_activity_charts(client: GarminClient, raw: dict, now: int) -> int:
                                "route_format": ROUTE_FORMAT, "media_error": media_error}
                 break
             details = {}
-        except (ImportError, OSError, ValueError, RuntimeError, zipfile.BadZipFile):
+        except ImportError:
+            details = {}
+            media_error = "fit_sdk_unavailable"
+        except (OSError, ValueError, RuntimeError, zipfile.BadZipFile):
             details = {}
             media_error = "unreadable_file"
         if cached.get("route") and details and not details.get("route"):

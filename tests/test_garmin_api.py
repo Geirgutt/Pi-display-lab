@@ -123,7 +123,18 @@ class GarminApiTests(unittest.TestCase):
             _sync_activity_charts(client, raw, now=86501)
             _sync_activity_charts(client, raw, now=86502)
         self.assertEqual(raw["charts"]["42"]["laps"], [[300, 1000, 146]])
+        self.assertEqual(raw["charts"]["42"]["media_error"], "no_gps_points")
         self.assertEqual(client.download_activity.call_count, 2)
+
+    def test_previous_format_without_route_is_retried_even_if_marked_complete(self):
+        client = Mock()
+        raw = {"activities": [{"activityId": 42}],
+               "charts": {"42": {"route": [], "route_format": 3, "media_retry": False}}}
+        route = [[10, 20], [30, 40]]
+        with patch("garmin_api.decode_activity_file", return_value={"route": route}):
+            _sync_activity_charts(client, raw, now=100)
+        self.assertEqual(raw["charts"]["42"]["route"], route)
+        self.assertIsNone(raw["charts"]["42"]["media_error"])
 
     def test_cached_garmin_reaches_dashboard_and_compact_transport(self):
         path = self.cache / "garmin.json"

@@ -32,6 +32,7 @@ class GarminChartTests(unittest.TestCase):
             with self.subTest(name=name):
                 output = io.BytesIO()
                 with zipfile.ZipFile(output, "w") as archive:
+                    archive.writestr("empty/" + name, b"<gpx/>")
                     archive.writestr(name, contents)
                 self.assertEqual(decode_activity_file(output.getvalue())["route"], [[120, 240], [120, 0]])
 
@@ -70,6 +71,29 @@ class GarminChartTests(unittest.TestCase):
         self.assertEqual(details["lap_total"], 1)
         self.assertEqual(details["laps"], [[300, 1000, 145]])
         self.assertEqual(details["pace_target"], [250, 333])
+
+    def test_activity_zip_can_get_positions_from_a_later_fit_with_gps_metadata(self):
+        try:
+            from garmin_fit_sdk import Encoder, Profile
+        except ImportError:
+            self.skipTest("Garmin FIT SDK unavailable")
+        record = Profile["mesg_num"]["RECORD"]
+        metadata = Profile["mesg_num"]["GPS_METADATA"]
+        timestamps = (1_160_000_000, 1_160_000_100)
+        stats = Encoder()
+        track = Encoder()
+        for index, timestamp in enumerate(timestamps):
+            stats.on_mesg(record, {"timestamp": timestamp, "heart_rate": 124})
+            track.on_mesg(metadata, {"timestamp": timestamp,
+                                      "position_lat": 600_000_000 + index * 100,
+                                      "position_long": 160_000_000})
+        output = io.BytesIO()
+        with zipfile.ZipFile(output, "w") as archive:
+            archive.writestr("01-stats.fit", stats.close())
+            archive.writestr("02-track.fit", track.close())
+        details = decode_activity_file(output.getvalue())
+        self.assertEqual(details["route"], [[120, 240], [120, 0]])
+        self.assertEqual(details["series"][0][0], 124)
 
     def test_different_speed_targets_do_not_look_like_one_constant_target(self):
         self.assertEqual(summarize_pace_target([
