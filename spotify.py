@@ -4,13 +4,14 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import tempfile
 import threading
 import time
 from pathlib import Path
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode
-from urllib.request import Request, urlopen
+from urllib.request import HTTPRedirectHandler, Request, build_opener, urlopen
 
 SCOPES = "user-read-playback-state user-modify-playback-state"
 REDIRECT_URI = "http://127.0.0.1:8888/callback"
@@ -18,6 +19,43 @@ TOKEN_URL = "https://accounts.spotify.com/api/token"
 API_URL = "https://api.spotify.com/v1/me/player"
 COMMANDS = {"play": ("PUT", "/play"), "pause": ("PUT", "/pause"),
             "next": ("POST", "/next"), "previous": ("POST", "/previous")}
+MAX_COVER_BYTES = 7000
+TRACK_ID = re.compile(r"[A-Za-z0-9]{22}")
+COVER_URL = re.compile(r"https://i\.scdn\.co/image/[A-Za-z0-9]{1,128}")
+
+
+class _NoCoverRedirect(HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        return None
+
+
+def album_cover_url(item: dict) -> str:
+    album = item.get("album") or {}
+    images = album.get("images") if isinstance(album, dict) else None
+    if not isinstance(images, list):
+        return ""
+    candidates = [
+        (image["width"], image["url"]) for image in images
+        if isinstance(image, dict) and type(image.get("width")) is int
+        and 0 < image["width"] <= 80 and image["width"] == image.get("height")
+        and isinstance(image.get("url"), str) and COVER_URL.fullmatch(image["url"])
+    ]
+    return max(candidates)[1] if candidates else ""
+
+
+def _download_album_cover(url: str) -> bytes:
+    if not COVER_URL.fullmatch(url):
+        return b""
+    try:
+        with build_opener(_NoCoverRedirect()).open(url, timeout=5) as response:
+            if response.headers.get_content_type() != "image/jpeg":
+                return b""
+            data = response.read(MAX_COVER_BYTES + 1)
+            if len(data) <= MAX_COVER_BYTES and data[:2] == b"\xff\xd8" and data[-2:] == b"\xff\xd9":
+                return data
+    except (URLError, OSError, ValueError):
+        pass
+    return b""
 
 
 def credentials_path() -> Path:
@@ -127,6 +165,11 @@ class SpotifyProvider:
         self._retry_empty_after_skip = False
         self._signature = None
         self._reauthorize = False
+        self._cover_url = ""
+        self._fetched_cover_url = ""
+        self._cover = b""
+        self._cover_busy = False
+        self._cover_retry_at = 0.0
 
     def snapshot(self) -> dict:
         if self.mock:
@@ -140,6 +183,29 @@ class SpotifyProvider:
                 elapsed_ms = int(max(0, time.monotonic() - self._sampled_at) * 1000)
                 state["progress_ms"] = min(state["duration_ms"], state["progress_ms"] + elapsed_ms)
             return state
+
+    def cover_for_track(self, track_id: str) -> bytes:
+        with self._lock:
+            url = self._cover_url
+            if not url or self._state.get("track_id") != track_id:
+                return b""
+            if url == self._fetched_cover_url and self._cover:
+                return self._cover
+            if not self._cover_busy and (url != self._fetched_cover_url or time.monotonic() >= self._cover_retry_at):
+                self._cover_busy = True
+                threading.Thread(target=self._fetch_cover, args=(url,), daemon=True, name="spotify-cover").start()
+            return b""
+
+    def _fetch_cover(self, url: str) -> None:
+        cover = b""
+        try:
+            cover = _download_album_cover(url)
+        finally:
+            with self._lock:
+                self._fetched_cover_url = url
+                self._cover = cover
+                self._cover_retry_at = time.monotonic() + 60
+                self._cover_busy = False
 
     def _credentials(self) -> dict:
         try:
@@ -189,6 +255,7 @@ class SpotifyProvider:
 
     def _poll_locked(self) -> None:
         delay = 10
+        cover_url = ""
         state = empty_state("unavailable")
         try:
             raw = self._api()
@@ -208,6 +275,10 @@ class SpotifyProvider:
                              can_control=control and not disallows.get("pausing" if playing else "resuming", False),
                              can_next=control and not disallows.get("skipping_next", False),
                              can_previous=control and not disallows.get("skipping_prev", False))
+                track_id = item.get("id")
+                if item.get("type") == "track" and isinstance(track_id, str) and TRACK_ID.fullmatch(track_id):
+                    state["track_id"] = track_id
+                    cover_url = album_cover_url(item)
         except SpotifyError as error:
             state = empty_state(error.status)
             delay = max(delay, error.retry_after)
@@ -225,6 +296,7 @@ class SpotifyProvider:
                 else:
                     state["pending"] = self._command_busy
                     self._state = state
+                    self._cover_url = cover_url
                     self._sampled_at = time.monotonic()
                 self._next_poll = time.monotonic() + delay
                 self._busy = False

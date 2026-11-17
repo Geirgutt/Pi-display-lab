@@ -89,7 +89,7 @@ static int ota_waiting_reconnect = 0;
 #define GARMIN_PAYLOAD_SIZE (6 + GARMIN_GROUP_MAX * GARMIN_GROUP_SIZE)
 #define GARMIN_FRAME_SIZE (FRAME_HEADER_SIZE + GARMIN_PAYLOAD_SIZE)
 #define GARMIN_SCALE_PAYLOAD_SIZE (GARMIN_PAYLOAD_SIZE + 4 + 4 * GARMIN_GROUP_MAX * GARMIN_METRIC_MAX)
-#define STATE_FRAME_MAX 5400
+#define STATE_FRAME_MAX 8000
 #define ACTIVITY_COUNT_MAX 10
 #define ACTIVITY_FIELD_COUNT 9
 #define ACTIVITY_RECORD_SIZE (11 + 49 + 25 + 6 * 17)
@@ -102,15 +102,22 @@ static int ota_waiting_reconnect = 0;
 #define ACTIVITY_LAP_SIZE 10
 #define ACTIVITY_LAP_GROUP_SIZE (3 + ACTIVITY_LAP_MAX * ACTIVITY_LAP_SIZE)
 #define ACTIVITY_LAP_PAYLOAD_SIZE (ACTIVITY_CHART_PAYLOAD_SIZE + ACTIVITY_COUNT_MAX * ACTIVITY_LAP_GROUP_SIZE)
+#define ACTIVITY_EXTRA_CHARTS 2
+#define ACTIVITY_ROUTE_MAX 80
+#define ACTIVITY_MEDIA_GROUP_SIZE (1 + 2 * ACTIVITY_ROUTE_MAX + ACTIVITY_EXTRA_CHARTS * ACTIVITY_CHART_SAMPLES * 2)
+#define ACTIVITY_MEDIA_PAYLOAD_SIZE (ACTIVITY_LAP_PAYLOAD_SIZE + ACTIVITY_COUNT_MAX * ACTIVITY_MEDIA_GROUP_SIZE)
 static const size_t activity_fields[ACTIVITY_FIELD_COUNT] = {11, 49, 25, 17, 17, 17, 17, 17, 17};
 static const char activity_identity[] = "DeskDisplay-peer-activities";
 static const char chart_identity[] = "DeskDisplay-peer-charts";
 static const char lap_identity[] = "DeskDisplay-peer-laps";
-_Static_assert(FRAME_HEADER_SIZE + ACTIVITY_LAP_PAYLOAD_SIZE <= STATE_FRAME_MAX, "activity frame exceeds gateway buffer");
+static const char media_identity[] = "DeskDisplay-peer-media";
+_Static_assert(FRAME_HEADER_SIZE + ACTIVITY_MEDIA_PAYLOAD_SIZE <= STATE_FRAME_MAX, "activity frame exceeds gateway buffer");
 #define SPOTIFY_TITLE_MAX 96
 #define SPOTIFY_DEVICE_MAX 48
 #define SPOTIFY_PAYLOAD_SIZE (10 + 2 * (SPOTIFY_TITLE_MAX + 1) + SPOTIFY_DEVICE_MAX + 1)
 #define SPOTIFY_FRAME_SIZE (FRAME_HEADER_SIZE + SPOTIFY_PAYLOAD_SIZE)
+#define SPOTIFY_TRACK_ID_SIZE 22
+#define SPOTIFY_COVER_MAX 7000
 _Static_assert(CLUSTER_FRAME_SIZE <= STATE_FRAME_MAX, "cluster frame exceeds gateway buffer");
 _Static_assert(TRAINING_FRAME_SIZE <= STATE_FRAME_MAX, "training frame exceeds gateway buffer");
 _Static_assert(CALENDAR_FRAME_SIZE <= STATE_FRAME_MAX, "calendar frame exceeds gateway buffer");
@@ -179,6 +186,7 @@ struct spotify_state {
     uint32_t progress_ms, duration_ms;
     char title[SPOTIFY_TITLE_MAX + 1], artist[SPOTIFY_TITLE_MAX + 1];
     char device[SPOTIFY_DEVICE_MAX + 1];
+    char track_id[SPOTIFY_TRACK_ID_SIZE + 1];
 };
 static struct spotify_state latest_spotify = {0};
 
@@ -219,8 +227,12 @@ struct controller_state {
     struct garmin_state garmin;
     uint8_t activity_count;
     unsigned char activities[ACTIVITY_COUNT_MAX][ACTIVITY_RECORD_SIZE];
-    int16_t charts[ACTIVITY_COUNT_MAX][ACTIVITY_CHART_COUNT][ACTIVITY_CHART_SAMPLES];
+    int16_t charts[ACTIVITY_COUNT_MAX][ACTIVITY_CHART_COUNT + ACTIVITY_EXTRA_CHARTS][ACTIVITY_CHART_SAMPLES];
     struct activity_laps laps[ACTIVITY_COUNT_MAX];
+    uint8_t route_count[ACTIVITY_COUNT_MAX];
+    uint8_t routes[ACTIVITY_COUNT_MAX][ACTIVITY_ROUTE_MAX * 2];
+    size_t cover_length;
+    unsigned char cover[SPOTIFY_COVER_MAX + 2]; /* EVP_DecodeBlock includes padding. */
 };
 
 static void stop_handler(int signal_number)
@@ -264,7 +276,8 @@ static unsigned int psk_callback(SSL* ssl, const char* identity,
 {
     (void)ssl;
     if (!identity || (strcmp(identity, "DeskDisplay-peer") && strcmp(identity, activity_identity)
-                      && strcmp(identity, chart_identity) && strcmp(identity, lap_identity))
+                      && strcmp(identity, chart_identity) && strcmp(identity, lap_identity)
+                      && strcmp(identity, media_identity))
         || max_length < sizeof(psk)) return 0;
     memcpy(output, psk, sizeof(psk));
     return sizeof(psk);
@@ -361,7 +374,7 @@ static int fetch_controller_state(struct controller_state* result)
     const int request_length = snprintf(request, sizeof(request),
                                         "GET %s HTTP/1.0\r\nHost: %s\r\n"
                                         "X-DeskDisplay-Activities: 1\r\nX-DeskDisplay-Charts: 1\r\n"
-                                        "X-DeskDisplay-Laps: 1\r\nConnection: close\r\n\r\n",
+                                        "X-DeskDisplay-Laps: 1\r\nX-DeskDisplay-Media: 1\r\nConnection: close\r\n\r\n",
                                         state_path, state_host);
     if (request_length <= 0 || (size_t)request_length >= sizeof(request) ||
         !send_socket_all(fd, request, (size_t)request_length))
@@ -370,7 +383,7 @@ static int fetch_controller_state(struct controller_state* result)
         return 0;
     }
 
-    static char response[32768];
+    static char response[65536];
     memset(response, 0, sizeof(response));
     size_t length = 0;
     while (length + 1 < sizeof(response))
@@ -515,7 +528,7 @@ static int fetch_controller_state(struct controller_state* result)
             if (field_count != 1 + ACTIVITY_FIELD_COUNT
                 || result->activity_count >= ACTIVITY_COUNT_MAX) return 0;
             unsigned char* field = result->activities[result->activity_count];
-            for (size_t i = 0; i < ACTIVITY_CHART_COUNT; ++i)
+            for (size_t i = 0; i < ACTIVITY_CHART_COUNT + ACTIVITY_EXTRA_CHARTS; ++i)
                 for (size_t sample = 0; sample < ACTIVITY_CHART_SAMPLES; ++sample)
                     result->charts[result->activity_count][i][sample] = INT16_MIN;
             ++result->activity_count;
@@ -531,7 +544,7 @@ static int fetch_controller_state(struct controller_state* result)
         {
             unsigned long index = 0;
             if (field_count != 3 || !result->activity_count
-                || !parse_unsigned(fields[1], ACTIVITY_CHART_COUNT - 1, &index)) return 0;
+                || !parse_unsigned(fields[1], ACTIVITY_CHART_COUNT + ACTIVITY_EXTRA_CHARTS - 1, &index)) return 0;
             char* number = fields[2];
             for (size_t sample = 0; sample < ACTIVITY_CHART_SAMPLES; ++sample)
             {
@@ -542,6 +555,20 @@ static int fetch_controller_state(struct controller_state* result)
                 if (!parse_signed(number, INT16_MIN, INT16_MAX, &value)) return 0;
                 result->charts[result->activity_count - 1][index][sample] = (int16_t)value;
                 if (comma) number = comma + 1;
+            }
+        }
+        else if (!strcmp(fields[0], "garmin_route"))
+        {
+            if (!result->activity_count || field_count != 2) return 0;
+            const size_t length = strlen(fields[1]);
+            if (length < 8 || length > 4 * ACTIVITY_ROUTE_MAX || length % 4) return 0;
+            const size_t record = result->activity_count - 1;
+            result->route_count[record] = (uint8_t)(length / 4);
+            for (size_t i = 0; i < length / 2; ++i)
+            {
+                const int hi = hex_value(fields[1][2 * i]), lo = hex_value(fields[1][2 * i + 1]);
+                if (hi < 0 || lo < 0 || 16 * hi + lo > 240) return 0;
+                result->routes[record][i] = (uint8_t)(16 * hi + lo);
             }
         }
         else if (!strcmp(fields[0], "garmin_lap_total"))
@@ -581,6 +608,29 @@ static int fetch_controller_state(struct controller_state* result)
             if (strcmp(fields[5], "-")) strcpy(result->spotify.title, fields[5]);
             if (strcmp(fields[6], "-")) strcpy(result->spotify.artist, fields[6]);
             if (strcmp(fields[7], "-")) strcpy(result->spotify.device, fields[7]);
+        }
+        else if (!strcmp(fields[0], "spotify_track"))
+        {
+            if (field_count != 2 || strlen(fields[1]) != SPOTIFY_TRACK_ID_SIZE) return 0;
+            for (const char* c = fields[1]; *c; ++c)
+                if (!((*c >= '0' && *c <= '9') || (*c >= 'A' && *c <= 'Z') || (*c >= 'a' && *c <= 'z')))
+                    return 0;
+            strcpy(result->spotify.track_id, fields[1]);
+        }
+        else if (!strcmp(fields[0], "spotify_cover"))
+        {
+            if (field_count != 2 || !result->spotify.track_id[0]) return 0;
+            const size_t encoded = strlen(fields[1]);
+            if (encoded < 8 || encoded % 4 || encoded > ((SPOTIFY_COVER_MAX + 2) / 3) * 4) return 0;
+            const int decoded = EVP_DecodeBlock(result->cover, (const unsigned char*)fields[1], (int)encoded);
+            const size_t padding = fields[1][encoded - 1] == '='
+                ? (fields[1][encoded - 2] == '=' ? 2 : 1) : 0;
+            if (decoded < 0 || (size_t)decoded < padding + 4) return 0;
+            result->cover_length = (size_t)decoded - padding;
+            if (result->cover_length > SPOTIFY_COVER_MAX
+                || result->cover[0] != 0xff || result->cover[1] != 0xd8
+                || result->cover[result->cover_length - 2] != 0xff
+                || result->cover[result->cover_length - 1] != 0xd9) return 0;
         }
         else if (!strcmp(fields[0], "calendar"))
         {
@@ -1089,11 +1139,12 @@ static size_t make_calendar_frame(unsigned char* frame, uint64_t sequence, int i
 }
 
 static size_t make_spotify_frame(unsigned char* frame, uint64_t sequence, int invalid,
-                                 const struct spotify_state* state)
+                                 const struct spotify_state* state, int with_media)
 {
-    memset(frame, 0, SPOTIFY_FRAME_SIZE);
+    const size_t payload = SPOTIFY_PAYLOAD_SIZE + (with_media ? SPOTIFY_TRACK_ID_SIZE : 0);
+    memset(frame, 0, FRAME_HEADER_SIZE + payload);
     frame[0] = invalid ? 'X' : 'D'; frame[1] = 'S'; frame[2] = 1; frame[3] = 5;
-    put16(frame + 4, SPOTIFY_PAYLOAD_SIZE);
+    put16(frame + 4, payload);
     put64(frame + 6, sequence);
     unsigned char* p = frame + FRAME_HEADER_SIZE;
     p[0] = state->status; p[1] = state->capabilities;
@@ -1101,7 +1152,8 @@ static size_t make_spotify_frame(unsigned char* frame, uint64_t sequence, int in
     memcpy(p + 10, state->title, strlen(state->title));
     memcpy(p + 11 + SPOTIFY_TITLE_MAX, state->artist, strlen(state->artist));
     memcpy(p + 12 + 2 * SPOTIFY_TITLE_MAX, state->device, strlen(state->device));
-    return SPOTIFY_FRAME_SIZE;
+    if (with_media) memcpy(p + SPOTIFY_PAYLOAD_SIZE, state->track_id, SPOTIFY_TRACK_ID_SIZE);
+    return FRAME_HEADER_SIZE + payload;
 }
 
 static size_t make_garmin_frame(unsigned char* frame, uint64_t sequence, int invalid,
@@ -1138,9 +1190,21 @@ static size_t make_garmin_frame(unsigned char* frame, uint64_t sequence, int inv
 
 static struct controller_state latest_state = {0};
 
-static size_t make_activity_frame(unsigned char* frame, uint64_t sequence, int with_charts, int with_laps)
+static size_t make_cover_frame(unsigned char* frame, uint64_t sequence)
 {
-    const size_t payload = with_laps ? ACTIVITY_LAP_PAYLOAD_SIZE
+    const size_t payload = SPOTIFY_TRACK_ID_SIZE + latest_state.cover_length;
+    frame[0] = 'D'; frame[1] = 'S'; frame[2] = 1; frame[3] = 8;
+    put16(frame + 4, payload); put64(frame + 6, sequence);
+    memcpy(frame + FRAME_HEADER_SIZE, latest_state.spotify.track_id, SPOTIFY_TRACK_ID_SIZE);
+    memcpy(frame + FRAME_HEADER_SIZE + SPOTIFY_TRACK_ID_SIZE, latest_state.cover, latest_state.cover_length);
+    return FRAME_HEADER_SIZE + payload;
+}
+
+static size_t make_activity_frame(unsigned char* frame, uint64_t sequence, int with_charts,
+                                  int with_laps, int with_media)
+{
+    const size_t payload = with_media ? ACTIVITY_MEDIA_PAYLOAD_SIZE
+        : with_laps ? ACTIVITY_LAP_PAYLOAD_SIZE
         : with_charts ? ACTIVITY_CHART_PAYLOAD_SIZE : ACTIVITY_PAYLOAD_SIZE;
     memset(frame, 0, FRAME_HEADER_SIZE + payload);
     frame[0] = 'D'; frame[1] = 'S'; frame[2] = 1; frame[3] = 7;
@@ -1171,6 +1235,20 @@ static size_t make_activity_frame(unsigned char* frame, uint64_t sequence, int w
                 put32(p + 4, laps->items[index].metres);
                 put16(p + 8, laps->items[index].heart_rate);
             }
+        }
+    }
+    if (with_media)
+    {
+        for (size_t record = 0; record < latest_state.activity_count; ++record)
+        {
+            unsigned char* p = frame + FRAME_HEADER_SIZE + ACTIVITY_LAP_PAYLOAD_SIZE
+                + record * ACTIVITY_MEDIA_GROUP_SIZE;
+            *p++ = latest_state.route_count[record];
+            memcpy(p, latest_state.routes[record], ACTIVITY_ROUTE_MAX * 2);
+            p += ACTIVITY_ROUTE_MAX * 2;
+            for (size_t series = ACTIVITY_CHART_COUNT; series < ACTIVITY_CHART_COUNT + ACTIVITY_EXTRA_CHARTS; ++series)
+                for (size_t sample = 0; sample < ACTIVITY_CHART_SAMPLES; ++sample, p += 2)
+                    put16(p, (uint16_t)latest_state.charts[record][series][sample]);
         }
     }
     return FRAME_HEADER_SIZE + payload;
@@ -1390,10 +1468,12 @@ int main(int argc, char** argv)
         uint64_t sequence = 1;
         uint64_t command_sequence = 0;
         const char* identity = SSL_get_psk_identity(ssl);
-        const int send_laps = identity && !strcmp(identity, lap_identity);
+        const int send_media = identity && !strcmp(identity, media_identity);
+        const int send_laps = send_media || (identity && !strcmp(identity, lap_identity));
         const int send_charts = send_laps || (identity && !strcmp(identity, chart_identity));
         const int send_activities = send_charts || (identity && !strcmp(identity, activity_identity));
         unsigned activity_round = 0;
+        char sent_cover[SPOTIFY_TRACK_ID_SIZE + 1] = {0};
         const struct timeval command_timeout = {.tv_sec = 2, .tv_usec = 0};
         setsockopt(socket_fd, SOL_SOCKET, SO_RCVTIMEO, &command_timeout, sizeof(command_timeout));
         int replay_sent = 0, malformed_sent = 0;
@@ -1410,11 +1490,18 @@ int main(int argc, char** argv)
             // replay/malformed modes keep their original single-frame behavior.
             if (state_path[0] && !replay_once && !malformed_once)
             {
-                const size_t spotify_length = make_spotify_frame(frame, sequence++, 0, &latest_spotify);
+                const size_t spotify_length = make_spotify_frame(frame, sequence++, 0, &latest_spotify, send_media);
                 if (!send_all(ssl, frame, spotify_length)) break;
+                if (send_media && latest_state.cover_length && latest_spotify.track_id[0]
+                    && strcmp(sent_cover, latest_spotify.track_id))
+                {
+                    const size_t cover_length = make_cover_frame(frame, sequence++);
+                    if (!send_all(ssl, frame, cover_length)) break;
+                    strcpy(sent_cover, latest_spotify.track_id);
+                }
                 if (send_activities && activity_round++ % 5 == 0)
                 {
-                    const size_t activity_length = make_activity_frame(frame, sequence++, send_charts, send_laps);
+                    const size_t activity_length = make_activity_frame(frame, sequence++, send_charts, send_laps, send_media);
                     if (!send_all(ssl, frame, activity_length)) break;
                 }
             }

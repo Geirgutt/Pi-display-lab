@@ -1,6 +1,8 @@
 #include "ui.h"
 #include "hardware.h"
 #include "ui_layout.h"
+#include "secure_transport.h"
+#include "spotify_logo.h"
 #include <LovyanGFX.hpp>
 #include <time.h>
 
@@ -35,6 +37,7 @@ bool calendarDrawn = false;
 secure_protocol::SpotifyTelemetry lastSpotify{};
 bool spotifyDrawn = false;
 bool lastSpotifyConnected = false;
+bool lastSpotifyCoverVisible = false;
 secure_protocol::GarminTelemetry lastGarmin{};
 bool garminDrawn = false;
 uint8_t lastGarminPage = 255;
@@ -859,16 +862,18 @@ void activityDetail(const app_state::Model& model)
 
 void activityDetailButtons(const app_state::Model& model)
 {
-    if (model.activityFromHome) button(61, "History", 12, 426, 108, model.pressedButton == 61);
-    else button(65, "Back", 12, 426, 108, model.pressedButton == 65);
+    if (model.activityFromHome) button(61, "History", 12, 426, 94, model.pressedButton == 61);
+    else button(65, "Back", 12, 426, 94, model.pressedButton == 65);
     if (model.selectedActivity.title[0])
     {
-        button(67, model.activityView == app_state::ActivityView::Charts ? "Summary" : "Charts",
-               128, 426, 108, model.pressedButton == 67);
-        button(76, model.activityView == app_state::ActivityView::Laps ? "Summary" : "Laps",
-               244, 426, 108, model.pressedButton == 76);
+        button(67, model.activityView == app_state::ActivityView::Charts ? "Stats" : "Charts",
+               110, 426, 92, model.pressedButton == 67);
+        button(76, model.activityView == app_state::ActivityView::Laps ? "Stats" : "Laps",
+               206, 426, 82, model.pressedButton == 76);
+        button(77, model.activityView == app_state::ActivityView::Map ? "Stats" : "Map",
+               292, 426, 82, model.pressedButton == 77);
     }
-    button(5, "Home", 360, 426, 108, model.pressedButton == 5);
+    button(5, "Home", 378, 426, 90, model.pressedButton == 5);
 }
 
 void lapNavigation(const app_state::Model& model)
@@ -964,37 +969,76 @@ void garminSparkline(const int16_t* history, int16_t x, int16_t y)
         drawChart(history, secure_protocol::garminHistoryMax, low, high, x, y, 180, 14);
 }
 
+void extraChartButton(const app_state::Model& model)
+{
+    if (model.selectedActivity.extraChartsAvailable)
+        button(78, model.extraActivityCharts ? "Back" : "More", 370, 376, 98, model.pressedButton == 78);
+}
+
 void activityCharts(const app_state::Model& model)
 {
     const auto& activity = model.selectedActivity;
-    if (!activity.chartsAvailable)
+    if (!activity.chartsAvailable && !activity.extraChartsAvailable)
     {
         label("No chart data available yet", 24, 106);
         return;
     }
-    static const char* captions[] = {"Heart rate (bpm)", "Pace (min/km)", "Elevation (m)"};
-    for (size_t series = 0; series < secure_protocol::activityChartCount; ++series)
+    static const char* captions[] = {"Heart rate (bpm)", "Pace (min/km)", "Elevation (m)",
+                                    "Cadence (rpm)", "Power (W)"};
+    const bool extras = model.extraActivityCharts;
+    const size_t count = extras ? secure_protocol::activityExtraChartCount : secure_protocol::activityChartCount;
+    for (size_t series = 0; series < count; ++series)
     {
         const int16_t y = 68 + series * 110;
-        label(captions[series], 24, y, 2);
+        label(captions[series + (extras ? secure_protocol::activityChartCount : 0)], 24, y, 2);
         int16_t low, high;
-        const auto& samples = activity.charts[series];
+        const auto& samples = extras ? activity.extraCharts[series] : activity.charts[series];
+        if (!extras && !activity.chartsAvailable)
+        {
+            label("No measurements", 24, y + 42, 1, muted);
+            continue;
+        }
         if (!chartBounds(samples, secure_protocol::activityChartSamples, low, high))
         {
             label("No measurements", 24, y + 42, 1, muted);
             continue;
         }
         char range[48];
-        const bool pace = series == 1;
+        const bool pace = !extras && series == 1;
         if (pace) snprintf(range, sizeof(range), "%d:%02d - %d:%02d", low / 60, low % 60,
                            high / 60, high % 60);
         else snprintf(range, sizeof(range), "%d - %d", low, high);
         label(range, 322, y + 6, 1, muted);
-        display().drawFastHLine(24, y + 96, 432, muted);
-        drawChart(samples, secure_protocol::activityChartSamples, low, high, 24, y + 30, 431, 60, pace);
+        const bool aboveButton = series == 2 && activity.extraChartsAvailable;
+        display().drawFastHLine(24, y + (aboveButton ? 85 : 96), 432, muted);
+        drawChart(samples, secure_protocol::activityChartSamples, low, high, 24, y + 30, 431,
+                  aboveButton ? 49 : 60, pace);
     }
     label("Start", 24, 392, 1, muted);
-    label("Finish", 420, 392, 1, muted);
+    label("Finish", activity.extraChartsAvailable ? 309 : 420, 392, 1, muted);
+    extraChartButton(model);
+}
+
+void activityMap(const app_state::Model& model)
+{
+    const auto& activity = model.selectedActivity;
+    if (activity.routeCount < 2)
+    {
+        label("No GPS route available", 24, 106);
+        return;
+    }
+    display().fillRoundRect(12, 69, 456, 326, 8, card);
+    label("N", 422, 84, 1, muted);
+    display().drawFastVLine(425, 97, 16, muted);
+    const auto x = [&](size_t index) { return 92 + activity.route[2 * index] * 296 / 240; };
+    const auto y = [&](size_t index) { return 83 + activity.route[2 * index + 1] * 296 / 240; };
+    for (size_t index = 1; index < activity.routeCount; ++index)
+        display().drawWideLine(x(index - 1), y(index - 1), x(index), y(index), 1.25f, accent);
+    const size_t last = activity.routeCount - 1;
+    display().fillCircle(x(0), y(0), 5, good);
+    display().drawCircle(x(last), y(last), 7, warning);
+    label("Start", 32, 403, 1, good);
+    label("Finish", 106, 403, 1, warning);
 }
 
 void garminMetricDetail(const app_state::Model& model)
@@ -1093,33 +1137,38 @@ void garminTelemetry(const app_state::Model& model, bool force = false)
     }
 }
 
-void spotifyLine(const char* value, int16_t y, uint16_t color = text)
+void spotifyLine(const char* value, int16_t y, uint16_t color = text,
+                 int16_t x = 26, int16_t right = 454)
 {
-    char line[200];
-    copyDisplayText(value, line, sizeof(line));
+    display().setTextColor(color, background);
     display().setTextSize(2);
-    size_t length = strlen(line);
-    while (length && display().textWidth(line) > 428) line[--length] = 0;
-    label(line, 26, y, 2, color);
+    clippedText(value, x, y, right - x);
 }
 
-void spotifyProgress(uint32_t elapsed, uint32_t duration)
+void spotifyProgress(uint32_t elapsed, uint32_t duration, int16_t x, int16_t right)
 {
     char progress[32];
     snprintf(progress, sizeof(progress), "%lu:%02lu / %lu:%02lu",
              static_cast<unsigned long>(elapsed / 60), static_cast<unsigned long>(elapsed % 60),
              static_cast<unsigned long>(duration / 60), static_cast<unsigned long>(duration % 60));
-    label(progress, 26, 274, 2, muted);
+    spotifyLine(progress, 274, muted, x, right);
 }
 
 void spotifyTelemetry(const app_state::Model& model, bool force = false)
 {
     const auto& state = model.spotifyTelemetry;
     const bool hasPlayback = model.spotifyConnected && (state.status == 1 || state.status == 2);
+    const auto& cover = secure_transport::lastSpotifyCover();
+    const bool coverVisible = hasPlayback && cover.length && state.trackId[0]
+        && strcmp(cover.trackId, state.trackId) == 0;
+    const bool trackLink = hasPlayback && state.trackId[0];
+    const int16_t playbackX = coverVisible ? 194 : 26;
+    const int16_t lowerRight = trackLink ? 358 : 454;
     const bool showProgress = hasPlayback && state.durationMs > 0;
     const uint32_t elapsed = state.progressMs / 1000;
     const uint32_t duration = state.durationMs / 1000;
-    if (!force && spotifyDrawn && lastSpotifyConnected == model.spotifyConnected)
+    if (!force && spotifyDrawn && lastSpotifyConnected == model.spotifyConnected
+        && lastSpotifyCoverVisible == coverVisible)
     {
         const uint32_t previousElapsed = lastSpotify.progressMs / 1000;
         lastSpotify.progressMs = state.progressMs;
@@ -1127,8 +1176,8 @@ void spotifyTelemetry(const app_state::Model& model, bool force = false)
         {
             if (showProgress && elapsed != previousElapsed)
             {
-                display().fillRect(26, 274, 428, 20, background);
-                spotifyProgress(elapsed, duration);
+                display().fillRect(playbackX, 274, lowerRight - playbackX, 20, background);
+                spotifyProgress(elapsed, duration, playbackX, lowerRight);
             }
             return;
         }
@@ -1136,19 +1185,29 @@ void spotifyTelemetry(const app_state::Model& model, bool force = false)
     spotifyDrawn = true;
     lastSpotify = state;
     lastSpotifyConnected = model.spotifyConnected;
+    lastSpotifyCoverVisible = coverVisible;
     display().fillRect(12, 68, 456, 340, background);
+    display().drawPng(spotifyLogo, sizeof(spotifyLogo), 366, 82);
     const char* statuses[] = {"Not connected to Spotify", "Playing", "Paused",
         "Start Spotify on a device", "Reconnect Spotify on the Pi",
         "Spotify access denied", "Spotify request limit; waiting", "Spotify unavailable"};
     spotifyLine(model.spotifyConnected ? (state.capabilities & 8 ? "Updating playback..."
                                       : statuses[state.status <= 7 ? state.status : 7])
-                                      : "Controller disconnected", 88, good);
+                                      : "Controller disconnected", 88, good, 26, 347);
     if (hasPlayback)
     {
-        spotifyLine(state.title[0] ? state.title : "Track info unavailable", 144);
-        spotifyLine(state.artist, 184, muted);
-        spotifyLine(state.device, 230, muted);
-        if (showProgress) spotifyProgress(elapsed, duration);
+        if (coverVisible) display().drawJpg(cover.jpeg, cover.length, 26, 133, 160, 160, 0, 0, 2.0f);
+        spotifyLine(state.title[0] ? state.title : "Track info unavailable", 144, text, playbackX);
+        spotifyLine(state.artist, 184, muted, playbackX);
+        spotifyLine(state.device, 230, muted, playbackX, lowerRight);
+        if (showProgress) spotifyProgress(elapsed, duration, playbackX, lowerRight);
+        if (trackLink)
+        {
+            char url[64];
+            snprintf(url, sizeof(url), "https://open.spotify.com/track/%s", state.trackId);
+            display().qrcode(url, 360, 207, 100, 4, true);
+            label("Open in Spotify", 360, 307, 1, muted);
+        }
     }
     else if (model.spotifyConnected && (state.status == 0 || state.status == 4))
     {
@@ -1229,9 +1288,11 @@ void ui::page(const app_state::Model& model)
     }
     else if (model.page == app_state::Page::ActivityDetail)
     {
-        header(model.activityView == app_state::ActivityView::Laps ? "Laps / intervals" : "Activity");
+        header(model.activityView == app_state::ActivityView::Laps ? "Laps / intervals"
+               : model.activityView == app_state::ActivityView::Map ? "GPS route" : "Activity");
         if (model.activityView == app_state::ActivityView::Laps) activityLaps(model);
         else if (model.activityView == app_state::ActivityView::Charts) activityCharts(model);
+        else if (model.activityView == app_state::ActivityView::Map) activityMap(model);
         else activityDetail(model);
         activityDetailButtons(model);
     }
@@ -1362,6 +1423,7 @@ void ui::pressed(const app_state::Model& model)
     {
         activityDetailButtons(model);
         if (model.activityView == app_state::ActivityView::Laps) lapNavigation(model);
+        if (model.activityView == app_state::ActivityView::Charts) extraChartButton(model);
     }
     else if (model.page == app_state::Page::GarminMetricDetail) garminMetricButtons(model);
     else if (model.page == app_state::Page::Spotify)

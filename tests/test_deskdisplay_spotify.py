@@ -24,9 +24,14 @@ int main(int argc, char** argv) {
     assert(fetch_controller_state(&state));
     assert(state.spotify.status == 1 && state.spotify.capabilities == 5);
     assert(!strcmp(state.spotify.title, "Test song"));
-    unsigned char frame[SPOTIFY_FRAME_SIZE];
-    const size_t length = make_spotify_frame(frame, 42, 0, &state.spotify);
+    unsigned char frame[STATE_FRAME_MAX];
+    const size_t length = make_spotify_frame(frame, 42, 0, &state.spotify, 0);
     assert(fwrite(frame, 1, length, stdout) == length);
+    const size_t media_length = make_spotify_frame(frame, 43, 0, &state.spotify, 1);
+    assert(fwrite(frame, 1, media_length, stdout) == media_length);
+    latest_state = state;
+    const size_t cover_length = make_cover_frame(frame, 44);
+    assert(fwrite(frame, 1, cover_length, stdout) == cover_length);
     return 0;
 }
 '''
@@ -56,6 +61,15 @@ int main() {
     frame[headerSize + spotifyPayloadSize - 1] = 0;
     frame[headerSize] = 8;
     assert(!decodeSpotifyTelemetry(frame, sizeof(frame), sequence, state));
+    unsigned char media[spotifyMediaFrameSize];
+    assert(fread(media, 1, sizeof(media), stdin) == sizeof(media));
+    assert(decodeSpotifyTelemetry(media, sizeof(media), sequence, state));
+    assert(sequence == 43 && !strcmp(state.trackId, "abcdefghijklmnopqrstuv"));
+    unsigned char cover[headerSize + spotifyTrackIdSize + 4];
+    assert(fread(cover, 1, sizeof(cover), stdin) == sizeof(cover));
+    assert(cover[3] == spotifyCoverType && get64(cover + 6) == 44);
+    assert(!memcmp(cover + headerSize, state.trackId, spotifyTrackIdSize));
+    assert(cover[sizeof(cover) - 1] == 0xd9);
     return 0;
 }
 '''
@@ -89,7 +103,8 @@ class SpotifyWireTests(unittest.TestCase):
                 def do_GET(self):
                     self.send_response(200)
                     self.end_headers()
-                    self.wfile.write(b"DSSTATE/2\nspotify\t1\t5\t2500\t180000\tTest song\tArtist\tPC\n")
+                    self.wfile.write(b"DSSTATE/2\nspotify\t1\t5\t2500\t180000\tTest song\tArtist\tPC\n"
+                                     b"spotify_track\tabcdefghijklmnopqrstuv\nspotify_cover\t/9j/2Q==\n")
 
             with HTTPServer(("127.0.0.1", 0), Handler) as server:
                 worker = threading.Thread(target=server.handle_request, daemon=True)

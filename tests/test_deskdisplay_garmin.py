@@ -20,6 +20,7 @@ BODY += "garmin_activity\t" + "\t".join(ACTIVITY_FIELDS) + "\n"
 CHART = [128] + [-32768] * 22 + [152]
 BODY += "garmin_chart\t0\t" + ",".join(map(str, CHART)) + "\n"
 BODY += "garmin_lap_total\t1\ngarmin_lap\t300\t1000\t145\n"
+BODY += "garmin_route\t00b4f03c\ngarmin_chart\t3\t" + ",".join(["84"] * 24) + "\n"
 
 
 def fixture():
@@ -38,11 +39,14 @@ def fixture():
     scaled = payload + struct.pack("<2I", 20774, 1) + bytes(23 * 4)
     charted = activity + struct.pack("<72h", *CHART, *([-32768] * 48)) + bytes(9 * 144)
     lapped = charted + struct.pack("<HBiih", 1, 1, 300, 1000, 145) + bytes(19 * 10 + 9 * 203)
+    media = (lapped + bytes([2, 0, 180, 240, 60]) + bytes(156)
+             + struct.pack("<48h", *([84] * 24), *([-32768] * 24)) + bytes(9 * 257))
     return (b"DS\x01\x06" + struct.pack("<HQ", len(payload), 42) + payload
             + b"DS\x01\x07" + struct.pack("<HQ", len(activity), 43) + activity
             + b"DS\x01\x06" + struct.pack("<HQ", len(scaled), 44) + scaled
             + b"DS\x01\x07" + struct.pack("<HQ", len(charted), 45) + charted
-            + b"DS\x01\x07" + struct.pack("<HQ", len(lapped), 46) + lapped)
+            + b"DS\x01\x07" + struct.pack("<HQ", len(lapped), 46) + lapped
+            + b"DS\x01\x07" + struct.pack("<HQ", len(media), 47) + media)
 
 
 CPP = r'''
@@ -104,6 +108,11 @@ int main() {
     assert(history.items[0].laps[0].heartRate == 145);
     lapped[activityChartFrameSize + 2] = 21;
     assert(!decodeActivityTelemetry(lapped, sizeof(lapped), sequence, history));
+    unsigned char media[activityMediaFrameSize];
+    assert(fread(media, 1, sizeof(media), stdin) == sizeof(media));
+    assert(decodeActivityTelemetry(media, sizeof(media), sequence, history));
+    assert(sequence == 47 && history.items[0].routeCount == 2);
+    assert(history.items[0].route[2] == 240 && history.items[0].extraCharts[0][23] == 84);
     return 0;
 }
 '''
@@ -125,14 +134,16 @@ int main(int argc, char** argv) {
     const size_t length = make_garmin_frame(frame, 42, 0, &state.garmin, 0);
     assert(fwrite(frame, 1, length, stdout) == length);
     latest_state = state;
-    const size_t activity_length = make_activity_frame(frame, 43, 0, 0);
+    const size_t activity_length = make_activity_frame(frame, 43, 0, 0, 0);
     assert(fwrite(frame, 1, activity_length, stdout) == activity_length);
     const size_t scaled_length = make_garmin_frame(frame, 44, 0, &state.garmin, 1);
     assert(fwrite(frame, 1, scaled_length, stdout) == scaled_length);
-    const size_t charted_length = make_activity_frame(frame, 45, 1, 0);
+    const size_t charted_length = make_activity_frame(frame, 45, 1, 0, 0);
     assert(fwrite(frame, 1, charted_length, stdout) == charted_length);
-    const size_t lapped_length = make_activity_frame(frame, 46, 1, 1);
+    const size_t lapped_length = make_activity_frame(frame, 46, 1, 1, 0);
     assert(fwrite(frame, 1, lapped_length, stdout) == lapped_length);
+    const size_t media_length = make_activity_frame(frame, 47, 1, 1, 1);
+    assert(fwrite(frame, 1, media_length, stdout) == media_length);
     return 0;
 }
 '''

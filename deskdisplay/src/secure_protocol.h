@@ -20,9 +20,12 @@ constexpr uint8_t calendarTelemetryType = 4;
 constexpr uint8_t spotifyTelemetryType = 5;
 constexpr uint8_t garminTelemetryType = 6;
 constexpr uint8_t activityTelemetryType = 7;
+constexpr uint8_t spotifyCoverType = 8;
 constexpr size_t activityCountMax = 10;
 constexpr size_t activityMetricCount = 6;
 constexpr size_t activityChartCount = 3;
+constexpr size_t activityExtraChartCount = 2;
+constexpr size_t activityRouteMax = 80;
 constexpr size_t activityChartSamples = 24;
 constexpr size_t activityLapMax = 20;
 constexpr size_t activityLapSize = 10;
@@ -56,6 +59,10 @@ struct Activity
     uint16_t lapTotal = 0;
     uint8_t lapCount = 0;
     ActivityLap laps[activityLapMax]{};
+    uint8_t routeCount = 0;
+    uint8_t route[activityRouteMax * 2] = {};
+    bool extraChartsAvailable = false;
+    int16_t extraCharts[activityExtraChartCount][activityChartSamples] = {};
 };
 struct ActivityTelemetry
 {
@@ -67,15 +74,21 @@ constexpr size_t activityPayloadSize = 1 + activityCountMax * activityRecordSize
 constexpr size_t activityFrameSize = 14 + activityPayloadSize;
 constexpr size_t activityChartFrameSize = activityFrameSize + activityCountMax * activityChartCount * activityChartSamples * 2;
 constexpr size_t activityLapFrameSize = activityChartFrameSize + activityCountMax * activityLapGroupSize;
+constexpr size_t activityMediaGroupSize = 1 + 2 * activityRouteMax + 2 * activityExtraChartCount * activityChartSamples;
+constexpr size_t activityMediaFrameSize = activityLapFrameSize + activityCountMax * activityMediaGroupSize;
 constexpr bool validActivityFrameSize(size_t length)
 {
-    return length == activityFrameSize || length == activityChartFrameSize || length == activityLapFrameSize;
+    return length == activityFrameSize || length == activityChartFrameSize
+        || length == activityLapFrameSize || length == activityMediaFrameSize;
 }
 constexpr uint8_t spotifyCommandType = 0x91;
 constexpr size_t spotifyTitleMax = 96;
 constexpr size_t spotifyDeviceMax = 48;
 constexpr size_t spotifyPayloadSize = 10 + 2 * (spotifyTitleMax + 1) + spotifyDeviceMax + 1;
 constexpr size_t spotifyFrameSize = 14 + spotifyPayloadSize;
+constexpr size_t spotifyTrackIdSize = 22;
+constexpr size_t spotifyMediaFrameSize = spotifyFrameSize + spotifyTrackIdSize;
+constexpr size_t spotifyCoverMax = 7000;
 constexpr uint8_t controlTypeBase = 0x80;
 constexpr uint8_t otaOfferType = 0x80;
 constexpr uint8_t otaChunkType = 0x81;
@@ -122,12 +135,13 @@ constexpr size_t otaChunkFrameSize = headerSize + otaChunkHeaderSize + otaChunkD
 constexpr size_t otaCompleteFrameSize = headerSize;
 constexpr size_t otaAckPayloadSize = 1 + 4;
 constexpr size_t otaAckFrameSize = headerSize + otaAckPayloadSize;
-constexpr size_t maxFrameSize = otaChunkFrameSize > activityLapFrameSize
-                              ? otaChunkFrameSize : activityLapFrameSize;
+constexpr size_t maxFrameSize = otaChunkFrameSize > activityMediaFrameSize
+                              ? otaChunkFrameSize : activityMediaFrameSize;
 static_assert(clusterFrameSize <= maxFrameSize, "Cluster frame exceeds receive buffer");
 static_assert(trainingFrameSize <= maxFrameSize, "Training frame exceeds receive buffer");
 static_assert(calendarFrameSize <= maxFrameSize, "Calendar frame exceeds receive buffer");
 static_assert(spotifyFrameSize <= maxFrameSize, "Spotify frame exceeds receive buffer");
+static_assert(14 + spotifyTrackIdSize + spotifyCoverMax <= maxFrameSize, "Cover frame exceeds receive buffer");
 static_assert(garminScaleFrameSize <= maxFrameSize, "Garmin frame exceeds receive buffer");
 static_assert(activityLapFrameSize <= maxFrameSize, "Activity frame exceeds receive buffer");
 static_assert(otaChunkFrameSize <= maxFrameSize, "OTA frame exceeds receive buffer");
@@ -222,6 +236,14 @@ struct SpotifyTelemetry
     char title[spotifyTitleMax + 1] = {};
     char artist[spotifyTitleMax + 1] = {};
     char device[spotifyDeviceMax + 1] = {};
+    char trackId[spotifyTrackIdSize + 1] = {};
+};
+
+struct SpotifyCover
+{
+    char trackId[spotifyTrackIdSize + 1] = {};
+    size_t length = 0;
+    uint8_t jpeg[spotifyCoverMax] = {};
 };
 
 struct GarminMetric
@@ -475,7 +497,7 @@ inline bool decodeActivityTelemetry(const uint8_t* frame, size_t length, uint64_
                     p += 2;
                 }
         }
-        if (length == activityLapFrameSize)
+        if (length >= activityLapFrameSize)
         {
             p = frame + activityChartFrameSize + index * activityLapGroupSize;
             item.lapTotal = get16(p);
@@ -489,6 +511,25 @@ inline bool decodeActivityTelemetry(const uint8_t* frame, size_t length, uint64_
                 item.laps[lap].heartRate = get16(p + 8);
                 if (item.laps[lap].heartRate > 255) return false;
             }
+        }
+        if (length == activityMediaFrameSize)
+        {
+            p = frame + activityLapFrameSize + index * activityMediaGroupSize;
+            item.routeCount = *p++;
+            if (item.routeCount == 1 || item.routeCount > activityRouteMax) return false;
+            for (size_t coordinate = 0; coordinate < 2 * item.routeCount; ++coordinate)
+            {
+                if (p[coordinate] > 240) return false;
+                item.route[coordinate] = p[coordinate];
+            }
+            p += activityRouteMax * 2;
+            for (auto& series : item.extraCharts)
+                for (auto& sample : series)
+                {
+                    sample = static_cast<int16_t>(get16(p));
+                    item.extraChartsAvailable |= sample != INT16_MIN;
+                    p += 2;
+                }
         }
     }
     for (size_t index = value.count; index < activityCountMax; ++index)
@@ -542,12 +583,23 @@ inline bool decodeGarminTelemetry(const uint8_t* frame, size_t length, uint64_t&
     return true;
 }
 
+inline bool validSpotifyTrackId(const uint8_t* id)
+{
+    for (size_t i = 0; i < spotifyTrackIdSize; ++i)
+    {
+        const uint8_t c = id[i];
+        if (!((c >= '0' && c <= '9') || (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z'))) return false;
+    }
+    return true;
+}
+
 inline bool decodeSpotifyTelemetry(const uint8_t* frame, size_t length, uint64_t& sequence,
                                    SpotifyTelemetry& value)
 {
-    if (!frame || length != spotifyFrameSize || frame[0] != magic0 || frame[1] != magic1
+    if (!frame || (length != spotifyFrameSize && length != spotifyMediaFrameSize)
+        || frame[0] != magic0 || frame[1] != magic1
         || frame[2] != version || frame[3] != spotifyTelemetryType
-        || get16(frame + 4) != spotifyPayloadSize) return false;
+        || get16(frame + 4) != length - headerSize) return false;
     const uint8_t* p = frame + headerSize;
     if (p[0] > 7 || p[1] > 15 || p[10 + spotifyTitleMax] != 0
         || p[11 + 2 * spotifyTitleMax] != 0 || p[spotifyPayloadSize - 1] != 0) return false;
@@ -560,6 +612,8 @@ inline bool decodeSpotifyTelemetry(const uint8_t* frame, size_t length, uint64_t
     memcpy(value.title, p + 10, spotifyTitleMax + 1);
     memcpy(value.artist, p + 11 + spotifyTitleMax, spotifyTitleMax + 1);
     memcpy(value.device, p + 12 + 2 * spotifyTitleMax, spotifyDeviceMax + 1);
+    if (length == spotifyMediaFrameSize && validSpotifyTrackId(p + spotifyPayloadSize))
+        memcpy(value.trackId, p + spotifyPayloadSize, spotifyTrackIdSize);
     return true;
 }
 

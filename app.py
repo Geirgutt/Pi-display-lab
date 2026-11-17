@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import base64
 import math
 import os
 import secrets
@@ -22,10 +23,10 @@ from cluster_client import (
 from cluster_jobs import validate_monte_carlo, validate_prime_range, validate_slot_limit
 from config import AppConfig, load_config
 from display_state import DashboardState
-from garmin_charts import LAP_LIMIT
+from garmin_charts import LAP_LIMIT, ROUTE_LIMIT
 from transports import BrowserTransport, Esp32Transport, TransportHub
 from updates import UpdateManager
-from spotify import COMMANDS
+from spotify import COMMANDS, TRACK_ID
 
 
 DESKDISPLAY_NAME_MAX = 16
@@ -60,7 +61,8 @@ def _epoch(value: Any) -> int:
 
 def _deskdisplay_state_lines(payload: dict[str, Any], worker_hosts: tuple[str, ...],
                              *, include_activities: bool = False, include_charts: bool = False,
-                             include_laps: bool = False) -> str:
+                             include_laps: bool = False, include_media: bool = False,
+                             cover: bytes = b"") -> str:
     """Render compact controller state for the local DeskDisplay gateway."""
 
     nodes = list(payload.get("nodes") or [])
@@ -175,6 +177,11 @@ def _deskdisplay_state_lines(payload: dict[str, Any], worker_hosts: tuple[str, .
                             _compact_text(spotify.get("title"), 96),
                             _compact_text(spotify.get("artist"), 96),
                             _compact_text(spotify.get("device"), 48))))
+    track_id = spotify.get("track_id")
+    if include_media and isinstance(track_id, str) and TRACK_ID.fullmatch(track_id):
+        lines.append("spotify_track\t" + track_id)
+        if cover:
+            lines.append("spotify_cover\t" + base64.b64encode(cover).decode("ascii"))
     garmin = payload.get("garmin") or {}
     garmin_status = {"not_configured": 0, "ok": 1, "stale": 2, "auth_error": 3, "error": 4}
     lines.append(f"garmin\t{garmin_status.get(garmin.get('status'), 4)}\t{int(garmin.get('updated_at') or 0)}")
@@ -212,8 +219,8 @@ def _deskdisplay_state_lines(payload: dict[str, Any], worker_hosts: tuple[str, .
                                     _compact_text(activity.get("kind"), 24),
                                     *(_compact_text(value, 16, "--") for value in values))))
             charts = activity.get("charts")
-            if include_charts and isinstance(charts, list) and len(charts) == 3:
-                for index, series in enumerate(charts):
+            if include_charts and isinstance(charts, list):
+                for index, series in enumerate(charts[:5 if include_media else 3]):
                     if isinstance(series, list) and len(series) == 24:
                         samples = ",".join(str(value) if type(value) is int and -32768 <= value <= 32767
                                            else "-32768" for value in series)
@@ -227,6 +234,13 @@ def _deskdisplay_state_lines(payload: dict[str, Any], worker_hosts: tuple[str, .
                         and all(type(value) is int and 0 <= value <= limit
                                 for value, limit in zip(lap, (0xFFFFFFFF, 0xFFFFFFFF, 255)))):
                         lines.append("\t".join(("garmin_lap", *map(str, lap))))
+            route = activity.get("route")
+            if include_media and isinstance(route, list):
+                points = [bytes(point).hex() for point in route[:ROUTE_LIMIT]
+                          if isinstance(point, list) and len(point) == 2
+                          and all(type(value) is int and 0 <= value <= 240 for value in point)]
+                if len(points) >= 2:
+                    lines.append("garmin_route\t" + "".join(points))
     return "\n".join(lines) + "\n"
 
 
@@ -288,11 +302,15 @@ def create_app(
         if request.remote_addr not in {"127.0.0.1", "::1"}:
             return jsonify({"ok": False, "error": "Kun lokal gateway er tillatt"}), 403
         payload = dashboard.snapshot(cluster_status=cluster_status.snapshot())
+        include_media = request.headers.get("X-DeskDisplay-Media") == "1"
+        track_id = (payload.get("spotify") or {}).get("track_id")
+        cover = dashboard.spotify_provider.cover_for_track(track_id) if include_media and track_id else b""
         return Response(
             _deskdisplay_state_lines(payload, settings.worker_hosts,
                                      include_activities=request.headers.get("X-DeskDisplay-Activities") == "1",
                                      include_charts=request.headers.get("X-DeskDisplay-Charts") == "1",
-                                     include_laps=request.headers.get("X-DeskDisplay-Laps") == "1"),
+                                     include_laps=request.headers.get("X-DeskDisplay-Laps") == "1",
+                                     include_media=include_media, cover=cover),
             mimetype="text/plain",
             headers={"Cache-Control": "no-store"},
         )

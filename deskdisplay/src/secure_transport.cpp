@@ -19,7 +19,7 @@
 
 namespace
 {
-constexpr const char* identities[] = {"DeskDisplay-peer-laps", "DeskDisplay-peer-charts", "DeskDisplay-peer-activities",
+constexpr const char* identities[] = {"DeskDisplay-peer-media", "DeskDisplay-peer-laps", "DeskDisplay-peer-charts", "DeskDisplay-peer-activities",
                                       "DeskDisplay-peer"};
 constexpr char preferenceNamespace[] = "dd-secure";
 constexpr uint16_t defaultPort = 4567;
@@ -65,6 +65,7 @@ secure_protocol::ClusterTelemetry latestCluster;
 secure_protocol::TrainingTelemetry latestTraining;
 secure_protocol::CalendarTelemetry latestCalendar;
 secure_protocol::SpotifyTelemetry latestSpotify;
+secure_protocol::SpotifyCover latestCover;
 secure_protocol::GarminTelemetry latestGarmin;
 secure_protocol::ActivityTelemetry latestActivities;
 secure_transport::Counters stats;
@@ -286,7 +287,17 @@ size_t expectedFrameSize()
         if (frame[3] == secure_protocol::calendarTelemetryType)
             return secure_protocol::calendarFrameSize;
         if (frame[3] == secure_protocol::spotifyTelemetryType)
-            return secure_protocol::spotifyFrameSize;
+        {
+            const size_t length = secure_protocol::headerSize + payloadLength;
+            return length == secure_protocol::spotifyFrameSize || length == secure_protocol::spotifyMediaFrameSize
+                ? length : 0;
+        }
+        if (frame[3] == secure_protocol::spotifyCoverType)
+        {
+            const size_t id = secure_protocol::spotifyTrackIdSize;
+            return payloadLength >= id + 4 && payloadLength <= id + secure_protocol::spotifyCoverMax
+                ? secure_protocol::headerSize + payloadLength : 0;
+        }
         if (frame[3] == secure_protocol::garminTelemetryType)
         {
             const size_t length = secure_protocol::headerSize + payloadLength;
@@ -370,6 +381,34 @@ bool processFrame()
         // process it repeatedly instead of reading the next OTA chunk.
         if (processed) clearFrame();
         return processed;
+    }
+    if (frame[3] == secure_protocol::spotifyCoverType)
+    {
+        const uint8_t* id = frame + secure_protocol::headerSize;
+        const uint8_t* jpeg = id + secure_protocol::spotifyTrackIdSize;
+        const size_t length = frameLength - secure_protocol::headerSize - secure_protocol::spotifyTrackIdSize;
+        const uint64_t sequence = secure_protocol::get64(frame + 6);
+        if (frame[0] != secure_protocol::magic0 || frame[1] != secure_protocol::magic1
+            || frame[2] != secure_protocol::version || !secure_protocol::validSpotifyTrackId(id)
+            || jpeg[0] != 0xff || jpeg[1] != 0xd8 || jpeg[length - 2] != 0xff || jpeg[length - 1] != 0xd9)
+        {
+            ++stats.malformed;
+            closeSession(true);
+            return false;
+        }
+        if (sequence > lastSequence)
+        {
+            lastSequence = sequence;
+            if (memcmp(id, latestSpotify.trackId, secure_protocol::spotifyTrackIdSize) == 0)
+            {
+                memcpy(latestCover.trackId, id, secure_protocol::spotifyTrackIdSize);
+                memcpy(latestCover.jpeg, jpeg, length);
+                latestCover.length = length;
+            }
+        }
+        else ++stats.replayDrops;
+        clearFrame();
+        return true;
     }
     uint64_t sequence = 0;
     secure_protocol::Telemetry value;
@@ -641,6 +680,7 @@ const secure_protocol::ClusterTelemetry& secure_transport::lastClusterTelemetry(
 const secure_protocol::TrainingTelemetry& secure_transport::lastTrainingTelemetry() { return latestTraining; }
 const secure_protocol::CalendarTelemetry& secure_transport::lastCalendarTelemetry() { return latestCalendar; }
 const secure_protocol::SpotifyTelemetry& secure_transport::lastSpotifyTelemetry() { return latestSpotify; }
+const secure_protocol::SpotifyCover& secure_transport::lastSpotifyCover() { return latestCover; }
 const secure_protocol::GarminTelemetry& secure_transport::lastGarminTelemetry() { return latestGarmin; }
 const secure_protocol::ActivityTelemetry& secure_transport::lastActivityTelemetry() { return latestActivities; }
 bool secure_transport::spotifyCommand(uint8_t action)
@@ -715,6 +755,11 @@ const secure_protocol::SpotifyTelemetry& secure_transport::lastSpotifyTelemetry(
 {
     static secure_protocol::SpotifyTelemetry value;
     return value;
+}
+const secure_protocol::SpotifyCover& secure_transport::lastSpotifyCover()
+{
+    static const secure_protocol::SpotifyCover cover;
+    return cover;
 }
 void secure_transport::service() {}
 bool secure_transport::displaySuppressed() { return false; }

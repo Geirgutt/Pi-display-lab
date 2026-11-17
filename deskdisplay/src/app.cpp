@@ -241,10 +241,13 @@ uint8_t hit(int16_t x, int16_t y)
     }
     else if (model.page == app_state::Page::ActivityDetail)
     {
-        if (inside(x, y, 12, 426, 108)) return model.activityFromHome ? 61 : 65;
-        if (model.selectedActivity.title[0] && inside(x, y, 128, 426, 108)) return 67;
-        if (model.selectedActivity.title[0] && inside(x, y, 244, 426, 108)) return 76;
-        if (inside(x, y, 360, 426, 108)) return 5;
+        if (inside(x, y, 12, 426, 94)) return model.activityFromHome ? 61 : 65;
+        if (model.selectedActivity.title[0] && inside(x, y, 110, 426, 92)) return 67;
+        if (model.selectedActivity.title[0] && inside(x, y, 206, 426, 82)) return 76;
+        if (model.selectedActivity.title[0] && inside(x, y, 292, 426, 82)) return 77;
+        if (inside(x, y, 378, 426, 90)) return 5;
+        if (model.activityView == app_state::ActivityView::Charts && model.selectedActivity.extraChartsAvailable
+            && inside(x, y, 370, 376, 98)) return 78;
         if (model.activityView == app_state::ActivityView::Laps)
         {
             if (model.lapOffset && inside(x, y, 12, 376, 72)) return 68;
@@ -368,6 +371,7 @@ void action(uint8_t button)
         model.selectedActivity = model.activities.items[index];
         model.activityFromHome = false;
         model.activityView = app_state::ActivityView::Summary;
+        model.extraActivityCharts = false;
         model.lapOffset = 0;
         model.page = app_state::Page::ActivityDetail;
         ui::page(model);
@@ -439,6 +443,12 @@ void action(uint8_t button)
             ? app_state::ActivityView::Summary : app_state::ActivityView::Laps;
         ui::page(model);
         break;
+    case 77:
+        model.activityView = model.activityView == app_state::ActivityView::Map
+            ? app_state::ActivityView::Summary : app_state::ActivityView::Map;
+        ui::page(model);
+        break;
+    case 78: model.extraActivityCharts = !model.extraActivityCharts; ui::page(model); break;
     case 58: model.page = app_state::Page::Garmin; model.pressedButton = 0; ui::page(model); break;
     case 54: model.page = app_state::Page::Spotify; model.pressedButton = 0; ui::page(model); break;
     case 1: model.page = app_state::Page::Cluster; model.pressedButton = 0; ui::page(model); break;
@@ -456,6 +466,7 @@ void action(uint8_t button)
         model.selectedActivity = model.activities.count ? model.activities.items[0] : secure_protocol::Activity{};
         model.activityFromHome = true;
         model.activityView = app_state::ActivityView::Summary;
+        model.extraActivityCharts = false;
         model.lapOffset = 0;
         model.page = app_state::Page::ActivityDetail;
         ui::page(model);

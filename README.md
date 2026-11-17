@@ -285,6 +285,8 @@ aktivitetsfiler per synkronisering, beholder grafpunktene lokalt og sender dem
 til displayet. Eldre økter fylles derfor inn etter hvert.
 **Laps** viser de første 20 registrerte rundene eller intervallene med
 rundetid, distanse, tempo og snittpuls der data finnes.
+**Map** viser et forenklet GPS-spor med start og mål. Under **Charts → More**
+vises kadens og effekt hvis de ble registrert under økta.
 Intensitetsminutter følger [Garmins vekting](https://support.garmin.com/en-GB/?faq=pNU9nnDzzGAHmEavp9rpY8),
 der minutter med høy intensitet teller dobbelt.
 

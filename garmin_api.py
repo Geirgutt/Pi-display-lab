@@ -158,7 +158,7 @@ def _sync_activity_charts(client: GarminClient, raw: dict, now: int) -> int:
         key = str(activity_id)
         cached = charts.get(key, {})
         checked = cached.get("checked")
-        if "laps" in cached or (cached.get("lap_retry") and type(checked) is int
+        if "route" in cached or (cached.get("media_retry") and type(checked) is int
                                 and 0 <= now - checked < 86400):
             continue
         attempted += 1
@@ -168,12 +168,12 @@ def _sync_activity_charts(client: GarminClient, raw: dict, now: int) -> int:
             if error.status in (401, 429):
                 return now + (error.retry_after or 900)
             if error.status == 403:
-                charts[key] = {**cached, "checked": now, "lap_retry": True}
+                charts[key] = {**cached, "checked": now, "media_retry": True}
                 break
             details = {}
         except (ImportError, OSError, ValueError, RuntimeError, zipfile.BadZipFile):
             details = {}
-        charts[key] = {**cached, **details, "checked": now, "lap_retry": not details}
+        charts[key] = {**cached, **details, "checked": now, "media_retry": not details}
         if attempted == 2:
             break
     return 0

@@ -3,7 +3,9 @@
 Controlleren henter avspillingsstatus og utfører spill/pause, neste og forrige
 gjennom Spotify Web API. ESP32-en mottar bare kompakt visningsdata over den
 eksisterende PSK/TLS-forbindelsen. Tokenverdier sendes aldri til skjermen eller
-status-API-et. Første versjon viser tekst og avspillingstid, uten albumomslag.
+status-API-et. For spor med et lite albumomslag viser displayet bildet sammen
+med sporet. QR-koden åpner sporet i Spotify. Controlleren holder bare det sist
+hentede omslaget i minnet.
 
 ## Engangsoppsett på Raspberry Pi-controlleren
 

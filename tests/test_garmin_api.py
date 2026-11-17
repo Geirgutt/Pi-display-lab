@@ -117,7 +117,7 @@ class GarminApiTests(unittest.TestCase):
         client.download_activity.assert_called_once_with(42)
         client.download_activity.side_effect = None
         with patch("garmin_api.decode_activity_file", return_value={
-            "series": [[146]], "lap_total": 1, "laps": [[300, 1000, 146]],
+            "series": [[146]], "route": [], "lap_total": 1, "laps": [[300, 1000, 146]],
         }):
             _sync_activity_charts(client, raw, now=86501)
             _sync_activity_charts(client, raw, now=86502)

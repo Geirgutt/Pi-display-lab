@@ -11,7 +11,7 @@ from pathlib import Path
 from unittest.mock import patch
 from urllib.parse import parse_qs, urlsplit
 
-from spotify import SpotifyError, SpotifyProvider, token_credentials, write_credentials
+from spotify import SpotifyError, SpotifyProvider, album_cover_url, token_credentials, write_credentials
 
 ROOT = Path(__file__).resolve().parents[1]
 spec = importlib.util.spec_from_file_location("configure_spotify", ROOT / "scripts/configure-spotify.py")
@@ -107,6 +107,22 @@ class SpotifyTests(unittest.TestCase):
         with patch("spotify.spotify_request", return_value=None):
             self.provider._poll()
         self.assertFalse(self.provider._state["pending"])
+
+    def test_cover_selects_a_small_spotify_image_and_only_serves_the_current_track(self):
+        url = "https://i.scdn.co/image/abc123"
+        item = {"id": "a" * 22, "type": "track",
+                "album": {"images": [
+                    {"url": "https://i.scdn.co/image/large", "width": 300, "height": 300},
+                    {"url": "https://example.com/image/wrong", "width": 80, "height": 80},
+                    {"url": url, "width": 64, "height": 64},
+                ]}}
+        self.assertEqual(album_cover_url(item), url)
+        with patch.object(self.provider, "_api", return_value={"item": item, "is_playing": True}):
+            self.provider._poll()
+        with patch("spotify._download_album_cover", return_value=b"\xff\xd8\xff\xd9"):
+            self.provider._fetch_cover(url)
+        self.assertEqual(self.provider.cover_for_track("a" * 22), b"\xff\xd8\xff\xd9")
+        self.assertEqual(self.provider.cover_for_track("b" * 22), b"")
 
     def test_playback_clock_advances_between_polls_and_stops_at_duration(self):
         playback = {"is_playing": True, "progress_ms": 2000,
