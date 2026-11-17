@@ -43,3 +43,5 @@ jobs:
         run: ansible-playbook -i 'localhost,' ansible/maintain-workers.yml --syntax-check
       - name: Exercise real callbacks without apt, SSH or sudo
         run: python -m unittest discover -s tests -p test_maintenance_ansible.py -v
+      - name: Verify read-only checks with unwritable worker staging
+        run: python -m unittest discover -s tests -p test_verification_ansible.py -v

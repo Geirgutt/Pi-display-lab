@@ -2,45 +2,37 @@
 - name: Verifiser Pi Display Lab cluster-workers
   hosts: cluster_workers
   gather_facts: false
+  become: false
   pre_tasks:
     - name: Finn workerens hjemmemappe
-      ansible.builtin.command:
-        argv: [pwd]
+      # raw does not stage a Python module in ~/.ansible/tmp. These read-only
+      # checks must also work when Ansible's remote staging path is unavailable.
+      ansible.builtin.raw: printf '%s\n' "$HOME"
       register: worker_home
       changed_when: false
   tasks:
     - name: Les workerens Git-revisjon
-      ansible.builtin.command:
-        argv:
-          - git
-          - -C
-          - "{{ worker_home.stdout }}/Pi-display-lab"
-          - rev-parse
-          - HEAD
+      ansible.builtin.raw: >-
+        git -C {{ ((worker_home.stdout | trim) ~ '/Pi-display-lab') | quote }} rev-parse HEAD
       register: worker_revision
       changed_when: false
 
     - name: Krev samme commit som controlleren
       ansible.builtin.assert:
         that:
-          - worker_revision.stdout == project_version
+          - worker_revision.stdout | trim == project_version
         fail_msg: "Workeren kjører ikke controllerens eksakte Git-revisjon."
 
     - name: Les worker-tjenestenes status
-      ansible.builtin.command:
-        argv:
-          - systemctl
-          - is-active
-          - "{{ item }}"
+      ansible.builtin.raw: systemctl is-active {{ item | quote }}
       loop:
         - cluster-worker.service
         - pi-display-node-agent.service
       changed_when: false
 
     - name: Verifiser HTTPS/CA og worker-identitet
-      ansible.builtin.command:
-        argv:
-          - "{{ worker_home.stdout }}/Pi-display-lab/.venv/bin/python"
-          - "{{ worker_home.stdout }}/Pi-display-lab/scripts/verify-worker.py"
-          - "{{ worker_home.stdout }}/Pi-display-lab/config.local.json"
+      ansible.builtin.raw: >-
+        {{ ((worker_home.stdout | trim) ~ '/Pi-display-lab/.venv/bin/python') | quote }} -B
+        {{ ((worker_home.stdout | trim) ~ '/Pi-display-lab/scripts/verify-worker.py') | quote }}
+        {{ ((worker_home.stdout | trim) ~ '/Pi-display-lab/config.local.json') | quote }}
       changed_when: false
