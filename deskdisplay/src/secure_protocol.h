@@ -63,6 +63,8 @@ struct Activity
     uint8_t route[activityRouteMax * 2] = {};
     bool extraChartsAvailable = false;
     int16_t extraCharts[activityExtraChartCount][activityChartSamples] = {};
+    int16_t paceTargetFast = 0;
+    int16_t paceTargetSlow = 0;
 };
 struct ActivityTelemetry
 {
@@ -76,10 +78,12 @@ constexpr size_t activityChartFrameSize = activityFrameSize + activityCountMax *
 constexpr size_t activityLapFrameSize = activityChartFrameSize + activityCountMax * activityLapGroupSize;
 constexpr size_t activityMediaGroupSize = 1 + 2 * activityRouteMax + 2 * activityExtraChartCount * activityChartSamples;
 constexpr size_t activityMediaFrameSize = activityLapFrameSize + activityCountMax * activityMediaGroupSize;
+constexpr size_t activityTargetFrameSize = activityMediaFrameSize + activityCountMax * 4;
 constexpr bool validActivityFrameSize(size_t length)
 {
     return length == activityFrameSize || length == activityChartFrameSize
-        || length == activityLapFrameSize || length == activityMediaFrameSize;
+        || length == activityLapFrameSize || length == activityMediaFrameSize
+        || length == activityTargetFrameSize;
 }
 constexpr uint8_t spotifyCommandType = 0x91;
 constexpr size_t spotifyTitleMax = 96;
@@ -88,7 +92,12 @@ constexpr size_t spotifyPayloadSize = 10 + 2 * (spotifyTitleMax + 1) + spotifyDe
 constexpr size_t spotifyFrameSize = 14 + spotifyPayloadSize;
 constexpr size_t spotifyTrackIdSize = 22;
 constexpr size_t spotifyMediaFrameSize = spotifyFrameSize + spotifyTrackIdSize;
+constexpr size_t spotifyLibraryFrameSize = spotifyMediaFrameSize + 1;
 constexpr size_t spotifyCoverMax = 7000;
+constexpr bool validSpotifyFrameSize(size_t length)
+{
+    return length == spotifyFrameSize || length == spotifyMediaFrameSize || length == spotifyLibraryFrameSize;
+}
 constexpr uint8_t controlTypeBase = 0x80;
 constexpr uint8_t otaOfferType = 0x80;
 constexpr uint8_t otaChunkType = 0x81;
@@ -135,8 +144,8 @@ constexpr size_t otaChunkFrameSize = headerSize + otaChunkHeaderSize + otaChunkD
 constexpr size_t otaCompleteFrameSize = headerSize;
 constexpr size_t otaAckPayloadSize = 1 + 4;
 constexpr size_t otaAckFrameSize = headerSize + otaAckPayloadSize;
-constexpr size_t maxFrameSize = otaChunkFrameSize > activityMediaFrameSize
-                              ? otaChunkFrameSize : activityMediaFrameSize;
+constexpr size_t maxFrameSize = otaChunkFrameSize > activityTargetFrameSize
+                              ? otaChunkFrameSize : activityTargetFrameSize;
 static_assert(clusterFrameSize <= maxFrameSize, "Cluster frame exceeds receive buffer");
 static_assert(trainingFrameSize <= maxFrameSize, "Training frame exceeds receive buffer");
 static_assert(calendarFrameSize <= maxFrameSize, "Calendar frame exceeds receive buffer");
@@ -237,6 +246,7 @@ struct SpotifyTelemetry
     char artist[spotifyTitleMax + 1] = {};
     char device[spotifyDeviceMax + 1] = {};
     char trackId[spotifyTrackIdSize + 1] = {};
+    uint8_t library = 0;
 };
 
 struct SpotifyCover
@@ -512,7 +522,7 @@ inline bool decodeActivityTelemetry(const uint8_t* frame, size_t length, uint64_
                 if (item.laps[lap].heartRate > 255) return false;
             }
         }
-        if (length == activityMediaFrameSize)
+        if (length >= activityMediaFrameSize)
         {
             p = frame + activityLapFrameSize + index * activityMediaGroupSize;
             item.routeCount = *p++;
@@ -530,6 +540,14 @@ inline bool decodeActivityTelemetry(const uint8_t* frame, size_t length, uint64_
                     item.extraChartsAvailable |= sample != INT16_MIN;
                     p += 2;
                 }
+        }
+        if (length == activityTargetFrameSize)
+        {
+            p = frame + activityMediaFrameSize + index * 4;
+            item.paceTargetFast = static_cast<int16_t>(get16(p));
+            item.paceTargetSlow = static_cast<int16_t>(get16(p + 2));
+            if (item.paceTargetFast < 0 || item.paceTargetFast > item.paceTargetSlow
+                || (!item.paceTargetFast && item.paceTargetSlow)) return false;
         }
     }
     for (size_t index = value.count; index < activityCountMax; ++index)
@@ -596,13 +614,14 @@ inline bool validSpotifyTrackId(const uint8_t* id)
 inline bool decodeSpotifyTelemetry(const uint8_t* frame, size_t length, uint64_t& sequence,
                                    SpotifyTelemetry& value)
 {
-    if (!frame || (length != spotifyFrameSize && length != spotifyMediaFrameSize)
+    if (!frame || !validSpotifyFrameSize(length)
         || frame[0] != magic0 || frame[1] != magic1
         || frame[2] != version || frame[3] != spotifyTelemetryType
         || get16(frame + 4) != length - headerSize) return false;
     const uint8_t* p = frame + headerSize;
     if (p[0] > 7 || p[1] > 15 || p[10 + spotifyTitleMax] != 0
-        || p[11 + 2 * spotifyTitleMax] != 0 || p[spotifyPayloadSize - 1] != 0) return false;
+        || p[11 + 2 * spotifyTitleMax] != 0 || p[spotifyPayloadSize - 1] != 0
+        || (length == spotifyLibraryFrameSize && frame[length - 1] > 5)) return false;
     sequence = get64(frame + 6);
     value = SpotifyTelemetry{};
     value.status = p[0];
@@ -612,8 +631,11 @@ inline bool decodeSpotifyTelemetry(const uint8_t* frame, size_t length, uint64_t
     memcpy(value.title, p + 10, spotifyTitleMax + 1);
     memcpy(value.artist, p + 11 + spotifyTitleMax, spotifyTitleMax + 1);
     memcpy(value.device, p + 12 + 2 * spotifyTitleMax, spotifyDeviceMax + 1);
-    if (length == spotifyMediaFrameSize && validSpotifyTrackId(p + spotifyPayloadSize))
+    if (length >= spotifyMediaFrameSize && validSpotifyTrackId(p + spotifyPayloadSize))
+    {
         memcpy(value.trackId, p + spotifyPayloadSize, spotifyTrackIdSize);
+        if (length == spotifyLibraryFrameSize) value.library = frame[length - 1];
+    }
     return true;
 }
 

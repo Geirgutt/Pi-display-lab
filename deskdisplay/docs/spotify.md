@@ -4,7 +4,7 @@ Controlleren henter avspillingsstatus og utfører spill/pause, neste og forrige
 gjennom Spotify Web API. ESP32-en mottar bare kompakt visningsdata over den
 eksisterende PSK/TLS-forbindelsen. Tokenverdier sendes aldri til skjermen eller
 status-API-et. For spor med et lite albumomslag viser displayet bildet sammen
-med sporet. QR-koden åpner sporet i Spotify. Controlleren holder bare det sist
+med sporet og lenken til det i Spotify. Controlleren holder bare det sist
 hentede omslaget i minnet.
 
 ## Engangsoppsett på Raspberry Pi-controlleren
@@ -78,7 +78,11 @@ SSH-tunnelen kan lukkes når oppsettet er fullført.
 - Returadressen åpnes ikke: kontroller SSH-tunnelen, at lokal port 8888 er ledig,
   at Pi-skriptet fortsatt venter, og at Redirect URI-en er identisk i Spotify.
 
-Kommandoer er begrenset til fire navngitte handlinger, sendes over autentisert
+**+ Like** legger sporet som vises til i Likte sanger. Kjør Spotify-oppsettet på
+nytt hvis det allerede var koblet til før likerknappen ble innført, slik at du
+kan godkjenne den ekstra tillatelsen til å lagre spor i biblioteket.
+
+Kommandoer er begrenset til navngitte handlinger, sendes over autentisert
 TLS og får sekvenskontroll. Controllerens kommando-API godtar bare lokal JSON
 fra gatewayen. Sporbytte blir aldri automatisk forsøkt på nytt etter nettverksfeil.
 Funksjoner som avspillingsenheten begrenser, får inaktive knapper.

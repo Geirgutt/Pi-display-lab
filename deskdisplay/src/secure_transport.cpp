@@ -19,7 +19,8 @@
 
 namespace
 {
-constexpr const char* identities[] = {"DeskDisplay-peer-media", "DeskDisplay-peer-laps", "DeskDisplay-peer-charts", "DeskDisplay-peer-activities",
+constexpr const char* identities[] = {"DeskDisplay-peer-library", "DeskDisplay-peer-media",
+                                      "DeskDisplay-peer-laps", "DeskDisplay-peer-charts", "DeskDisplay-peer-activities",
                                       "DeskDisplay-peer"};
 constexpr char preferenceNamespace[] = "dd-secure";
 constexpr uint16_t defaultPort = 4567;
@@ -289,8 +290,7 @@ size_t expectedFrameSize()
         if (frame[3] == secure_protocol::spotifyTelemetryType)
         {
             const size_t length = secure_protocol::headerSize + payloadLength;
-            return length == secure_protocol::spotifyFrameSize || length == secure_protocol::spotifyMediaFrameSize
-                ? length : 0;
+            return secure_protocol::validSpotifyFrameSize(length) ? length : 0;
         }
         if (frame[3] == secure_protocol::spotifyCoverType)
         {
@@ -683,22 +683,28 @@ const secure_protocol::SpotifyTelemetry& secure_transport::lastSpotifyTelemetry(
 const secure_protocol::SpotifyCover& secure_transport::lastSpotifyCover() { return latestCover; }
 const secure_protocol::GarminTelemetry& secure_transport::lastGarminTelemetry() { return latestGarmin; }
 const secure_protocol::ActivityTelemetry& secure_transport::lastActivityTelemetry() { return latestActivities; }
-bool secure_transport::spotifyCommand(uint8_t action)
+bool secure_transport::spotifyCommand(uint8_t action, const char* trackId)
 {
     static uint32_t lastCommand = 0;
-    if (action < 1 || action > 4 || !connected() || otaActive
+    if (action < 1 || action > 5 || !connected() || otaActive
         || uint32_t(millis() - lastValidTelemetry) > 5000
         || (lastCommand && uint32_t(millis() - lastCommand) < 750)) return false;
-    uint8_t response[secure_protocol::headerSize + 1] = {};
+    const bool save = action == 5;
+    if (save && (!trackId || !latestSpotify.trackId[0] || strcmp(trackId, latestSpotify.trackId)
+        || (latestSpotify.library != 1 && latestSpotify.library != 5))) return false;
+    const size_t payload = 1 + (save ? secure_protocol::spotifyTrackIdSize : 0);
+    uint8_t response[secure_protocol::headerSize + 1 + secure_protocol::spotifyTrackIdSize] = {};
     response[0] = secure_protocol::magic0;
     response[1] = secure_protocol::magic1;
     response[2] = secure_protocol::version;
     response[3] = secure_protocol::spotifyCommandType;
-    secure_protocol::put16(response + 4, 1);
+    secure_protocol::put16(response + 4, payload);
     secure_protocol::put64(response + 6, txSequence++);
     response[secure_protocol::headerSize] = action;
+    if (save) memcpy(response + secure_protocol::headerSize + 1, trackId, secure_protocol::spotifyTrackIdSize);
     lastCommand = millis();
-    if (client.write(response, sizeof(response)) == sizeof(response)) return true;
+    const size_t length = secure_protocol::headerSize + payload;
+    if (client.write(response, length) == length) return true;
     closeSession(true); // Never retry a partially written playback command.
     return false;
 }
@@ -750,7 +756,7 @@ const secure_protocol::ActivityTelemetry& secure_transport::lastActivityTelemetr
     static const secure_protocol::ActivityTelemetry value;
     return value;
 }
-bool secure_transport::spotifyCommand(uint8_t) { return false; }
+bool secure_transport::spotifyCommand(uint8_t, const char*) { return false; }
 const secure_protocol::SpotifyTelemetry& secure_transport::lastSpotifyTelemetry()
 {
     static secure_protocol::SpotifyTelemetry value;

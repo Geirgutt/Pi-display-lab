@@ -11,7 +11,7 @@ MISSING = -32768
 MAX_FIT_BYTES = 8 * 1024 * 1024
 LAP_LIMIT = 20
 ROUTE_LIMIT = 80
-ROUTE_FORMAT = 2
+ROUTE_FORMAT = 3
 
 
 def activity_download_id(value) -> int | None:
@@ -102,6 +102,19 @@ def summarize_laps(records: list[dict]) -> tuple[int, list[list[int]]]:
     return min(len(laps), 65535), laps[:LAP_LIMIT]
 
 
+def summarize_pace_target(steps: list[dict]) -> list[int]:
+    ranges = set()
+    for step in steps:
+        if step.get("target_type") != "speed":
+            continue
+        low = step.get("custom_target_speed_low")
+        high = step.get("custom_target_speed_high")
+        if not (_finite(low) and _finite(high) and 0.2 <= low <= high <= 120):
+            return []
+        ranges.add((round(1000 / high), round(1000 / low)))
+    return list(next(iter(ranges))) if len(ranges) == 1 else []
+
+
 def _decode_fit(data: bytes) -> dict:
     from garmin_fit_sdk import Decoder, Stream
 
@@ -112,7 +125,8 @@ def _decode_fit(data: bytes) -> dict:
     total, laps = summarize_laps(messages.get("lap_mesgs", []))
     records = messages.get("record_mesgs", [])
     return {"series": summarize_records(records), "route": summarize_route(records),
-            "lap_total": total, "laps": laps}
+            "lap_total": total, "laps": laps,
+            "pace_target": summarize_pace_target(messages.get("workout_step_mesgs", []))}
 
 
 def _decode_xml_route(data: bytes) -> dict:

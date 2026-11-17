@@ -23,6 +23,7 @@ navigation_gesture::Tracker gesture;
 app_state::Page touchPage = app_state::Page::Home;
 bool touchCancelled = false;
 uint32_t pressedActivityRevision = 0;
+char pressedSpotifyTrack[secure_protocol::spotifyTrackIdSize + 1] = {};
 bool activityDetailNeedsRedraw = false;
 bool alarmActive = false;
 bool alarmLit = false;
@@ -281,9 +282,11 @@ uint8_t hit(int16_t x, int16_t y)
                    ui_layout::singleButtonWidth)) return 5;
         if (!model.spotifyConnected || (model.spotifyTelemetry.capabilities & 8)) return 0;
         const uint8_t flags = model.spotifyTelemetry.capabilities;
-        if ((flags & 4) && inside(x, y, 20, 324, 132)) return 55;
-        if ((flags & 1) && inside(x, y, 174, 324, 132)) return 56;
-        if ((flags & 2) && inside(x, y, 328, 324, 132)) return 57;
+        if ((flags & 4) && inside(x, y, 20, 324, 100)) return 55;
+        if ((flags & 1) && inside(x, y, 132, 324, 100)) return 56;
+        if ((flags & 2) && inside(x, y, 244, 324, 100)) return 57;
+        if ((model.spotifyTelemetry.library == 1 || model.spotifyTelemetry.library == 5)
+            && inside(x, y, 356, 324, 104)) return 79;
     }
     else if (model.page == app_state::Page::System)
     {
@@ -399,11 +402,11 @@ void action(uint8_t button)
         ui::page(model);
         return;
     }
-    if (model.page == app_state::Page::Spotify && button >= 55 && button <= 57)
+    if (model.page == app_state::Page::Spotify && ((button >= 55 && button <= 57) || button == 79))
     {
-        const uint8_t command = button == 55 ? 4 : button == 57 ? 3
+        const uint8_t command = button == 79 ? 5 : button == 55 ? 4 : button == 57 ? 3
                               : model.spotifyTelemetry.status == 1 ? 2 : 1;
-        secure_transport::spotifyCommand(command);
+        secure_transport::spotifyCommand(command, button == 79 ? pressedSpotifyTrack : nullptr);
         model.pressedButton = 0;
         ui::pressed(model);
         return;
@@ -552,6 +555,8 @@ void processTouch()
             touchPage = model.page;
             touchCancelled = false;
             model.pressedButton = hit(point.x, point.y);
+            if (model.pressedButton == 79)
+                memcpy(pressedSpotifyTrack, model.spotifyTelemetry.trackId, sizeof(pressedSpotifyTrack));
             pressedActivityRevision = model.activityRevision;
             if (model.pressedButton == 11) updateBrightnessSlider(point.x);
             else if (model.pressedButton) ui::pressed(model);

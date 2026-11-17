@@ -159,9 +159,9 @@ def _sync_activity_charts(client: GarminClient, raw: dict, now: int) -> int:
         key = str(activity_id)
         cached = charts.get(key, {})
         checked = cached.get("checked")
-        if cached.get("route") or (cached.get("route_format") == ROUTE_FORMAT and (
+        if cached.get("route_format") == ROUTE_FORMAT and (
             not cached.get("media_retry") or (type(checked) is int and 0 <= now - checked < 86400)
-        )):
+        ):
             continue
         attempted += 1
         media_error = None
@@ -182,6 +182,8 @@ def _sync_activity_charts(client: GarminClient, raw: dict, now: int) -> int:
         except (ImportError, OSError, ValueError, RuntimeError, zipfile.BadZipFile):
             details = {}
             media_error = "unreadable_file"
+        if cached.get("route") and details and not details.get("route"):
+            details["route"] = cached["route"]
         charts[key] = {**cached, **details, "checked": now, "media_retry": not details,
                        "route_format": ROUTE_FORMAT, "media_error": media_error}
         if attempted == 2:

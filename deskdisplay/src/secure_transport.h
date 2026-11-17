@@ -35,7 +35,7 @@ const secure_protocol::SpotifyTelemetry& lastSpotifyTelemetry();
 const secure_protocol::SpotifyCover& lastSpotifyCover();
 const secure_protocol::GarminTelemetry& lastGarminTelemetry();
 const secure_protocol::ActivityTelemetry& lastActivityTelemetry();
-bool spotifyCommand(uint8_t action);
+bool spotifyCommand(uint8_t action, const char* trackId = nullptr);
 uint32_t lastTelemetryAt();
 const Counters& counters();
 }

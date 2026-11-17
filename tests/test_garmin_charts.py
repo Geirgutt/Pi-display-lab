@@ -2,7 +2,7 @@ import io
 import unittest
 import zipfile
 
-from garmin_charts import MISSING, decode_activity_file, summarize_records, summarize_route
+from garmin_charts import MISSING, decode_activity_file, summarize_pace_target, summarize_records, summarize_route
 
 
 class GarminChartTests(unittest.TestCase):
@@ -41,6 +41,10 @@ class GarminChartTests(unittest.TestCase):
         except ImportError:
             self.skipTest("Garmin FIT SDK unavailable")
         encoder = Encoder()
+        encoder.on_mesg(Profile["mesg_num"]["WORKOUT_STEP"], {
+            "target_type": "speed", "target_value": 0,
+            "custom_target_value_low": 3000, "custom_target_value_high": 4000,
+        })
         encoder.on_mesg(Profile["mesg_num"]["LAP"], {
             "total_timer_time": 300, "total_elapsed_time": 315,
             "total_distance": 1000, "avg_heart_rate": 145,
@@ -65,3 +69,10 @@ class GarminChartTests(unittest.TestCase):
         self.assertEqual(len(details["route"]), 2)
         self.assertEqual(details["lap_total"], 1)
         self.assertEqual(details["laps"], [[300, 1000, 145]])
+        self.assertEqual(details["pace_target"], [250, 333])
+
+    def test_different_speed_targets_do_not_look_like_one_constant_target(self):
+        self.assertEqual(summarize_pace_target([
+            {"target_type": "speed", "custom_target_speed_low": 1, "custom_target_speed_high": 2},
+            {"target_type": "speed", "custom_target_speed_low": 3, "custom_target_speed_high": 4},
+        ]), [])

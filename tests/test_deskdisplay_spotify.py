@@ -25,13 +25,15 @@ int main(int argc, char** argv) {
     assert(state.spotify.status == 1 && state.spotify.capabilities == 5);
     assert(!strcmp(state.spotify.title, "Test song"));
     unsigned char frame[STATE_FRAME_MAX];
-    const size_t length = make_spotify_frame(frame, 42, 0, &state.spotify, 0);
+    const size_t length = make_spotify_frame(frame, 42, 0, &state.spotify, 0, 0);
     assert(fwrite(frame, 1, length, stdout) == length);
-    const size_t media_length = make_spotify_frame(frame, 43, 0, &state.spotify, 1);
+    const size_t media_length = make_spotify_frame(frame, 43, 0, &state.spotify, 1, 0);
     assert(fwrite(frame, 1, media_length, stdout) == media_length);
     latest_state = state;
     const size_t cover_length = make_cover_frame(frame, 44);
     assert(fwrite(frame, 1, cover_length, stdout) == cover_length);
+    const size_t library_length = make_spotify_frame(frame, 45, 0, &state.spotify, 1, 1);
+    assert(fwrite(frame, 1, library_length, stdout) == library_length);
     return 0;
 }
 '''
@@ -70,6 +72,10 @@ int main() {
     assert(cover[3] == spotifyCoverType && get64(cover + 6) == 44);
     assert(!memcmp(cover + headerSize, state.trackId, spotifyTrackIdSize));
     assert(cover[sizeof(cover) - 1] == 0xd9);
+    unsigned char library[spotifyLibraryFrameSize];
+    assert(fread(library, 1, sizeof(library), stdin) == sizeof(library));
+    assert(decodeSpotifyTelemetry(library, sizeof(library), sequence, state));
+    assert(sequence == 45 && state.library == 3);
     return 0;
 }
 '''
@@ -104,7 +110,7 @@ class SpotifyWireTests(unittest.TestCase):
                     self.send_response(200)
                     self.end_headers()
                     self.wfile.write(b"DSSTATE/2\nspotify\t1\t5\t2500\t180000\tTest song\tArtist\tPC\n"
-                                     b"spotify_track\tabcdefghijklmnopqrstuv\nspotify_cover\t/9j/2Q==\n")
+                                     b"spotify_track\tabcdefghijklmnopqrstuv\nspotify_library\t3\nspotify_cover\t/9j/2Q==\n")
 
             with HTTPServer(("127.0.0.1", 0), Handler) as server:
                 worker = threading.Thread(target=server.handle_request, daemon=True)

@@ -242,6 +242,7 @@ def build_dashboard(raw: dict, *, today: date) -> dict:
             "lap_total": details.get("lap_total", 0),
             "laps": details.get("laps", []),
             "route": details.get("route", []),
+            "pace_target": details.get("pace_target", []),
         })
     return {"groups": [
         {"title": "Today", "metrics": today_group},

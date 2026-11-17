@@ -975,6 +975,31 @@ void extraChartButton(const app_state::Model& model)
         button(78, model.extraActivityCharts ? "Back" : "More", 370, 376, 98, model.pressedButton == 78);
 }
 
+int16_t activityChartAverage(const secure_protocol::Activity& activity, size_t series)
+{
+    if (series == 0)
+    {
+        const long hr = strtol(activity.values[3], nullptr, 10);
+        return hr > 0 && hr <= 255 ? static_cast<int16_t>(hr) : 0;
+    }
+    if (series == 1)
+    {
+        int minutes = 0, seconds = 0;
+        if (sscanf(activity.values[2], "%d:%d", &minutes, &seconds) == 2
+            && minutes >= 0 && minutes <= 500 && seconds >= 0 && seconds < 60)
+            return static_cast<int16_t>(minutes * 60 + seconds);
+    }
+    return 0;
+}
+
+void chartReference(int16_t value, int16_t low, int16_t high, int16_t y, int16_t height,
+                    bool pace, uint16_t color)
+{
+    const int32_t offset = pace ? value - low : high - value;
+    const int16_t row = y + (high == low ? height / 2 : offset * height / (high - low));
+    for (int16_t x = 24; x < 452; x += 12) display().drawFastHLine(x, row, 6, color);
+}
+
 void activityCharts(const app_state::Model& model)
 {
     const auto& activity = model.selectedActivity;
@@ -1005,14 +1030,40 @@ void activityCharts(const app_state::Model& model)
         }
         char range[48];
         const bool pace = !extras && series == 1;
-        if (pace) snprintf(range, sizeof(range), "%d:%02d - %d:%02d", low / 60, low % 60,
+        const int16_t average = extras ? 0 : activityChartAverage(activity, series);
+        const int16_t targetFast = pace ? activity.paceTargetFast : 0;
+        const int16_t targetSlow = pace ? activity.paceTargetSlow : 0;
+        if (average && pace) snprintf(range, sizeof(range), "Avg %d:%02d", average / 60, average % 60);
+        else if (average) snprintf(range, sizeof(range), "Avg %d", average);
+        else if (pace) snprintf(range, sizeof(range), "%d:%02d - %d:%02d", low / 60, low % 60,
                            high / 60, high % 60);
         else snprintf(range, sizeof(range), "%d - %d", low, high);
-        label(range, 322, y + 6, 1, muted);
+        label(range, 322, y + 6, 1, average ? good : muted);
+        if (average)
+        {
+            if (average < low) low = average;
+            if (average > high) high = average;
+        }
+        if (targetFast)
+        {
+            if (targetFast < low) low = targetFast;
+            if (targetSlow > high) high = targetSlow;
+            if (targetFast == targetSlow)
+                snprintf(range, sizeof(range), "Target %d:%02d", targetFast / 60, targetFast % 60);
+            else
+                snprintf(range, sizeof(range), "Target %d:%02d - %d:%02d", targetFast / 60, targetFast % 60,
+                         targetSlow / 60, targetSlow % 60);
+            label(range, 24, y + 20, 1, warning);
+        }
         const bool aboveButton = series == 2 && activity.extraChartsAvailable;
+        const int16_t plotTop = y + 32;
+        const int16_t plotHeight = aboveButton ? 47 : 58;
         display().drawFastHLine(24, y + (aboveButton ? 85 : 96), 432, muted);
-        drawChart(samples, secure_protocol::activityChartSamples, low, high, 24, y + 30, 431,
-                  aboveButton ? 49 : 60, pace);
+        if (average) chartReference(average, low, high, plotTop, plotHeight, pace, good);
+        if (targetFast) chartReference(targetFast, low, high, plotTop, plotHeight, pace, warning);
+        if (targetSlow && targetSlow != targetFast)
+            chartReference(targetSlow, low, high, plotTop, plotHeight, pace, warning);
+        drawChart(samples, secure_protocol::activityChartSamples, low, high, 24, plotTop, 431, plotHeight, pace);
     }
     label("Start", 24, 392, 1, muted);
     label("Finish", activity.extraChartsAvailable ? 309 : 420, 392, 1, muted);
@@ -1167,7 +1218,7 @@ void spotifyTelemetry(const app_state::Model& model, bool force = false)
         && strcmp(cover.trackId, state.trackId) == 0;
     const bool trackLink = hasPlayback && state.trackId[0];
     const int16_t playbackX = coverVisible ? 194 : 26;
-    const int16_t lowerRight = trackLink ? 358 : 454;
+    const int16_t lowerRight = 454;
     const bool showProgress = hasPlayback && state.durationMs > 0;
     const uint32_t elapsed = state.progressMs / 1000;
     const uint32_t duration = state.durationMs / 1000;
@@ -1209,8 +1260,7 @@ void spotifyTelemetry(const app_state::Model& model, bool force = false)
         {
             char url[64];
             snprintf(url, sizeof(url), "https://open.spotify.com/track/%s", state.trackId);
-            display().qrcode(url, 360, 207, 100, 4, true);
-            label("Open in Spotify", 360, 307, 1, muted);
+            label(url, 26, 302, 1, muted);
         }
     }
     else if (model.spotifyConnected && (state.status == 0 || state.status == 4))
@@ -1219,12 +1269,19 @@ void spotifyTelemetry(const app_state::Model& model, bool force = false)
         label("Approve access in your browser", 26, 200, 2, muted);
     }
     const uint8_t flags = model.spotifyConnected && !(state.capabilities & 8) ? state.capabilities : 0;
-    button(55, "Previous", 20, 324, 132, model.pressedButton == 55,
+    button(55, "Previous", 20, 324, 100, model.pressedButton == 55,
            card, flags & 4 ? good : muted, flags & 4 ? text : muted);
-    button(56, state.status == 1 ? "Pause" : "Play", 174, 324, 132, model.pressedButton == 56,
+    button(56, state.status == 1 ? "Pause" : "Play", 132, 324, 100, model.pressedButton == 56,
            card, flags & 1 ? good : muted, flags & 1 ? text : muted);
-    button(57, "Next", 328, 324, 132, model.pressedButton == 57,
+    button(57, "Next", 244, 324, 100, model.pressedButton == 57,
            card, flags & 2 ? good : muted, flags & 2 ? text : muted);
+    const uint8_t library = hasPlayback ? state.library : 0;
+    const bool canSave = !(state.capabilities & 8) && (library == 1 || library == 5);
+    const char* saveCaption = library == 2 ? "Saving" : library == 3 ? "Saved" : "+ Like";
+    button(79, saveCaption, 356, 324, 104, model.pressedButton == 79,
+           card, canSave || library == 3 ? good : muted, canSave || library == 3 ? text : muted);
+    if (library == 4) label("Reconnect Spotify on the Pi to use + Like", 26, 385, 1, muted);
+    if (library == 5) label("Could not save this track", 26, 385, 1, warning);
 }
 }
 

@@ -62,7 +62,8 @@ def _epoch(value: Any) -> int:
 def _deskdisplay_state_lines(payload: dict[str, Any], worker_hosts: tuple[str, ...],
                              *, include_activities: bool = False, include_charts: bool = False,
                              include_laps: bool = False, include_media: bool = False,
-                             cover: bytes = b"") -> str:
+                             cover: bytes = b"", include_library: bool = False,
+                             include_targets: bool = False) -> str:
     """Render compact controller state for the local DeskDisplay gateway."""
 
     nodes = list(payload.get("nodes") or [])
@@ -180,6 +181,8 @@ def _deskdisplay_state_lines(payload: dict[str, Any], worker_hosts: tuple[str, .
     track_id = spotify.get("track_id")
     if include_media and isinstance(track_id, str) and TRACK_ID.fullmatch(track_id):
         lines.append("spotify_track\t" + track_id)
+        if include_library and spotify.get("library") in (1, 2, 3, 4, 5):
+            lines.append(f"spotify_library\t{spotify['library']}")
         if cover:
             lines.append("spotify_cover\t" + base64.b64encode(cover).decode("ascii"))
     garmin = payload.get("garmin") or {}
@@ -241,6 +244,11 @@ def _deskdisplay_state_lines(payload: dict[str, Any], worker_hosts: tuple[str, .
                           and all(type(value) is int and 0 <= value <= 240 for value in point)]
                 if len(points) >= 2:
                     lines.append("garmin_route\t" + "".join(points))
+            target = activity.get("pace_target")
+            if (include_targets and isinstance(target, list) and len(target) == 2
+                and all(type(value) is int and 0 < value <= 32767 for value in target)
+                and target[0] <= target[1]):
+                lines.append(f"garmin_pace_target\t{target[0]}\t{target[1]}")
     return "\n".join(lines) + "\n"
 
 
@@ -310,7 +318,9 @@ def create_app(
                                      include_activities=request.headers.get("X-DeskDisplay-Activities") == "1",
                                      include_charts=request.headers.get("X-DeskDisplay-Charts") == "1",
                                      include_laps=request.headers.get("X-DeskDisplay-Laps") == "1",
-                                     include_media=include_media, cover=cover),
+                                     include_media=include_media, cover=cover,
+                                     include_library=request.headers.get("X-DeskDisplay-Library") == "1",
+                                     include_targets=request.headers.get("X-DeskDisplay-Targets") == "1"),
             mimetype="text/plain",
             headers={"Cache-Control": "no-store"},
         )
@@ -324,9 +334,15 @@ def create_app(
             return jsonify({"ok": False}), 403
         body = request.get_json(silent=True)
         action = body.get("action") if isinstance(body, dict) else None
-        if not isinstance(action, str) or action not in COMMANDS:
+        if action == "save":
+            track_id = body.get("track_id")
+            if not isinstance(track_id, str) or not TRACK_ID.fullmatch(track_id):
+                return jsonify({"ok": False}), 400
+            accepted = dashboard.spotify_provider.save_track(track_id)
+        elif isinstance(action, str) and action in COMMANDS:
+            accepted = dashboard.spotify_provider.command(action)
+        else:
             return jsonify({"ok": False}), 400
-        accepted = dashboard.spotify_provider.command(action)
         return jsonify({"ok": accepted}), 202 if accepted else 409
 
     @app.post("/api/screen")

@@ -137,7 +137,7 @@ class SpotifyTests(unittest.TestCase):
                 self.provider._state.update(status="paused", is_playing=False)
                 self.assertEqual(self.provider.snapshot()["progress_ms"], 2000)
 
-    def test_skip_tolerates_one_empty_snapshot_without_resending_command(self):
+    def test_skip_bounds_empty_snapshot_grace_without_resending_command(self):
         self.provider._state.update(can_next=True, status="playing", title="Old song", pending=True)
         self.provider._command_busy = True
         with patch("spotify.spotify_request", return_value=None) as request:
@@ -145,7 +145,8 @@ class SpotifyTests(unittest.TestCase):
             self.provider._poll()
             self.assertEqual(self.provider.snapshot()["title"], "Old song")
             self.assertTrue(self.provider.snapshot()["pending"])
-            self.provider._poll()
+            with patch("spotify.time.monotonic", return_value=self.provider._skip_status_until + 1):
+                self.provider._poll()
             self.assertEqual(self.provider.snapshot()["status"], "no_device")
             self.assertFalse(self.provider.snapshot()["pending"])
         self.assertEqual([call.kwargs["method"] for call in request.call_args_list],
@@ -167,7 +168,42 @@ class SpotifyTests(unittest.TestCase):
         with patch("spotify.spotify_request", side_effect=SpotifyError("unavailable")) as request:
             self.provider._command("next")
         self.assertEqual(request.call_count, 1)
-        self.assertEqual(self.provider._state["status"], "unavailable")
+        self.assertTrue(self.provider._state["pending"])
+        self.assertLessEqual(self.provider._next_poll, time.monotonic() + 1)
+
+    def test_save_uses_the_selected_track_and_reports_success(self):
+        data = json.loads(self.path.read_text())
+        data["scope"] = "user-read-playback-state user-library-modify"
+        write_credentials(self.path, data)
+        self.provider._token()
+        track_id = "a" * 22
+        self.provider._state.update(status="playing", track_id=track_id)
+        self.provider._next_poll = time.monotonic() + 60
+        self.assertFalse(self.provider.save_track("b" * 22))
+        with patch("spotify.threading.Thread") as thread:
+            self.assertTrue(self.provider.save_track(track_id))
+            self.assertFalse(self.provider.save_track(track_id))
+            self.assertEqual(self.provider.snapshot()["library"], 2)
+            thread.assert_called_once()
+        with patch("spotify.spotify_request", return_value=None) as request:
+            self.provider._save_track(track_id)
+        url = request.call_args.args[0]
+        self.assertEqual(urlsplit(url).path, "/v1/me/library")
+        self.assertEqual(parse_qs(urlsplit(url).query), {"uris": [f"spotify:track:{track_id}"]})
+        self.assertEqual(request.call_args.kwargs["method"], "PUT")
+        self.assertEqual(self.provider.snapshot()["library"], 3)
+
+    def test_save_rate_limit_also_blocks_playback_polling_and_commands(self):
+        track_id = "a" * 22
+        self.provider._state.update(status="playing", track_id=track_id, can_next=True)
+        self.provider._saving_track = track_id
+        self.provider._next_poll = 0
+        with patch("spotify.spotify_request", side_effect=SpotifyError("rate_limited", 80)):
+            self.provider._save_track(track_id)
+        with patch("spotify.threading.Thread") as thread:
+            self.provider.snapshot()
+            self.assertFalse(self.provider.command("next"))
+            thread.assert_not_called()
 
     def test_waiting_command_preserves_a_new_rate_limit(self):
         self.provider._state.update(status="rate_limited", pending=True)

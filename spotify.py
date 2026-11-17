@@ -13,10 +13,12 @@ from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode
 from urllib.request import HTTPRedirectHandler, Request, build_opener, urlopen
 
-SCOPES = "user-read-playback-state user-modify-playback-state"
+LIBRARY_SCOPE = "user-library-modify"
+SCOPES = f"user-read-playback-state user-modify-playback-state {LIBRARY_SCOPE}"
 REDIRECT_URI = "http://127.0.0.1:8888/callback"
 TOKEN_URL = "https://accounts.spotify.com/api/token"
 API_URL = "https://api.spotify.com/v1/me/player"
+LIBRARY_URL = "https://api.spotify.com/v1/me/library"
 COMMANDS = {"play": ("PUT", "/play"), "pause": ("PUT", "/pause"),
             "next": ("POST", "/next"), "previous": ("POST", "/previous")}
 MAX_COVER_BYTES = 7000
@@ -139,6 +141,7 @@ def token_credentials(client_id: str, response: dict, *, previous: dict | None =
     now = time.time()
     return {"client_id": client_id, "refresh_token": refresh, "access_token": access,
             "expires_at": now + float(response.get("expires_in", 3600)),
+            "scope": response.get("scope", previous.get("scope", "")),
             # Refreshing must never reset Spotify's 180-day authorization lifetime.
             "authorized_at": previous.get("authorized_at", now)}
 
@@ -162,7 +165,7 @@ class SpotifyProvider:
         self._sampled_at = 0.0
         self._busy = False
         self._command_busy = False
-        self._retry_empty_after_skip = False
+        self._skip_status_until = 0.0
         self._signature = None
         self._reauthorize = False
         self._cover_url = ""
@@ -170,15 +173,29 @@ class SpotifyProvider:
         self._cover = b""
         self._cover_busy = False
         self._cover_retry_at = 0.0
+        self._library_enabled = False
+        self._saving_track = ""
+        self._saved_track = ""
+        self._save_error = ""
+        self._rate_limit_until = 0.0
 
     def snapshot(self) -> dict:
         if self.mock:
             return dict(empty_state("not_configured"))
         with self._lock:
-            if not self._busy and not self._command_busy and time.monotonic() >= self._next_poll:
+            deadline = max(self._next_poll, self._rate_limit_until)
+            if not self._busy and not self._command_busy and time.monotonic() >= deadline:
                 self._busy = True
                 threading.Thread(target=self._poll, daemon=True, name="spotify-poll").start()
             state = dict(self._state)
+            track_id = state.get("track_id")
+            if track_id:
+                state["library"] = (
+                    3 if self._saved_track == track_id else
+                    2 if self._saving_track == track_id else
+                    4 if not self._library_enabled else
+                    5 if self._save_error == track_id else 1
+                )
             if state["is_playing"] and state["duration_ms"] and not state["pending"]:
                 elapsed_ms = int(max(0, time.monotonic() - self._sampled_at) * 1000)
                 state["progress_ms"] = min(state["duration_ms"], state["progress_ms"] + elapsed_ms)
@@ -238,16 +255,58 @@ class SpotifyProvider:
                 if error.status == "reauthorize":
                     self._reauthorize = True
                 raise
+        scope = data.get("scope")
+        with self._lock:
+            self._library_enabled = isinstance(scope, str) and LIBRARY_SCOPE in scope.split()
         return data["access_token"]
 
     def _api(self, suffix: str = "", method: str = "GET") -> dict | None:
-        token = self._token()
+        return self._authorized_request(API_URL + suffix, method)
+
+    def _authorized_request(self, url: str, method: str) -> dict | None:
         try:
-            return spotify_request(API_URL + suffix, method=method, token=token)
+            token = self._token()
+            try:
+                return spotify_request(url, method=method, token=token)
+            except SpotifyError as error:
+                if error.status != "unauthorized":
+                    raise
+            return spotify_request(url, method=method, token=self._token(force=True))
         except SpotifyError as error:
-            if error.status != "unauthorized":
-                raise
-        return spotify_request(API_URL + suffix, method=method, token=self._token(force=True))
+            if error.status == "rate_limited":
+                with self._lock:
+                    self._rate_limit_until = max(self._rate_limit_until, time.monotonic() + error.retry_after)
+            raise
+
+    def save_track(self, track_id: str) -> bool:
+        if self.mock or not TRACK_ID.fullmatch(track_id):
+            return False
+        with self._lock:
+            if (not self._library_enabled or self._saving_track or self._saved_track == track_id
+                or self._state.get("track_id") != track_id or time.monotonic() < self._rate_limit_until):
+                return False
+            self._saving_track = track_id
+            self._save_error = ""
+        threading.Thread(target=self._save_track, args=(track_id,), daemon=True, name="spotify-save").start()
+        return True
+
+    def _save_track(self, track_id: str) -> None:
+        try:
+            with self._operation:
+                with self._lock:
+                    if time.monotonic() < self._rate_limit_until:
+                        self._save_error = track_id
+                        return
+                query = urlencode({"uris": f"spotify:track:{track_id}"})
+                self._authorized_request(f"{LIBRARY_URL}?{query}", "PUT")
+            with self._lock:
+                self._saved_track = track_id
+        except (SpotifyError, OSError, ValueError, TypeError, KeyError):
+            with self._lock:
+                self._save_error = track_id
+        finally:
+            with self._lock:
+                self._saving_track = ""
 
     def _poll(self) -> None:
         with self._operation:
@@ -287,13 +346,20 @@ class SpotifyProvider:
             delay = 30
         finally:
             with self._lock:
-                # Spotify can have no playback snapshot between two tracks.
-                # Give a successful skip one extra status poll before clearing the screen.
-                retry_empty = self._retry_empty_after_skip and state["status"] == "no_device"
-                self._retry_empty_after_skip = False
-                if retry_empty:
-                    delay = 1
+                now = time.monotonic()
+                skip_pending = bool(self._skip_status_until)
+                playable = state["status"] in {"playing", "paused"}
+                previous_track = self._state.get("track_id")
+                same_track = (previous_track and previous_track == state.get("track_id")
+                              and state["progress_ms"] + 2000 >= self._state["progress_ms"])
+                transient = state["status"] in {"no_device", "unavailable"} or (
+                    playable and (not state["title"] or same_track))
+                if skip_pending and transient and now < self._skip_status_until:
+                    delay = 2
                 else:
+                    if skip_pending and transient:
+                        delay = 3
+                    self._skip_status_until = 0
                     state["pending"] = self._command_busy
                     self._state = state
                     self._cover_url = cover_url
@@ -307,7 +373,8 @@ class SpotifyProvider:
         with self._lock:
             # Accept one command during a poll; never queue repeated taps.
             capability = "can_next" if action == "next" else "can_previous" if action == "previous" else "can_control"
-            if self._command_busy or self._state.get("pending") or not self._state.get(capability) or time.monotonic() < getattr(self, "_next_command", 0):
+            if (self._command_busy or self._state.get("pending") or not self._state.get(capability)
+                or time.monotonic() < max(getattr(self, "_next_command", 0), self._rate_limit_until)):
                 return False
             self._command_busy = True
             self._state["pending"] = True
@@ -325,18 +392,25 @@ class SpotifyProvider:
             with self._lock:
                 # The preceding poll may have discovered a rate limit, revoked
                 # access or a missing device. Preserve its status and deadline.
-                if not self._state.get(capability):
+                if not self._state.get(capability) or time.monotonic() < self._rate_limit_until:
                     self._state["pending"] = False
                     return
             method, suffix = COMMANDS[action]
             self._api(suffix, method)
             with self._lock:
-                self._retry_empty_after_skip = action in {"next", "previous"}
+                if action in {"next", "previous"}:
+                    self._skip_status_until = time.monotonic() + 8
                 self._next_poll = time.monotonic() + 1
         except SpotifyError as error:
             with self._lock:
-                self._state = empty_state(error.status)
-                self._next_poll = time.monotonic() + error.retry_after
+                now = time.monotonic()
+                if action in {"next", "previous"} and error.status == "unavailable":
+                    self._state["pending"] = True
+                    self._skip_status_until = now + 8
+                    self._next_poll = now + 1
+                else:
+                    self._state = empty_state(error.status)
+                    self._next_poll = now + error.retry_after
         except (OSError, ValueError, TypeError, KeyError):
             with self._lock:
                 self._state = empty_state("unavailable")
