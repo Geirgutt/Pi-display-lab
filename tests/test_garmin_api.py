@@ -115,8 +115,11 @@ class GarminApiTests(unittest.TestCase):
                                 "groups": [{"title": "Today", "metrics": [
                                     {"label": "Steps", "value": "9000", "unit": "", "history": [1000, None, 9000]}]}]})
         provider = GarminProvider(path, clock=lambda: 101)
-        state = DashboardState(mock_mode=True, garmin_provider=provider).snapshot()
+        training = Mock()
+        training.snapshot.return_value = {"available": False, "source": "none", "upcoming": [], "error": "No calendar"}
+        state = DashboardState(mock_mode=True, garmin_provider=provider, training_provider=training).snapshot()
         self.assertEqual(state["training"]["last_activity"]["average_hr"], 140)
+        self.assertTrue(state["training"]["available"])
         text = _deskdisplay_state_lines(state, ())
         self.assertIn("garmin\t1\t100\n", text)
         self.assertIn("activity\t2026-11-17\trunning\t50\t1500\t500\t140", text)

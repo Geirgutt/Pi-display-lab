@@ -513,7 +513,9 @@ class DashboardState:
         training = self.training_provider.snapshot()
         if isinstance(garmin.get("last_activity"), dict):
             from training import _last_activity
-            training = dict(training, last_activity=_last_activity(garmin["last_activity"]))
+            activity = _last_activity(garmin["last_activity"])
+            if activity:
+                training = dict(training, available=True, source="garmin", error=None, last_activity=activity)
         return training
 
     @staticmethod
