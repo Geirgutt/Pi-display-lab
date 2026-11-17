@@ -4,7 +4,7 @@ Controlleren henter avspillingsstatus og utfører spill/pause, neste og forrige
 gjennom Spotify Web API. ESP32-en mottar bare kompakt visningsdata over den
 eksisterende PSK/TLS-forbindelsen. Tokenverdier sendes aldri til skjermen eller
 status-API-et. For spor med et lite albumomslag viser displayet bildet sammen
-med sporet og lenken til det i Spotify. Controlleren holder bare det sist
+med sporinformasjonen. Controlleren holder bare det sist
 hentede omslaget i minnet.
 
 ## Engangsoppsett på Raspberry Pi-controlleren
@@ -74,6 +74,8 @@ SSH-tunnelen kan lukkes når oppsettet er fullført.
 - `Spotify access denied`: kontroller Premium, godkjente testbrukere i appens
   utviklermodus og tilgangen du godkjente. Kjør oppsettet på nytt ved behov.
 - `Spotify request limit; waiting`: controlleren respekterer Spotifys Retry-After.
+- Ved en kort API-feil beholdes siste avspilling mens controlleren prøver igjen.
+  `Spotify unavailable` vises hvis feilen varer og siste avspilling er utdatert.
 - `Controller disconnected`: knappene deaktiveres til forbindelsen er tilbake.
 - Ved vanlig oppsett kan du kopiere returadressen selv om nettleseren viser
   en tilkoblingsfeil. Ved oppsett med `--tunnel` må port 8888 være ledig og

@@ -1216,7 +1216,6 @@ void spotifyTelemetry(const app_state::Model& model, bool force = false)
     const auto& cover = secure_transport::lastSpotifyCover();
     const bool coverVisible = hasPlayback && cover.length && state.trackId[0]
         && strcmp(cover.trackId, state.trackId) == 0;
-    const bool trackLink = hasPlayback && state.trackId[0];
     const int16_t playbackX = coverVisible ? 194 : 26;
     const int16_t lowerRight = 454;
     const bool showProgress = hasPlayback && state.durationMs > 0;
@@ -1256,12 +1255,6 @@ void spotifyTelemetry(const app_state::Model& model, bool force = false)
         spotifyLine(state.artist, 184, muted, playbackX);
         spotifyLine(state.device, 230, muted, playbackX, lowerRight);
         if (showProgress) spotifyProgress(elapsed, duration, playbackX, lowerRight);
-        if (trackLink)
-        {
-            char url[64];
-            snprintf(url, sizeof(url), "https://open.spotify.com/track/%s", state.trackId);
-            label(url, 26, 302, 1, muted);
-        }
     }
     else if (model.spotifyConnected && (state.status == 0 || state.status == 4))
     {

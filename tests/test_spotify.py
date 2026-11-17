@@ -179,6 +179,34 @@ class SpotifyTests(unittest.TestCase):
         self.assertEqual([call.kwargs["method"] for call in request.call_args_list],
                          ["POST", "GET", "GET"])
 
+    def test_transient_failure_keeps_playback_and_retries_quickly(self):
+        playback = {"is_playing": True, "progress_ms": 2000,
+                    "item": {"name": "Song", "duration_ms": 120000}}
+        next_playback = {**playback, "item": {**playback["item"], "name": "Next song"}}
+        with patch("spotify.spotify_request", side_effect=[playback, SpotifyError("unavailable"), next_playback]), \
+             patch("spotify.time.monotonic", return_value=100) as clock:
+            self.provider._poll()
+            clock.return_value = 110
+            self.provider._poll()
+            state = self.provider.snapshot()
+            self.assertEqual(state["title"], "Song")
+            self.assertEqual(state["progress_ms"], 12000)
+            self.assertEqual(self.provider._next_poll, 113)
+            clock.return_value = 113
+            self.provider._poll()
+            self.assertEqual(self.provider.snapshot()["title"], "Next song")
+
+    def test_persistent_failure_and_revoked_access_are_reported(self):
+        playback = {"is_playing": True, "item": {"name": "Song"}}
+        for failure, when in (("unavailable", 130), ("reauthorize", 110)):
+            with self.subTest(failure=failure), \
+                 patch("spotify.spotify_request", side_effect=[playback, SpotifyError(failure)]), \
+                 patch("spotify.time.monotonic", return_value=100) as clock:
+                self.provider._poll()
+                clock.return_value = when
+                self.provider._poll()
+                self.assertEqual(self.provider.snapshot()["status"], failure)
+
     def test_rate_limit_preserves_retry_after_and_401_refreshes_once(self):
         with patch("spotify.spotify_request", side_effect=SpotifyError("rate_limited", 240)):
             before = time.monotonic()

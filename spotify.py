@@ -22,6 +22,8 @@ LIBRARY_URL = "https://api.spotify.com/v1/me/library"
 COMMANDS = {"play": ("PUT", "/play"), "pause": ("PUT", "/pause"),
             "next": ("POST", "/next"), "previous": ("POST", "/previous")}
 MAX_COVER_BYTES = 7000
+PLAYBACK_ERROR_GRACE = 30
+PLAYBACK_RETRY_DELAY = 3
 TRACK_ID = re.compile(r"[A-Za-z0-9]{22}")
 COVER_URL = re.compile(r"https://i\.scdn\.co/image/[A-Za-z0-9]{1,128}")
 
@@ -356,6 +358,11 @@ class SpotifyProvider:
                     playable and (not state["title"] or same_track))
                 if skip_pending and transient and now < self._skip_status_until:
                     delay = 2
+                elif (not skip_pending and state["status"] == "unavailable"
+                      and self._state["status"] in {"playing", "paused"}
+                      and now < self._sampled_at + PLAYBACK_ERROR_GRACE):
+                    # Keep the last sample and cover while a brief API error clears.
+                    delay = min(PLAYBACK_RETRY_DELAY, self._sampled_at + PLAYBACK_ERROR_GRACE - now)
                 else:
                     if skip_pending and transient:
                         delay = 3
