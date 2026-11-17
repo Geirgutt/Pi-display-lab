@@ -192,6 +192,7 @@ def synchronize(api_key: str, cache_dir: Path, *, today: date | None = None, cli
     raw = raw_cache.get("data", {}) if same_key else {}
     if not isinstance(raw, dict):
         raw = {}
+    raw.pop("hydration", None)
     # A failed new-day request must not label yesterday's daily values as today.
     if raw_cache.get("date") != end:
         raw.pop("daily", None)
@@ -211,7 +212,6 @@ def synchronize(api_key: str, cache_dir: Path, *, today: date | None = None, cli
         ("vo2", f"/metrics-service/metrics/maxmet/daily/{current - timedelta(days=29)}/{end}", None),
         ("activities", "/activitylist-service/activities/search/activities", {"start": 0, "limit": 10, "sortOrder": "desc"}),
         ("fitness_age", f"/fitnessage-service/fitnessage/v2/{end}", None),
-        ("hydration", f"/usersummary-service/stats/hydration/daily/{start}/{end}", None),
     ]
     failures, successes, retry_at, auth_error = [], 0, 0, False
     for name, path, params in requests:

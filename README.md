@@ -269,8 +269,8 @@ for helse og utførte aktiviteter, og **Publish Calendar** i Garmin Connect Web
 for kommende økter. Personal API har foreløpig ingen tilsvarende kalender for
 planlagte økter, så ICS-adressen er fortsatt nyttig.
 
-På skjermen åpner du **Menu → Garmin**. Fire sider viser inntil 24 verdier:
-Body Battery, skritt, stress, hvilepuls, kalorier og væske; søvntid, søvnscore,
+På skjermen åpner du **Menu → Garmin**. Fire sider viser inntil 23 verdier:
+Body Battery, skritt, stress, hvilepuls og kalorier; søvntid, søvnscore,
 dyp søvn, REM og HRV; vekt, VO2 maks, kondisjonsalder, SpO2, respirasjon og
 intensitetsminutter; samt distanse, tid, tempo, puls, aerob treningseffekt og
 belastning for siste aktivitet. Trykk på et målekort for å åpne en større graf
@@ -278,6 +278,7 @@ og se daterte målinger fra de siste sju kalenderdagene der data finnes.
 Manglende målinger vises som `--`. Vekt bruker siste måling
 innen sju dager, VO2 maks siste verdi innen 30 dager. Garmin-knappen
 **Workouts** åpner den eksisterende visningen av kommende økter.
+Fra **Last activity** på forsiden åpner **History** de siste fullførte øktene.
 I en fullført aktivitet åpner **Charts** grafer for puls, tempo og høyde når
 aktivitetsfila inneholder målingene. Controlleren henter inntil to nye
 aktivitetsfiler per synkronisering, beholder grafpunktene lokalt og sender dem

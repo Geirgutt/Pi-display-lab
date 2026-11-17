@@ -58,7 +58,8 @@ class GarminDashboardTests(unittest.TestCase):
         result = build_dashboard(raw, today=today)
         groups = result["groups"]
         self.assertEqual(len(groups), 4)
-        self.assertTrue(all(len(group["metrics"]) == 6 for group in groups))
+        self.assertEqual([len(group["metrics"]) for group in groups], [5, 6, 6, 6])
+        self.assertNotIn("Hydration", [metric["label"] for metric in groups[0]["metrics"]])
         self.assertEqual(groups[0]["metrics"][0]["value"], "62")
         self.assertEqual(groups[0]["metrics"][1]["value"], "8123")
         # History always spans the last seven calendar dates; omitted dates stay missing.

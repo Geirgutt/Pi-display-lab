@@ -857,7 +857,8 @@ void activityDetail(const app_state::Model& model)
 
 void activityDetailButtons(const app_state::Model& model)
 {
-    if (!model.activityFromHome) button(65, "Back", 12, 426, 132, model.pressedButton == 65);
+    if (model.activityFromHome) button(61, "History", 12, 426, 132, model.pressedButton == 61);
+    else button(65, "Back", 12, 426, 132, model.pressedButton == 65);
     if (model.selectedActivity.title[0])
         button(67, model.activityChartsVisible ? "Summary" : "Charts", 174, 426, 132,
                model.pressedButton == 67);

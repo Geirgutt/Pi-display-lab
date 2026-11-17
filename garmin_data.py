@@ -110,19 +110,12 @@ def build_dashboard(raw: dict, *, today: date) -> dict:
             result.append(value)
         return result
 
-    hydration_rows = raw.get("hydration", [])
-    if not isinstance(hydration_rows, list):
-        hydration_rows = []
-    hydration_by_date = {_day(_obj(item).get("calendarDate")): _obj(item).get("valueInML")
-                         for item in hydration_rows if _day(_obj(item).get("calendarDate"))}
-    hydration_history = [hydration_by_date.get(d) for d in days]
     today_group = [
         _metric("Body Battery", daily.get("bodyBatteryMostRecentValue"), "", history("bodyBattery", "latestValue")),
         _metric("Steps", daily.get("totalSteps"), "", history("movement", "steps")),
         _metric("Stress", daily.get("averageStressLevel"), "", history("stress", "avgLevel")),
         _metric("Resting HR", daily.get("restingHeartRate"), "bpm", history("heartRate", "restingValue")),
         _metric("Calories", daily.get("totalKilocalories"), "kcal", history("calories", "burnedTotal")),
-        _metric("Hydration", daily.get("hydrationValueInML"), "mL", hydration_history),
     ]
 
     sleep_rows = raw.get("sleep", [])

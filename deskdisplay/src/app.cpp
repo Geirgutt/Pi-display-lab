@@ -241,7 +241,7 @@ uint8_t hit(int16_t x, int16_t y)
     }
     else if (model.page == app_state::Page::ActivityDetail)
     {
-        if (!model.activityFromHome && inside(x, y, 12, 426, 132)) return 65;
+        if (inside(x, y, 12, 426, 132)) return model.activityFromHome ? 61 : 65;
         if (model.selectedActivity.title[0] && inside(x, y, 174, 426, 132)) return 67;
         if (inside(x, y, 336, 426, 132)) return 5;
     }

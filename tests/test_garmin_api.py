@@ -90,7 +90,7 @@ class GarminApiTests(unittest.TestCase):
         client.get.return_value = None
         result = synchronize("newkey", self.cache, today=date(2026, 11, 18), client=client, clock=lambda: 200)
         self.assertEqual(result["status"], "ok")
-        self.assertEqual(client.get.call_count, 9)
+        self.assertEqual(client.get.call_count, 8)
         self.assertNotIn("totalSteps", str(read_cache(self.cache / "garmin-raw.json")["data"]))
 
     def test_provider_exposes_no_credentials_and_marks_old_data_stale(self):

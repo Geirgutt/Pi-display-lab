@@ -34,7 +34,7 @@ class GarminProvider:
             metrics = []
             raw_metrics = group.get("metrics")
             for metric in (raw_metrics if isinstance(raw_metrics, list) else [])[:6]:
-                if not isinstance(metric, dict):
+                if not isinstance(metric, dict) or metric.get("label") == "Hydration":
                     continue
                 history = []
                 values = metric.get("history")
