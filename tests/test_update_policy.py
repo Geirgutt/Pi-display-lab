@@ -64,12 +64,17 @@ class UpdatePolicyTests(unittest.TestCase):
         for path in (
             "cluster_pki.py",
             "requirements.txt",
-            "requirements-integrations.txt",
             "ansible/install-workers.yml",
             "scripts/install-service.sh",
         ):
             with self.subTest(path=path):
                 self.assertEqual(classify_paths((path,))[0], "full")
+
+    def test_integration_dependencies_are_controller_only(self) -> None:
+        paths = ("requirements-integrations.txt", "garmin_charts.py", "deskdisplay/src/ui.cpp")
+        self.assertEqual(classify_paths(paths), ("controller", True, ()))
+        self.assertEqual(classify_paths(paths + ("cluster_worker.py",)), ("quick", True, ()))
+        self.assertEqual(classify_paths(paths + ("requirements.txt",)), ("full", True, ()))
 
     def test_update_engine_changes_can_bootstrap_through_quick_path(self) -> None:
         paths = (

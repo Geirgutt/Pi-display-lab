@@ -101,6 +101,15 @@ prompt_yes_no() {
   esac
 }
 
+update_display_via_usb() (
+  temp_dir="$(mktemp -d)"
+  trap 'rm -rf "$temp_dir"' EXIT
+  echo "Oppdaterer DeskDisplay via USB ..."
+  bash scripts/install-deskdisplay-service.sh
+  python3 cluster_install.py "$CONFIG_FILE" "$temp_dir" "$REVISION" \
+    --display-mode cable --display-only
+)
+
 UPDATE_MODE="full"
 DISPLAY_CHANGED=false
 if [[ "$CLUSTER_ENABLED" == "true" ]]; then
@@ -194,15 +203,19 @@ if [[ "$CLUSTER_ENABLED" == "true" ]]; then
       echo "Oppdaterer kun DeskDisplay over OTA ..."
       bash scripts/stage-deskdisplay-ota.sh
     else
-      TEMP_DIR="$(mktemp -d)"
-      chmod 0700 "$TEMP_DIR"
-      trap 'rm -rf "$TEMP_DIR"; sudo_session_stop' EXIT
-      echo "Oppdaterer kun DeskDisplay via USB ..."
-      bash scripts/install-deskdisplay-service.sh
-      python3 cluster_install.py "$CONFIG_FILE" "$TEMP_DIR" "$REVISION" \
-        --display-mode cable --display-only
+      update_display_via_usb
     fi
     exit 0
+  fi
+  if [[ "$UPDATE_MODE" == "controller" || "$UPDATE_MODE" == "quick" ]]; then
+    if ! git diff --quiet "$PREVIOUS_REVISION" "$REVISION" -- requirements-integrations.txt; then
+      if [[ ! -x "$VENV_DIR/bin/python" ]]; then
+        echo "Controllerens Python-miljø mangler. Kjør full oppdatering for å reparere installasjonen." >&2
+        exit 1
+      fi
+      echo "Installerer endrede integrasjonspakker på controlleren ..."
+      "$VENV_DIR/bin/python" -m pip install --disable-pip-version-check -r requirements-integrations.txt
+    fi
   fi
   if [[ "$UPDATE_MODE" == "quick" ]]; then
     echo "Hurtigoppdaterer controller og workers til eksakt commit $REVISION ..."
@@ -210,11 +223,16 @@ if [[ "$CLUSTER_ENABLED" == "true" ]]; then
   elif [[ "$UPDATE_MODE" == "controller" ]]; then
     echo "Hurtigoppdaterer bare controllerens runtime-tjenester ..."
     bash scripts/quick-update-controller.sh
-    if systemctl cat pi-display-integrations.service >/dev/null 2>&1; then
+    if ! git diff --quiet "$PREVIOUS_REVISION" "$REVISION" -- requirements-integrations.txt \
+        calendar_data.py garmin_api.py garmin_charts.py garmin_data.py integration_sync.py training.py \
+        && systemctl cat pi-display-integrations.service >/dev/null 2>&1; then
       echo "Oppdaterer Garmin-/kalenderdata med den nye parseren ..."
       if ! sudo systemctl start pi-display-integrations.service; then
         echo "Garmin-/kalendersynk feilet midlertidig; timeren prøver igjen senere." >&2
       fi
+    fi
+    if [[ "$DISPLAY_MODE" == "cable" ]]; then
+      update_display_via_usb
     fi
   else
     echo "Fulloppdaterer controller og workers til eksakt commit $REVISION ..."

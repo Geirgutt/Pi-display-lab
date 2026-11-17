@@ -331,6 +331,8 @@ Oppdateringsskriptet:
 - klassifiserer automatisk endringene og velger minste trygge oppdatering
 - bruker en hurtigoppdatering for kjente runtime-/UI-endringer: eksakt Git-commit,
   omstart og verifisering, uten apt, pip, PKI eller credential-distribusjon
+- oppdaterer Garmin- og kalenderpakkene på controlleren når
+  `requirements-integrations.txt` endres. Det gir ingen worker-oppdatering i seg selv.
 - bruker full oppdatering automatisk ved endringer i installasjon, dependencies,
   konfigurasjon, Ansible eller sikkerhetskode
 - spør om full oppdatering når en ny eller ukjent fil ikke kan klassifiseres trygt

@@ -45,7 +45,6 @@ FULL_FILES = {
     "config.py",
     "config.example.json",
     "requirements.txt",
-    "requirements-integrations.txt",
     "requirements-ansible.txt",
     "setup_cluster.py",
 }
@@ -102,7 +101,9 @@ def classify_paths(paths: Iterable[str]) -> tuple[str, bool, tuple[str, ...]]:
         "integration_sync.py",
         "garmin.py",
         "garmin_api.py",
+        "garmin_charts.py",
         "garmin_data.py",
+        "requirements-integrations.txt",
         "spotify.py",
         "cluster_maintenance.py",
         "maintenance_output.py",
