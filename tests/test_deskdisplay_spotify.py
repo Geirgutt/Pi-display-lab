@@ -93,7 +93,7 @@ class SpotifyWireTests(unittest.TestCase):
             source.write_text(C)
             decoder.write_text(CPP)
             built = subprocess.run([cc, "-std=c11", "-Wall", "-Wextra", "-I", str(ROOT),
-                                    str(source), "-lssl", "-lcrypto", "-o", str(temp / "gateway")],
+                                    str(source), "-pthread", "-lssl", "-lcrypto", "-o", str(temp / "gateway")],
                                    capture_output=True, text=True)
             if "openssl/" in built.stderr and "No such file" in built.stderr:
                 self.skipTest("OpenSSL development headers unavailable")

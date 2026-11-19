@@ -44,6 +44,12 @@ The first LovyanGFX-only application dashboard is documented in
 [docs/ui-milestone.md](docs/ui-milestone.md). It is built into all four
 environments; Wi-Fi and BLE remain compile-time optional.
 
+Open a Garmin activity and select **Map** to see the route on OpenStreetMap.
+The Pi requests the map tiles when the display needs them and sends the
+composed image over the authenticated gateway. The screen can still draw the
+GPS track while the image loads or when tiles are unavailable. Existing
+activities gain a background as the Garmin sync refreshes their cached routes.
+
 Optional advertising-only [BLE and Wi-Fi + BLE test builds](docs/ble-test.md)
 have been physically tested: BLE discovery and repeated start/stop, plus basic
 Wi-Fi coexistence including BLE-first startup. Normal default/Wi-Fi builds keep

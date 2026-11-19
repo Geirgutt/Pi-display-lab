@@ -21,6 +21,7 @@ constexpr uint8_t spotifyTelemetryType = 5;
 constexpr uint8_t garminTelemetryType = 6;
 constexpr uint8_t activityTelemetryType = 7;
 constexpr uint8_t spotifyCoverType = 8;
+constexpr uint8_t activityMapType = 9;
 constexpr size_t activityCountMax = 10;
 constexpr size_t activityMetricCount = 6;
 constexpr size_t activityChartCount = 3;
@@ -65,6 +66,7 @@ struct Activity
     int16_t extraCharts[activityExtraChartCount][activityChartSamples] = {};
     int16_t paceTargetFast = 0;
     int16_t paceTargetSlow = 0;
+    uint64_t id = 0;
 };
 struct ActivityTelemetry
 {
@@ -79,13 +81,16 @@ constexpr size_t activityLapFrameSize = activityChartFrameSize + activityCountMa
 constexpr size_t activityMediaGroupSize = 1 + 2 * activityRouteMax + 2 * activityExtraChartCount * activityChartSamples;
 constexpr size_t activityMediaFrameSize = activityLapFrameSize + activityCountMax * activityMediaGroupSize;
 constexpr size_t activityTargetFrameSize = activityMediaFrameSize + activityCountMax * 4;
+constexpr size_t activityMapIdSize = 8;
+constexpr size_t activityIdFrameSize = activityTargetFrameSize + activityCountMax * activityMapIdSize;
 constexpr bool validActivityFrameSize(size_t length)
 {
     return length == activityFrameSize || length == activityChartFrameSize
         || length == activityLapFrameSize || length == activityMediaFrameSize
-        || length == activityTargetFrameSize;
+        || length == activityTargetFrameSize || length == activityIdFrameSize;
 }
 constexpr uint8_t spotifyCommandType = 0x91;
+constexpr uint8_t activityMapRequestType = 0x92;
 constexpr size_t spotifyTitleMax = 96;
 constexpr size_t spotifyDeviceMax = 48;
 constexpr size_t spotifyPayloadSize = 10 + 2 * (spotifyTitleMax + 1) + spotifyDeviceMax + 1;
@@ -144,8 +149,9 @@ constexpr size_t otaChunkFrameSize = headerSize + otaChunkHeaderSize + otaChunkD
 constexpr size_t otaCompleteFrameSize = headerSize;
 constexpr size_t otaAckPayloadSize = 1 + 4;
 constexpr size_t otaAckFrameSize = headerSize + otaAckPayloadSize;
-constexpr size_t maxFrameSize = otaChunkFrameSize > activityTargetFrameSize
-                              ? otaChunkFrameSize : activityTargetFrameSize;
+constexpr size_t activityMapJpegMax = 24576;
+constexpr size_t activityMapFrameSize = headerSize + activityMapIdSize + activityMapJpegMax;
+constexpr size_t maxFrameSize = activityMapFrameSize;
 static_assert(clusterFrameSize <= maxFrameSize, "Cluster frame exceeds receive buffer");
 static_assert(trainingFrameSize <= maxFrameSize, "Training frame exceeds receive buffer");
 static_assert(calendarFrameSize <= maxFrameSize, "Calendar frame exceeds receive buffer");
@@ -541,13 +547,18 @@ inline bool decodeActivityTelemetry(const uint8_t* frame, size_t length, uint64_
                     p += 2;
                 }
         }
-        if (length == activityTargetFrameSize)
+        if (length >= activityTargetFrameSize)
         {
             p = frame + activityMediaFrameSize + index * 4;
             item.paceTargetFast = static_cast<int16_t>(get16(p));
             item.paceTargetSlow = static_cast<int16_t>(get16(p + 2));
             if (item.paceTargetFast < 0 || item.paceTargetFast > item.paceTargetSlow
                 || (!item.paceTargetFast && item.paceTargetSlow)) return false;
+        }
+        if (length == activityIdFrameSize)
+        {
+            item.id = get64(frame + activityTargetFrameSize + index * activityMapIdSize);
+            if (item.id > INT64_MAX) return false;
         }
     }
     for (size_t index = value.count; index < activityCountMax; ++index)

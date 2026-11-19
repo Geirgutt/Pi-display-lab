@@ -167,7 +167,7 @@ Build the optional firmware and Linux peer without flashing:
 
 ```text
 /home/geir/.platformio/penv/bin/pio run -e guition-4848s040-secure
-cc -O2 -Wall -Wextra -Isrc -o tools/secure_peer tools/secure_peer.c -lssl -lcrypto
+cc -O2 -Wall -Wextra -Isrc -o tools/secure_peer tools/secure_peer.c -pthread -lssl -lcrypto
 ```
 
 On Linux/Raspberry Pi, create a restricted PSK file out of the repository:

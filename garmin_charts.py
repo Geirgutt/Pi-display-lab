@@ -12,7 +12,8 @@ MISSING = -32768
 MAX_FIT_BYTES = 8 * 1024 * 1024
 LAP_LIMIT = 20
 ROUTE_LIMIT = 80
-ROUTE_FORMAT = 4
+ROUTE_FORMAT = 6
+MAP_POINT_LIMIT = 400
 
 
 def activity_download_id(value) -> int | None:
@@ -25,7 +26,7 @@ def _finite(value):
     return isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value)
 
 
-def summarize_records(records: list[dict]) -> list[list[int]]:
+def summarize_records(records: list[dict], *, running: bool = False) -> list[list[int]]:
     records = [row for row in records if _finite(row.get("timestamp"))]
     if len(records) < 2:
         return []
@@ -37,9 +38,15 @@ def summarize_records(records: list[dict]) -> list[list[int]]:
     counts = [[0] * SAMPLES for _ in totals]
     for row in records:
         slot = min(SAMPLES - 1, int((row["timestamp"] - start) / span * SAMPLES))
+        cadence = row.get("cadence")
+        if running and _finite(cadence) and 0 <= cadence <= 254:
+            fraction = row.get("fractional_cadence")
+            cadence = 2 * (cadence + (fraction if _finite(fraction) and 0 <= fraction < 1 else 0))
+        elif running:
+            cadence = None
         values = (row.get("heart_rate"), row.get("enhanced_speed", row.get("speed")),
                   row.get("enhanced_altitude", row.get("altitude")),
-                  row.get("cadence"), row.get("power"))
+                  cadence, row.get("power"))
         for index, value in enumerate(values):
             if not _finite(value) or not (-1000 <= value <= 10000):
                 continue
@@ -60,15 +67,22 @@ def summarize_records(records: list[dict]) -> list[list[int]]:
     return result if any(sample != MISSING for series in result for sample in series) else []
 
 
-def summarize_route(records: list[dict]) -> list[list[int]]:
-    # FIT coordinates are semicircles. Project locally, retaining aspect ratio
-    # but send only relative screen points, without geographic coordinates.
+def _route_positions(records: list[dict]) -> list[tuple[int, int]]:
     points = []
     for row in records:
         lat, lon = row.get("position_lat"), row.get("position_long")
         if (type(lat) is int and type(lon) is int and abs(lat) <= 2**30
             and -2**31 <= lon < 2**31 and lon != 2**31 - 1):
             points.append((lat, lon))
+    return points
+
+
+def summarize_route(records: list[dict]) -> list[list[int]]:
+    return _project_route(_route_positions(records))
+
+
+def _project_route(points: list[tuple[int, int]]) -> list[list[int]]:
+    # FIT coordinates are semicircles. Send only relative points to the display.
     if len(points) < 2:
         return []
     lat0, lon0 = points[0]
@@ -86,6 +100,18 @@ def summarize_route(records: list[dict]) -> list[list[int]]:
 
     return [[fit(x, low_x, high_x), fit(y, low_y, high_y)]
             for x, y in (projected[i * (len(projected) - 1) // (count - 1)] for i in range(count))]
+
+
+def _route_details(records: list[dict]) -> dict:
+    points = _route_positions(records)
+    route = _project_route(points)
+    if not route:
+        return {}
+    count = min(len(points), MAP_POINT_LIMIT)
+    scale = 180 / 2**31
+    coordinates = [[round(lat * scale, 6), round(lon * scale, 6)]
+                   for lat, lon in (points[i * (len(points) - 1) // (count - 1)] for i in range(count))]
+    return {"route": route, "map_coordinates": coordinates}
 
 
 def summarize_laps(records: list[dict]) -> tuple[int, list[list[int]]]:
@@ -116,7 +142,7 @@ def summarize_pace_target(steps: list[dict]) -> list[int]:
     return list(next(iter(ranges))) if len(ranges) == 1 else []
 
 
-def _decode_fit(data: bytes) -> dict:
+def _decode_fit(data: bytes, *, running: bool = False) -> dict:
     from garmin_fit_sdk import Decoder, Stream
 
     messages, errors = Decoder(Stream.from_byte_array(bytearray(data))).read(
@@ -125,10 +151,11 @@ def _decode_fit(data: bytes) -> dict:
         return {}
     total, laps = summarize_laps(messages.get("lap_mesgs", []))
     records = messages.get("record_mesgs", [])
-    route = summarize_route(records) or summarize_route(messages.get("gps_metadata_mesgs", []))
+    route = _route_details(records) or _route_details(messages.get("gps_metadata_mesgs", []))
     if not (records or total or route):
         return {}
-    return {"series": summarize_records(records), "route": route,
+    return {"series": summarize_records(records, running=running), "route": [], **route,
+            "cadence_in_steps": running,
             "lap_total": total, "laps": laps,
             "pace_target": summarize_pace_target(messages.get("workout_step_mesgs", []))}
 
@@ -159,15 +186,14 @@ def _decode_xml_route(data: bytes) -> dict:
             semicircle_lon = (round(lon * 2**31 / 180) + 2**31) % 2**32 - 2**31
             positions.append({"position_lat": round(lat * 2**31 / 180),
                               "position_long": semicircle_lon})
-    route = summarize_route(positions)
-    return {"route": route} if route else {}
+    return _route_details(positions)
 
 
-def decode_activity_file(data: bytes) -> dict:
+def decode_activity_file(data: bytes, *, running: bool = False) -> dict:
     if len(data) > MAX_FIT_BYTES:
         return {}
     if data[:4] != b"PK\x03\x04":
-        return _decode_fit(data) if data[8:12] == b".FIT" else _decode_xml_route(data)
+        return _decode_fit(data, running=running) if data[8:12] == b".FIT" else _decode_xml_route(data)
     with zipfile.ZipFile(io.BytesIO(data)) as archive:
         details: dict = {}
         priority = {".fit": 0, ".gpx": 1, ".tcx": 2}
@@ -186,7 +212,7 @@ def decode_activity_file(data: bytes) -> dict:
                     contents = handle.read(member.file_size)
             except (zipfile.BadZipFile, RuntimeError):
                 continue
-            result = _decode_fit(contents) if kind == 0 else _decode_xml_route(contents)
+            result = _decode_fit(contents, running=running) if kind == 0 else _decode_xml_route(contents)
             if result.get("route"):
                 if not details:
                     return result

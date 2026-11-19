@@ -13,13 +13,14 @@
 #include <Preferences.h>
 #include <IPAddress.h>
 #include <Update.h>
+#include <esp_heap_caps.h>
 #include <esp_system.h>
 #include <mbedtls/net_sockets.h>
 #include <mbedtls/sha256.h>
 
 namespace
 {
-constexpr const char* identities[] = {"DeskDisplay-peer-library", "DeskDisplay-peer-media",
+constexpr const char* identities[] = {"DeskDisplay-peer-maps", "DeskDisplay-peer-library", "DeskDisplay-peer-media",
                                       "DeskDisplay-peer-laps", "DeskDisplay-peer-charts", "DeskDisplay-peer-activities",
                                       "DeskDisplay-peer"};
 constexpr char preferenceNamespace[] = "dd-secure";
@@ -30,6 +31,7 @@ constexpr int32_t connectTimeoutMs = 1000;
 constexpr unsigned long handshakeTimeoutSeconds = 5;
 constexpr uint32_t sessionTimeoutSeconds = 50;
 constexpr uint32_t offlineMs = 5000;
+constexpr uint32_t activityMapTimeoutMs = 15000;
 
 class DeskDisplaySecureClient : public WiFiClientSecure
 {
@@ -69,6 +71,12 @@ secure_protocol::SpotifyTelemetry latestSpotify;
 secure_protocol::SpotifyCover latestCover;
 secure_protocol::GarminTelemetry latestGarmin;
 secure_protocol::ActivityTelemetry latestActivities;
+uint64_t requestedMapId = 0;
+uint32_t requestedMapAt = 0;
+uint64_t latestMapId = 0;
+uint8_t* latestMapJpeg = nullptr;
+size_t latestMapLength = 0;
+bool latestMapChanged = false;
 secure_transport::Counters stats;
 bool otaActive = false;
 uint32_t otaSize = 0;
@@ -123,7 +131,7 @@ bool decodeKey(const char* hex, uint8_t* output)
 void clearFrame()
 {
     volatile uint8_t* p = frame;
-    for (size_t i = 0; i < sizeof(frame); ++i) p[i] = 0;
+    for (size_t i = 0; i < frameLength; ++i) p[i] = 0;
     frameLength = 0;
 }
 
@@ -137,6 +145,7 @@ void closeSession(bool countReconnect)
     if (sessionActive || client.connected()) client.stop();
     sessionActive = false;
     lastSequence = 0;
+    requestedMapId = 0;
     clearFrame();
     if (countReconnect) ++stats.reconnects;
 }
@@ -298,6 +307,13 @@ size_t expectedFrameSize()
             return payloadLength >= id + 4 && payloadLength <= id + secure_protocol::spotifyCoverMax
                 ? secure_protocol::headerSize + payloadLength : 0;
         }
+        if (frame[3] == secure_protocol::activityMapType)
+        {
+            const size_t id = secure_protocol::activityMapIdSize;
+            return (payloadLength == id || (payloadLength >= id + 4
+                && payloadLength <= id + secure_protocol::activityMapJpegMax))
+                ? secure_protocol::headerSize + payloadLength : 0;
+        }
         if (frame[3] == secure_protocol::garminTelemetryType)
         {
             const size_t length = secure_protocol::headerSize + payloadLength;
@@ -404,6 +420,44 @@ bool processFrame()
                 memcpy(latestCover.trackId, id, secure_protocol::spotifyTrackIdSize);
                 memcpy(latestCover.jpeg, jpeg, length);
                 latestCover.length = length;
+            }
+        }
+        else ++stats.replayDrops;
+        clearFrame();
+        return true;
+    }
+    if (frame[3] == secure_protocol::activityMapType)
+    {
+        const uint8_t* payload = frame + secure_protocol::headerSize;
+        const uint64_t id = secure_protocol::get64(payload);
+        const uint8_t* jpeg = payload + secure_protocol::activityMapIdSize;
+        const size_t length = frameLength - secure_protocol::headerSize - secure_protocol::activityMapIdSize;
+        const uint64_t sequence = secure_protocol::get64(frame + 6);
+        if (frame[0] != secure_protocol::magic0 || frame[1] != secure_protocol::magic1
+            || frame[2] != secure_protocol::version || !id || id > INT64_MAX
+            || (length && (jpeg[0] != 0xff || jpeg[1] != 0xd8
+                || jpeg[length - 2] != 0xff || jpeg[length - 1] != 0xd9)))
+        {
+            ++stats.malformed;
+            closeSession(true);
+            return false;
+        }
+        if (sequence > lastSequence)
+        {
+            lastSequence = sequence;
+            if (id == requestedMapId)
+            {
+                requestedMapId = 0;
+                if (length && !latestMapJpeg)
+                    latestMapJpeg = static_cast<uint8_t*>(heap_caps_malloc(
+                        secure_protocol::activityMapJpegMax, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
+                if (length && latestMapJpeg)
+                {
+                    memcpy(latestMapJpeg, jpeg, length);
+                    latestMapLength = length;
+                    latestMapId = id;
+                    latestMapChanged = true;
+                }
             }
         }
         else ++stats.replayDrops;
@@ -653,6 +707,10 @@ bool secure_transport::setKeyHex(const char* hex)
     strncpy(pskHex, hex, sizeof(pskHex) - 1);
     pskHex[sizeof(pskHex) - 1] = 0;
     keyAvailable = true;
+    latestMapId = 0;
+    latestMapLength = 0;
+    latestMapChanged = false;
+    identityIndex = 0;
     closeSession(false);
     return true;
 }
@@ -669,6 +727,10 @@ bool secure_transport::setPeer(const char* address, uint16_t port)
     strncpy(peerAddress, address, sizeof(peerAddress) - 1);
     peerAddress[sizeof(peerAddress) - 1] = 0;
     peerPort = port;
+    latestMapId = 0;
+    latestMapLength = 0;
+    latestMapChanged = false;
+    identityIndex = 0;
     closeSession(false);
     return true;
 }
@@ -683,6 +745,43 @@ const secure_protocol::SpotifyTelemetry& secure_transport::lastSpotifyTelemetry(
 const secure_protocol::SpotifyCover& secure_transport::lastSpotifyCover() { return latestCover; }
 const secure_protocol::GarminTelemetry& secure_transport::lastGarminTelemetry() { return latestGarmin; }
 const secure_protocol::ActivityTelemetry& secure_transport::lastActivityTelemetry() { return latestActivities; }
+void secure_transport::requestActivityMap(uint64_t activityId)
+{
+    if (!activityId || activityId == latestMapId || !connected() || identityIndex != 0 || otaActive)
+        return;
+    const uint32_t now = millis();
+    if (requestedMapId == activityId && uint32_t(now - requestedMapAt) < activityMapTimeoutMs)
+        return;
+    uint8_t request[secure_protocol::headerSize + secure_protocol::activityMapIdSize] = {};
+    request[0] = secure_protocol::magic0;
+    request[1] = secure_protocol::magic1;
+    request[2] = secure_protocol::version;
+    request[3] = secure_protocol::activityMapRequestType;
+    secure_protocol::put16(request + 4, secure_protocol::activityMapIdSize);
+    secure_protocol::put64(request + 6, txSequence++);
+    secure_protocol::put64(request + secure_protocol::headerSize, activityId);
+    if (client.write(request, sizeof(request)) != sizeof(request))
+    {
+        closeSession(true);
+        return;
+    }
+    requestedMapId = activityId;
+    requestedMapAt = now;
+}
+
+const uint8_t* secure_transport::activityMap(uint64_t activityId, size_t& length)
+{
+    length = activityId == latestMapId ? latestMapLength : 0;
+    return length ? latestMapJpeg : nullptr;
+}
+
+bool secure_transport::takeActivityMapUpdate(uint64_t activityId)
+{
+    if (activityId != latestMapId || !latestMapChanged) return false;
+    latestMapChanged = false;
+    return true;
+}
+
 bool secure_transport::spotifyCommand(uint8_t action, const char* trackId)
 {
     static uint32_t lastCommand = 0;
@@ -757,6 +856,13 @@ const secure_protocol::ActivityTelemetry& secure_transport::lastActivityTelemetr
     return value;
 }
 bool secure_transport::spotifyCommand(uint8_t, const char*) { return false; }
+void secure_transport::requestActivityMap(uint64_t) {}
+const uint8_t* secure_transport::activityMap(uint64_t, size_t& length)
+{
+    length = 0;
+    return nullptr;
+}
+bool secure_transport::takeActivityMapUpdate(uint64_t) { return false; }
 const secure_protocol::SpotifyTelemetry& secure_transport::lastSpotifyTelemetry()
 {
     static secure_protocol::SpotifyTelemetry value;

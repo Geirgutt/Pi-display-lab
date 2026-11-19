@@ -16,7 +16,10 @@ BODY = ("DSSTATE/2\ngarmin\t1\t1794900000\ngarmin_group\tToday\n"
         "garmin_metric\tBody Battery\t71\tpercent\t" + ",".join(map(str, HISTORY)) + "\t1\n"
         "garmin_history_end\t20774\n")
 ACTIVITY_FIELDS = ("2026-11-17", "Morning run", "running", "5.20", "26", "5:00", "145", "3.2", "105.0")
+ACTIVITY_ID = 4_294_967_300
+MAP_JPEG = b"\xff\xd8\x00\x01\xff\xd9"
 BODY += "garmin_activity\t" + "\t".join(ACTIVITY_FIELDS) + "\n"
+BODY += f"garmin_activity_id\t{ACTIVITY_ID}\n"
 CHART = [128] + [-32768] * 22 + [152]
 BODY += "garmin_chart\t0\t" + ",".join(map(str, CHART)) + "\n"
 BODY += "garmin_lap_total\t1\ngarmin_lap\t300\t1000\t145\n"
@@ -43,13 +46,15 @@ def fixture():
     media = (lapped + bytes([2, 0, 180, 240, 60]) + bytes(156)
              + struct.pack("<48h", *([84] * 24), *([-32768] * 24)) + bytes(9 * 257))
     target = media + struct.pack("<2H", 280, 310) + bytes(36)
+    mapped = target + struct.pack("<Q", ACTIVITY_ID) + bytes(9 * 8)
     return (b"DS\x01\x06" + struct.pack("<HQ", len(payload), 42) + payload
             + b"DS\x01\x07" + struct.pack("<HQ", len(activity), 43) + activity
             + b"DS\x01\x06" + struct.pack("<HQ", len(scaled), 44) + scaled
             + b"DS\x01\x07" + struct.pack("<HQ", len(charted), 45) + charted
             + b"DS\x01\x07" + struct.pack("<HQ", len(lapped), 46) + lapped
             + b"DS\x01\x07" + struct.pack("<HQ", len(media), 47) + media
-            + b"DS\x01\x07" + struct.pack("<HQ", len(target), 48) + target)
+            + b"DS\x01\x07" + struct.pack("<HQ", len(target), 48) + target
+            + b"DS\x01\x07" + struct.pack("<HQ", len(mapped), 49) + mapped)
 
 
 CPP = r'''
@@ -120,6 +125,11 @@ int main() {
     assert(fread(target, 1, sizeof(target), stdin) == sizeof(target));
     assert(decodeActivityTelemetry(target, sizeof(target), sequence, history));
     assert(sequence == 48 && history.items[0].paceTargetFast == 280 && history.items[0].paceTargetSlow == 310);
+    assert(history.items[0].id == 0);
+    unsigned char mapped[activityIdFrameSize];
+    assert(fread(mapped, 1, sizeof(mapped), stdin) == sizeof(mapped));
+    assert(decodeActivityTelemetry(mapped, sizeof(mapped), sequence, history));
+    assert(sequence == 49 && history.items[0].id == UINT64_C(4294967300));
     return 0;
 }
 '''
@@ -141,18 +151,29 @@ int main(int argc, char** argv) {
     const size_t length = make_garmin_frame(frame, 42, 0, &state.garmin, 0);
     assert(fwrite(frame, 1, length, stdout) == length);
     latest_state = state;
-    const size_t activity_length = make_activity_frame(frame, 43, 0, 0, 0, 0);
+    const size_t activity_length = make_activity_frame(frame, 43, 0, 0, 0, 0, 0);
     assert(fwrite(frame, 1, activity_length, stdout) == activity_length);
     const size_t scaled_length = make_garmin_frame(frame, 44, 0, &state.garmin, 1);
     assert(fwrite(frame, 1, scaled_length, stdout) == scaled_length);
-    const size_t charted_length = make_activity_frame(frame, 45, 1, 0, 0, 0);
+    const size_t charted_length = make_activity_frame(frame, 45, 1, 0, 0, 0, 0);
     assert(fwrite(frame, 1, charted_length, stdout) == charted_length);
-    const size_t lapped_length = make_activity_frame(frame, 46, 1, 1, 0, 0);
+    const size_t lapped_length = make_activity_frame(frame, 46, 1, 1, 0, 0, 0);
     assert(fwrite(frame, 1, lapped_length, stdout) == lapped_length);
-    const size_t media_length = make_activity_frame(frame, 47, 1, 1, 1, 0);
+    const size_t media_length = make_activity_frame(frame, 47, 1, 1, 1, 0, 0);
     assert(fwrite(frame, 1, media_length, stdout) == media_length);
-    const size_t target_length = make_activity_frame(frame, 48, 1, 1, 1, 1);
+    const size_t target_length = make_activity_frame(frame, 48, 1, 1, 1, 1, 0);
     assert(fwrite(frame, 1, target_length, stdout) == target_length);
+    const size_t mapped_length = make_activity_frame(frame, 49, 1, 1, 1, 1, 1);
+    assert(fwrite(frame, 1, mapped_length, stdout) == mapped_length);
+    struct garmin_map_transfer map_transfer = {0};
+    atomic_init(&map_transfer.ready, 0);
+    uint64_t sequence = 50;
+    assert(start_garmin_map(NULL, &sequence, &map_transfer, state.activity_ids[0]));
+    assert(map_transfer.pending && sequence == 50);
+    assert(!pthread_join(map_transfer.thread, NULL));
+    assert(atomic_load(&map_transfer.ready) && map_transfer.jpeg_length == 6);
+    assert(!memcmp(map_transfer.jpeg, "\xff\xd8\x00\x01\xff\xd9", 6));
+    assert(!fetch_garmin_map(state.activity_ids[0] + 1, map_transfer.jpeg));
     return 0;
 }
 '''
@@ -190,7 +211,7 @@ class GarminWireTests(unittest.TestCase):
             executable = Path(directory) / "gateway"
             source.write_text(C)
             built = subprocess.run([cc, "-std=c11", "-Wall", "-Wextra", "-I", str(ROOT), str(source),
-                                    "-lssl", "-lcrypto", "-o", str(executable)], capture_output=True, text=True)
+                                    "-pthread", "-lssl", "-lcrypto", "-o", str(executable)], capture_output=True, text=True)
             if "openssl/" in built.stderr and "No such file" in built.stderr:
                 self.skipTest("OpenSSL development headers unavailable")
             self.assertEqual(built.returncode, 0, built.stderr)
@@ -200,6 +221,10 @@ class GarminWireTests(unittest.TestCase):
                       BODY + "garmin_group\tMore\n" * 4,
                       BODY + ("garmin_metric" + BODY.split("garmin_metric", 1)[1].splitlines()[0] + "\n") * 6,
                       BODY.replace("Morning run", "x" * 49),
+                      BODY.replace(str(ACTIVITY_ID), str(1 << 63)),
+                      BODY.replace(str(ACTIVITY_ID), "-1"),
+                      BODY.replace(f"garmin_activity_id\t{ACTIVITY_ID}\n",
+                                   f"garmin_activity_id\t{ACTIVITY_ID}\n" * 2),
                       BODY + ("garmin_activity\t" + "\t".join(ACTIVITY_FIELDS) + "\n") * 10]
 
             class Handler(BaseHTTPRequestHandler):
@@ -209,21 +234,28 @@ class GarminWireTests(unittest.TestCase):
                     pass
 
                 def do_GET(self):
-                    self.send_response(200)
+                    is_state = self.path == "/api/deskdisplay/state"
+                    is_map = self.path == f"/api/deskdisplay/garmin/map/{ACTIVITY_ID}"
+                    valid = (is_state or is_map) and self.headers.get("X-DeskDisplay-Maps") == "1"
+                    self.send_response(200 if valid else 404)
                     self.end_headers()
-                    self.wfile.write(self.body.encode())
+                    if valid:
+                        self.wfile.write(MAP_JPEG if is_map else self.body.encode())
 
             with HTTPServer(("127.0.0.1", 0), Handler) as server:
-                for index, body in enumerate(bodies):
-                    Handler.body = body
-                    worker = threading.Thread(target=server.handle_request, daemon=True)
-                    worker.start()
-                    encoded = subprocess.run([str(executable), str(server.server_port), "good" if index == 0 else "bad"],
-                                             capture_output=True, timeout=10)
+                worker = threading.Thread(target=server.serve_forever, daemon=True)
+                worker.start()
+                try:
+                    for index, body in enumerate(bodies):
+                        Handler.body = body
+                        encoded = subprocess.run([str(executable), str(server.server_port), "good" if index == 0 else "bad"],
+                                                 capture_output=True, timeout=10)
+                        self.assertEqual(encoded.returncode, 0, encoded.stderr)
+                        if index == 0:
+                            self.assertEqual(encoded.stdout, fixture())
+                finally:
+                    server.shutdown()
                     worker.join(timeout=3)
-                    self.assertEqual(encoded.returncode, 0, encoded.stderr)
-                    if index == 0:
-                        self.assertEqual(encoded.stdout, fixture())
 
 
 if __name__ == "__main__":

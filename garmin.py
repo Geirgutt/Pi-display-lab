@@ -15,6 +15,20 @@ class GarminProvider:
         self.path = Path(path or os.getenv("PI_DISPLAY_GARMIN_FILE", "") or DEFAULT_CACHE)
         self.clock = clock
 
+    def map_image(self, activity_id: int) -> bytes:
+        from garmin_maps import render_route_map
+
+        activities = self.snapshot()["activities"]
+        if not any(isinstance(item, dict) and item.get("map_id") == activity_id for item in activities):
+            return b""
+        raw = read_cache(self.path.with_name("garmin-raw.json")).get("data")
+        charts = raw.get("charts") if isinstance(raw, dict) else None
+        details = charts.get(str(activity_id)) if isinstance(charts, dict) else None
+        points = details.get("map_coordinates") if isinstance(details, dict) else None
+        if not isinstance(points, list):
+            return b""
+        return render_route_map(points, self.path.parent / "osm-tiles")
+
     def snapshot(self) -> dict:
         raw = read_cache(self.path)
         status = raw.get("status", "not_configured")

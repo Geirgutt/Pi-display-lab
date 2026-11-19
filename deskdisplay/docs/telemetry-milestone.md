@@ -151,7 +151,7 @@ Build every affected firmware variant without uploading:
   -e guition-4848s040-wifi-ble \
   -e guition-4848s040-secure
 cc -O2 -Wall -Wextra -Isrc -o /tmp/deskdisplay-secure-peer \
-  tools/secure_peer.c -lssl -lcrypto
+  tools/secure_peer.c -pthread -lssl -lcrypto
 ```
 
 The secure UI test uses `guition-4848s040-secure`; it includes Wi-Fi and the

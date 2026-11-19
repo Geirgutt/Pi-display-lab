@@ -23,7 +23,7 @@ from cluster_client import (
 from cluster_jobs import validate_monte_carlo, validate_prime_range, validate_slot_limit
 from config import AppConfig, load_config
 from display_state import DashboardState
-from garmin_charts import LAP_LIMIT, ROUTE_LIMIT
+from garmin_charts import LAP_LIMIT, ROUTE_LIMIT, activity_download_id
 from transports import BrowserTransport, Esp32Transport, TransportHub
 from updates import UpdateManager
 from spotify import COMMANDS, TRACK_ID
@@ -63,7 +63,7 @@ def _deskdisplay_state_lines(payload: dict[str, Any], worker_hosts: tuple[str, .
                              *, include_activities: bool = False, include_charts: bool = False,
                              include_laps: bool = False, include_media: bool = False,
                              cover: bytes = b"", include_library: bool = False,
-                             include_targets: bool = False) -> str:
+                             include_targets: bool = False, include_maps: bool = False) -> str:
     """Render compact controller state for the local DeskDisplay gateway."""
 
     nodes = list(payload.get("nodes") or [])
@@ -221,6 +221,9 @@ def _deskdisplay_state_lines(payload: dict[str, Any], worker_hosts: tuple[str, .
                                     _compact_text(activity.get("title"), 48, "Activity"),
                                     _compact_text(activity.get("kind"), 24),
                                     *(_compact_text(value, 16, "--") for value in values))))
+            map_id = activity_download_id(activity.get("map_id"))
+            if include_maps and map_id:
+                lines.append(f"garmin_activity_id\t{map_id}")
             charts = activity.get("charts")
             if include_charts and isinstance(charts, list):
                 for index, series in enumerate(charts[:5 if include_media else 3]):
@@ -320,10 +323,30 @@ def create_app(
                                      include_laps=request.headers.get("X-DeskDisplay-Laps") == "1",
                                      include_media=include_media, cover=cover,
                                      include_library=request.headers.get("X-DeskDisplay-Library") == "1",
-                                     include_targets=request.headers.get("X-DeskDisplay-Targets") == "1"),
+                                     include_targets=request.headers.get("X-DeskDisplay-Targets") == "1",
+                                     include_maps=request.headers.get("X-DeskDisplay-Maps") == "1"),
             mimetype="text/plain",
             headers={"Cache-Control": "no-store"},
         )
+
+    @app.get("/api/deskdisplay/garmin/map/<activity_id>")
+    def deskdisplay_map(activity_id: str) -> Any:
+        headers = {"Cache-Control": "no-store"}
+        if (request.remote_addr not in {"127.0.0.1", "::1"}
+                or request.host.split(":", 1)[0] != "127.0.0.1"
+                or request.headers.get("Origin")
+                or request.headers.get("X-DeskDisplay-Maps") != "1"):
+            return Response(status=403, headers=headers)
+        map_id = activity_download_id(activity_id)
+        if map_id is None:
+            return Response(status=404, headers=headers)
+        try:
+            image = dashboard.garmin_provider.map_image(map_id)
+        except ImportError:
+            image = b""
+        if not image or len(image) > 24576:
+            return Response(status=404, headers=headers)
+        return Response(image, mimetype="image/jpeg", headers=headers)
 
     @app.post("/api/deskdisplay/spotify/command")
     def spotify_command() -> Any:

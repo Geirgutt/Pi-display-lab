@@ -13,7 +13,7 @@ from urllib.error import HTTPError
 from garmin import GarminProvider
 from garmin_api import GarminClient, GarminError, NoRedirect, _sync_activity_charts, read_cache, synchronize
 from integration_sync import write_json_atomic
-from app import _deskdisplay_state_lines
+from app import _deskdisplay_state_lines, create_app
 from display_state import DashboardState
 
 
@@ -144,7 +144,8 @@ class GarminApiTests(unittest.TestCase):
                                 "history_end": 20774,
                                 "activities": [{"date": "2026-11-17", "title": "Morning run", "kind": "running",
                                                 "values": ["5", "25", "5:00", "140", "--", "--"],
-                                                "charts": [[130] * 24, [300] * 24, [50] * 24]}],
+                                                "charts": [[130] * 24, [300] * 24, [50] * 24],
+                                                "map_id": 42}],
                                 "groups": [{"title": "Today", "metrics": [
                                     {"label": "Steps", "value": "9000", "unit": "", "history": [1000, None, 9000]}]}]})
         provider = GarminProvider(path, clock=lambda: 101)
@@ -161,11 +162,37 @@ class GarminApiTests(unittest.TestCase):
         legacy = _deskdisplay_state_lines(state, (), include_activities=True)
         self.assertIn("garmin_activity\t2026-11-17\tMorning run", legacy)
         self.assertNotIn("garmin_chart", legacy)
+        self.assertNotIn("garmin_activity_id", legacy)
+        maps = _deskdisplay_state_lines(state, (), include_activities=True, include_maps=True)
+        self.assertIn("garmin_activity_id\t42\n", maps)
         enhanced = _deskdisplay_state_lines(state, (), include_activities=True, include_charts=True)
         self.assertIn("garmin_history_end\t20774\n", enhanced)
         self.assertIn("garmin_chart\t0\t" + ",".join(["130"] * 24) + "\n", enhanced)
         scale = next(row for row in enhanced.splitlines() if row.startswith("garmin_metric")).split("\t")[-1]
         self.assertEqual(scale, "3")
+
+    def test_map_endpoint_only_serves_the_local_gateway(self):
+        app = create_app(mock_mode=True)
+        cache = self.cache / "garmin.json"
+        coordinates = [[59.0, 10.0], [59.001, 10.0]]
+        write_json_atomic(cache, {"activities": [{"map_id": 42}]})
+        write_json_atomic(cache.with_name("garmin-raw.json"),
+                          {"data": {"charts": {"42": {"map_coordinates": coordinates}}}})
+        app.extensions["dashboard"].garmin_provider = GarminProvider(cache)
+        path = "/api/deskdisplay/garmin/map/42"
+        headers = {"X-DeskDisplay-Maps": "1"}
+        client = app.test_client()
+        with patch("garmin_maps.render_route_map", return_value=b"map jpeg") as render:
+            self.assertEqual(client.get(path, headers=headers).status_code, 403)
+            self.assertEqual(client.get(path, base_url="http://127.0.0.1").status_code, 403)
+            self.assertEqual(client.get(path, base_url="http://127.0.0.1", headers=headers,
+                                        environ_overrides={"REMOTE_ADDR": "192.0.2.1"}).status_code, 403)
+            self.assertEqual(client.get(path + "0", base_url="http://127.0.0.1", headers=headers).status_code, 404)
+            render.assert_not_called()
+            result = client.get(path, base_url="http://127.0.0.1", headers=headers)
+            self.assertEqual((result.status_code, result.mimetype, result.data),
+                             (200, "image/jpeg", b"map jpeg"))
+            render.assert_called_once_with(coordinates, self.cache / "osm-tiles")
 
     def test_api_failure_does_not_stop_the_existing_calendar_sync(self):
         script = Path(__file__).resolve().parents[1] / "scripts/sync-integrations.py"

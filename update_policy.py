@@ -103,6 +103,7 @@ def classify_paths(paths: Iterable[str]) -> tuple[str, bool, tuple[str, ...]]:
         "garmin_api.py",
         "garmin_charts.py",
         "garmin_data.py",
+        "garmin_maps.py",
         "requirements-integrations.txt",
         "spotify.py",
         "scripts/configure-spotify.py",

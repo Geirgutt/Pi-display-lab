@@ -6,7 +6,7 @@ import math
 from datetime import date, datetime, timedelta
 from typing import Any
 
-from garmin_charts import activity_download_id
+from garmin_charts import MISSING, activity_download_id
 
 
 def _obj(value: Any) -> dict[str, Any]:
@@ -53,6 +53,14 @@ def _metric(label: str, value: Any, unit: str, history: list[Any], places: int =
 
 def _title(value: Any) -> str:
     return value if isinstance(value, str) else ""
+
+
+def activity_kind(item: dict) -> str:
+    return _title(_obj(item.get("activityType")).get("typeKey")).replace("_", " ")[:24]
+
+
+def is_running(kind: str) -> bool:
+    return "running" in kind or kind == "ultra run"
 
 
 def _activity_metrics(activity: dict) -> list[dict[str, Any]]:
@@ -231,14 +239,22 @@ def build_dashboard(raw: dict, *, today: date) -> dict:
     recent_activities = []
     charts = _obj(raw.get("charts"))
     for day, item in valid_activities[:10]:
-        kind = _title(_obj(item.get("activityType")).get("typeKey")).replace("_", " ")
+        kind = activity_kind(item)
         details = _obj(charts.get(str(activity_download_id(item.get("activityId")))))
+        series = details.get("series", [])
+        if (is_running(kind) and not details.get("cadence_in_steps")
+            and isinstance(series, list) and len(series) >= 4 and isinstance(series[3], list)):
+            # Older caches contain rounded FIT cycles/min. Keep them usable during backfill.
+            series = list(series)
+            series[3] = [value * 2 if type(value) is int and 0 <= value <= 254 else MISSING
+                         for value in series[3]]
         recent_activities.append({
+            "map_id": activity_download_id(item.get("activityId")) if details.get("map_coordinates") else None,
             "date": day.isoformat(),
             "title": _title(item.get("activityName"))[:48] or kind[:48] or "Activity",
             "kind": kind[:24],
             "values": [metric["value"] for metric in _activity_metrics(item)],
-            "charts": details.get("series", []),
+            "charts": series,
             "lap_total": details.get("lap_total", 0),
             "laps": details.get("laps", []),
             "route": details.get("route", []),

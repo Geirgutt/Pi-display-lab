@@ -72,7 +72,7 @@ BUILD_BINARY="$BUILD_DIR/secure_peer"
 BUILD_LOG="$BUILD_DIR/gcc.log"
 compile_gateway() {
   gcc "$1" -Wall -Wextra -I"$PROJECT_DIR/deskdisplay/src" \
-    -o "$BUILD_BINARY" "$PROJECT_DIR/deskdisplay/tools/secure_peer.c" -lssl -lcrypto
+    -o "$BUILD_BINARY" "$PROJECT_DIR/deskdisplay/tools/secure_peer.c" -pthread -lssl -lcrypto
 }
 if ! compile_gateway -O2 >"$BUILD_LOG" 2>&1; then
   if ! grep -q 'internal compiler error' "$BUILD_LOG"; then

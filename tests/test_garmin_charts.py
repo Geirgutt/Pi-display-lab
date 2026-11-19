@@ -25,6 +25,18 @@ class GarminChartTests(unittest.TestCase):
         self.assertEqual(route, [[0, 180], [240, 60]])
         self.assertEqual(summarize_route([{"position_lat": 0, "position_long": 2**31 - 1}]), [])
 
+    def test_running_cadence_includes_fractional_cycles_before_averaging(self):
+        records = [
+            {"timestamp": 100, "cadence": 82, "fractional_cadence": 0.5},
+            {"timestamp": 101, "cadence": 83, "fractional_cadence": 0.5},
+            {"timestamp": 220, "cadence": 84, "fractional_cadence": 0.5},
+            {"timestamp": 340, "fractional_cadence": 0.5},
+        ]
+        running = summarize_records(records, running=True)[3]
+        cycling = summarize_records(records)[3]
+        self.assertEqual((running[0], running[12], running[-1]), (166, 169, MISSING))
+        self.assertEqual(cycling[12], 84)
+
     def test_download_with_gpx_or_tcx_recovers_a_route(self):
         gpx = b'<gpx xmlns="http://www.topografix.com/GPX/1/1"><trk><trkseg><trkpt lat="59" lon="10"/>\n<trkpt lat="59.001" lon="10"/></trkseg></trk></gpx>'
         tcx = b'<TrainingCenterDatabase xmlns="http://www.garmin.com/xmlschemas/TrainingCenterDatabase/v2"><Track><Trackpoint><Position><LatitudeDegrees>59</LatitudeDegrees><LongitudeDegrees>10</LongitudeDegrees></Position></Trackpoint><Trackpoint><Position><LatitudeDegrees>59.001</LatitudeDegrees><LongitudeDegrees>10</LongitudeDegrees></Position></Trackpoint></Track></TrainingCenterDatabase>'
@@ -34,7 +46,9 @@ class GarminChartTests(unittest.TestCase):
                 with zipfile.ZipFile(output, "w") as archive:
                     archive.writestr("empty/" + name, b"<gpx/>")
                     archive.writestr(name, contents)
-                self.assertEqual(decode_activity_file(output.getvalue())["route"], [[120, 240], [120, 0]])
+                details = decode_activity_file(output.getvalue())
+                self.assertEqual(details["route"], [[120, 240], [120, 0]])
+                self.assertEqual(details["map_coordinates"], [[59.0, 10.0], [59.001, 10.0]])
 
     def test_decodes_fit_inside_garmin_download(self):
         try:
@@ -56,7 +70,7 @@ class GarminChartTests(unittest.TestCase):
                 "enhanced_speed": 4, "enhanced_altitude": 75,
                 "position_lat": 600_000_000 + heart_rate * 100,
                 "position_long": 160_000_000 + heart_rate * 100,
-                "cadence": 84, "power": 235,
+                "cadence": 84, "fractional_cadence": 0.5, "power": 235,
             })
         output = io.BytesIO()
         with zipfile.ZipFile(output, "w") as archive:
@@ -67,6 +81,7 @@ class GarminChartTests(unittest.TestCase):
         self.assertEqual(pace[-1], 250)
         self.assertEqual(altitude[-1], 75)
         self.assertEqual((cadence[-1], power[-1]), (84, 235))
+        self.assertEqual(decode_activity_file(output.getvalue(), running=True)["series"][3][-1], 169)
         self.assertEqual(len(details["route"]), 2)
         self.assertEqual(details["lap_total"], 1)
         self.assertEqual(details["laps"], [[300, 1000, 145]])

@@ -21,6 +21,7 @@ from urllib.request import Request, HTTPRedirectHandler, build_opener
 
 from integration_sync import write_json_atomic
 from garmin_charts import MAX_FIT_BYTES, ROUTE_FORMAT, activity_download_id, decode_activity_file
+from garmin_data import activity_kind, is_running
 
 BASE_URL = "https://personal.connectapi.garmin.com"
 TOKEN_PATH = "/personalapitoken-service/personal-api/personal-api-key/token"
@@ -148,8 +149,12 @@ def _sync_activity_charts(client: GarminClient, raw: dict, now: int) -> int:
         return 0
     ordered = sorted((item for item in activities if isinstance(item, dict)),
                      key=lambda item: str(item.get("startTimeLocal") or ""), reverse=True)
-    ids = [activity_download_id(item.get("activityId")) for item in ordered]
-    ids = list(dict.fromkeys(value for value in ids if value is not None))[:10]
+    kinds = {}
+    for item in ordered:
+        activity_id = activity_download_id(item.get("activityId"))
+        if activity_id is not None:
+            kinds.setdefault(activity_id, activity_kind(item))
+    ids = list(kinds)[:10]
     old = raw.get("charts")
     old = old if isinstance(old, dict) else {}
     charts = {str(value): old[str(value)] for value in ids if isinstance(old.get(str(value)), dict)}
@@ -166,7 +171,8 @@ def _sync_activity_charts(client: GarminClient, raw: dict, now: int) -> int:
         attempted += 1
         media_error = None
         try:
-            details = decode_activity_file(client.download_activity(activity_id))
+            details = decode_activity_file(client.download_activity(activity_id),
+                                           running=is_running(kinds[activity_id]))
             if not details:
                 media_error = "unreadable_file"
             elif not details.get("route") and not cached.get("route"):

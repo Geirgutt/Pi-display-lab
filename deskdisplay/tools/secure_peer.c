@@ -5,7 +5,7 @@
  *
  * Build:
  *   cc -O2 -Wall -Wextra -Isrc -o tools/secure_peer tools/secure_peer.c \
- *      -lssl -lcrypto
+ *      -pthread -lssl -lcrypto
  */
 #define _POSIX_C_SOURCE 200809L
 
@@ -13,11 +13,14 @@
 #include <dirent.h>
 #include <errno.h>
 #include <fcntl.h>
+#include <inttypes.h>
 #include <netinet/in.h>
 #include <openssl/err.h>
 #include <openssl/evp.h>
 #include <openssl/ssl.h>
+#include <pthread.h>
 #include <signal.h>
+#include <stdatomic.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -89,7 +92,7 @@ static int ota_waiting_reconnect = 0;
 #define GARMIN_PAYLOAD_SIZE (6 + GARMIN_GROUP_MAX * GARMIN_GROUP_SIZE)
 #define GARMIN_FRAME_SIZE (FRAME_HEADER_SIZE + GARMIN_PAYLOAD_SIZE)
 #define GARMIN_SCALE_PAYLOAD_SIZE (GARMIN_PAYLOAD_SIZE + 4 + 4 * GARMIN_GROUP_MAX * GARMIN_METRIC_MAX)
-#define STATE_FRAME_MAX 8000
+#define STATE_FRAME_MAX 8192
 #define ACTIVITY_COUNT_MAX 10
 #define ACTIVITY_FIELD_COUNT 9
 #define ACTIVITY_RECORD_SIZE (11 + 49 + 25 + 6 * 17)
@@ -107,13 +110,18 @@ static int ota_waiting_reconnect = 0;
 #define ACTIVITY_MEDIA_GROUP_SIZE (1 + 2 * ACTIVITY_ROUTE_MAX + ACTIVITY_EXTRA_CHARTS * ACTIVITY_CHART_SAMPLES * 2)
 #define ACTIVITY_MEDIA_PAYLOAD_SIZE (ACTIVITY_LAP_PAYLOAD_SIZE + ACTIVITY_COUNT_MAX * ACTIVITY_MEDIA_GROUP_SIZE)
 #define ACTIVITY_TARGET_PAYLOAD_SIZE (ACTIVITY_MEDIA_PAYLOAD_SIZE + ACTIVITY_COUNT_MAX * 4)
+#define ACTIVITY_MAP_PAYLOAD_SIZE (ACTIVITY_TARGET_PAYLOAD_SIZE + ACTIVITY_COUNT_MAX * 8)
+#define GARMIN_MAP_REQUEST_TYPE 0x92
+#define GARMIN_MAP_IMAGE_TYPE 9
+#define GARMIN_MAP_JPEG_MAX 24576
 static const size_t activity_fields[ACTIVITY_FIELD_COUNT] = {11, 49, 25, 17, 17, 17, 17, 17, 17};
 static const char activity_identity[] = "DeskDisplay-peer-activities";
 static const char chart_identity[] = "DeskDisplay-peer-charts";
 static const char lap_identity[] = "DeskDisplay-peer-laps";
 static const char media_identity[] = "DeskDisplay-peer-media";
 static const char library_identity[] = "DeskDisplay-peer-library";
-_Static_assert(FRAME_HEADER_SIZE + ACTIVITY_TARGET_PAYLOAD_SIZE <= STATE_FRAME_MAX, "activity frame exceeds gateway buffer");
+static const char maps_identity[] = "DeskDisplay-peer-maps";
+_Static_assert(FRAME_HEADER_SIZE + ACTIVITY_MAP_PAYLOAD_SIZE <= STATE_FRAME_MAX, "activity frame exceeds gateway buffer");
 #define SPOTIFY_TITLE_MAX 96
 #define SPOTIFY_DEVICE_MAX 48
 #define SPOTIFY_PAYLOAD_SIZE (10 + 2 * (SPOTIFY_TITLE_MAX + 1) + SPOTIFY_DEVICE_MAX + 1)
@@ -235,6 +243,7 @@ struct controller_state {
     uint8_t route_count[ACTIVITY_COUNT_MAX];
     uint8_t routes[ACTIVITY_COUNT_MAX][ACTIVITY_ROUTE_MAX * 2];
     uint16_t pace_targets[ACTIVITY_COUNT_MAX][2];
+    uint64_t activity_ids[ACTIVITY_COUNT_MAX];
     size_t cover_length;
     unsigned char cover[SPOTIFY_COVER_MAX + 2]; /* EVP_DecodeBlock includes padding. */
 };
@@ -281,7 +290,8 @@ static unsigned int psk_callback(SSL* ssl, const char* identity,
     (void)ssl;
     if (!identity || (strcmp(identity, "DeskDisplay-peer") && strcmp(identity, activity_identity)
                       && strcmp(identity, chart_identity) && strcmp(identity, lap_identity)
-                      && strcmp(identity, media_identity) && strcmp(identity, library_identity))
+                      && strcmp(identity, media_identity) && strcmp(identity, library_identity)
+                      && strcmp(identity, maps_identity))
         || max_length < sizeof(psk)) return 0;
     memcpy(output, psk, sizeof(psk));
     return sizeof(psk);
@@ -301,6 +311,21 @@ static void put32(unsigned char* p, uint32_t value)
 static void put64(unsigned char* p, uint64_t value)
 {
     for (unsigned i = 0; i < 8; ++i) p[i] = (unsigned char)(value >> (i * 8));
+}
+
+static uint64_t get64(const unsigned char* p)
+{
+    uint64_t value = 0;
+    for (unsigned i = 0; i < 8; ++i) value |= (uint64_t)p[i] << (i * 8);
+    return value;
+}
+
+static uint64_t parse_activity_id(const char* text)
+{
+    const size_t length = strlen(text);
+    if (!length || length > 19 || strspn(text, "0123456789") != length) return 0;
+    const uint64_t id = strtoull(text, NULL, 10);
+    return id <= INT64_MAX ? id : 0;
 }
 
 static int parse_unsigned(const char* text, unsigned long maximum, unsigned long* result)
@@ -374,12 +399,13 @@ static int fetch_controller_state(struct controller_state* result)
         return 0;
     }
 
-    char request[360];
+    char request[384];
     const int request_length = snprintf(request, sizeof(request),
                                         "GET %s HTTP/1.0\r\nHost: %s\r\n"
                                         "X-DeskDisplay-Activities: 1\r\nX-DeskDisplay-Charts: 1\r\n"
                                         "X-DeskDisplay-Laps: 1\r\nX-DeskDisplay-Media: 1\r\n"
-                                        "X-DeskDisplay-Library: 1\r\nX-DeskDisplay-Targets: 1\r\nConnection: close\r\n\r\n",
+                                        "X-DeskDisplay-Library: 1\r\nX-DeskDisplay-Targets: 1\r\n"
+                                        "X-DeskDisplay-Maps: 1\r\nConnection: close\r\n\r\n",
                                         state_path, state_host);
     if (request_length <= 0 || (size_t)request_length >= sizeof(request) ||
         !send_socket_all(fd, request, (size_t)request_length))
@@ -544,6 +570,12 @@ static int fetch_controller_state(struct controller_state* result)
                 memcpy(field, fields[1 + i], length);
                 field += activity_fields[i];
             }
+        }
+        else if (!strcmp(fields[0], "garmin_activity_id"))
+        {
+            if (field_count != 2 || !result->activity_count) return 0;
+            uint64_t* id = &result->activity_ids[result->activity_count - 1];
+            if (*id || !(*id = parse_activity_id(fields[1]))) return 0;
         }
         else if (!strcmp(fields[0], "garmin_chart"))
         {
@@ -1223,9 +1255,10 @@ static size_t make_cover_frame(unsigned char* frame, uint64_t sequence)
 }
 
 static size_t make_activity_frame(unsigned char* frame, uint64_t sequence, int with_charts,
-                                  int with_laps, int with_media, int with_targets)
+                                  int with_laps, int with_media, int with_targets, int with_maps)
 {
-    const size_t payload = with_targets ? ACTIVITY_TARGET_PAYLOAD_SIZE
+    const size_t payload = with_maps ? ACTIVITY_MAP_PAYLOAD_SIZE
+        : with_targets ? ACTIVITY_TARGET_PAYLOAD_SIZE
         : with_media ? ACTIVITY_MEDIA_PAYLOAD_SIZE
         : with_laps ? ACTIVITY_LAP_PAYLOAD_SIZE
         : with_charts ? ACTIVITY_CHART_PAYLOAD_SIZE : ACTIVITY_PAYLOAD_SIZE;
@@ -1282,6 +1315,12 @@ static size_t make_activity_frame(unsigned char* frame, uint64_t sequence, int w
             put16(p, latest_state.pace_targets[record][0]);
             put16(p + 2, latest_state.pace_targets[record][1]);
         }
+    }
+    if (with_maps)
+    {
+        unsigned char* p = frame + FRAME_HEADER_SIZE + ACTIVITY_TARGET_PAYLOAD_SIZE;
+        for (size_t record = 0; record < latest_state.activity_count; ++record, p += 8)
+            put64(p, latest_state.activity_ids[record]);
     }
     return FRAME_HEADER_SIZE + payload;
 }
@@ -1355,8 +1394,112 @@ static void forward_spotify_command(uint8_t action, const char* track_id)
     close(fd); // No retries: next/previous must never execute twice.
 }
 
+struct garmin_map_transfer {
+    pthread_t thread;
+    int pending;
+    atomic_int ready;
+    uint64_t activity_id;
+    uint64_t queued_id;
+    size_t jpeg_length;
+    unsigned char jpeg[GARMIN_MAP_JPEG_MAX];
+};
+
+static size_t fetch_garmin_map(uint64_t id, unsigned char* jpeg)
+{
+    if (!state_port || strcmp(state_host, "127.0.0.1")) return 0;
+    const int fd = socket(AF_INET, SOCK_STREAM, 0);
+    if (fd < 0) return 0;
+    const struct timeval timeout = {.tv_sec = 8, .tv_usec = 0};
+    setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout));
+    setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &timeout, sizeof(timeout));
+    struct sockaddr_in endpoint = {0};
+    endpoint.sin_family = AF_INET;
+    endpoint.sin_port = htons(state_port);
+    endpoint.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+    char request[256];
+    const int request_length = snprintf(request, sizeof(request),
+        "GET /api/deskdisplay/garmin/map/%" PRIu64 " HTTP/1.0\r\n"
+        "Host: 127.0.0.1:%u\r\nX-DeskDisplay-Maps: 1\r\nConnection: close\r\n\r\n",
+        id, state_port);
+    if (request_length <= 0 || (size_t)request_length >= sizeof(request)
+        || connect(fd, (struct sockaddr*)&endpoint, sizeof(endpoint)) != 0
+        || !send_socket_all(fd, request, (size_t)request_length))
+    {
+        close(fd);
+        return 0;
+    }
+
+    char response[2048 + GARMIN_MAP_JPEG_MAX + 1];
+    size_t length = 0;
+    while (length < sizeof(response) - 1)
+    {
+        const ssize_t amount = recv(fd, response + length, sizeof(response) - 1 - length, 0);
+        if (amount < 0) { close(fd); return 0; }
+        if (!amount) break;
+        length += (size_t)amount;
+    }
+    close(fd);
+    if (length == sizeof(response) - 1) return 0;
+    response[length] = '\0';
+    if (strncmp(response, "HTTP/1.0 200 ", 13) && strncmp(response, "HTTP/1.1 200 ", 13)) return 0;
+    const char* separator = strstr(response, "\r\n\r\n");
+    if (!separator) return 0;
+    const unsigned char* body = (const unsigned char*)separator + 4;
+    const size_t body_length = length - (size_t)((const char*)body - response);
+    if (body_length < 4 || body_length > GARMIN_MAP_JPEG_MAX
+        || body[0] != 0xff || body[1] != 0xd8
+        || body[body_length - 2] != 0xff || body[body_length - 1] != 0xd9) return 0;
+    memcpy(jpeg, body, body_length);
+    return body_length;
+}
+
+static void* fetch_garmin_map_task(void* argument)
+{
+    struct garmin_map_transfer* transfer = argument;
+    transfer->jpeg_length = fetch_garmin_map(transfer->activity_id, transfer->jpeg);
+    atomic_store(&transfer->ready, 1);
+    return NULL;
+}
+
+static int send_garmin_map(SSL* ssl, uint64_t sequence, uint64_t id,
+                           const unsigned char* jpeg, size_t jpeg_length)
+{
+    unsigned char frame[FRAME_HEADER_SIZE + 8] = {'D', 'S', 1, GARMIN_MAP_IMAGE_TYPE};
+    put16(frame + 4, jpeg_length + 8);
+    put64(frame + 6, sequence);
+    put64(frame + FRAME_HEADER_SIZE, id);
+    return send_all(ssl, frame, sizeof(frame))
+        && (!jpeg_length || send_all(ssl, jpeg, jpeg_length));
+}
+
+static int start_garmin_map(SSL* ssl, uint64_t* sequence, struct garmin_map_transfer* transfer, uint64_t id)
+{
+    if (!id || id > INT64_MAX) return 0;
+    for (size_t index = 0; index < latest_state.activity_count; ++index)
+    {
+        if (latest_state.activity_ids[index] != id) continue;
+        if (transfer->pending)
+        {
+            // The display only waits for its newest selection. Retain at most
+            // one follow-up while the active HTTP request finishes.
+            transfer->queued_id = transfer->activity_id == id ? 0 : id;
+            return 1;
+        }
+        transfer->activity_id = id;
+        atomic_store(&transfer->ready, 0);
+        if (pthread_create(&transfer->thread, NULL, fetch_garmin_map_task, transfer) == 0)
+        {
+            transfer->pending = 1;
+            return 1;
+        }
+        break;
+    }
+    return send_garmin_map(ssl, (*sequence)++, id, NULL, 0);
+}
+
 /* Read only authenticated, bounded commands. Sequence is scoped to this TLS session. */
-static int wait_display_command(SSL* ssl, int fd, uint64_t* last_sequence, int allow_library)
+static int wait_display_command(SSL* ssl, int fd, uint64_t* last_sequence, int allow_library,
+                                uint64_t* sequence, struct garmin_map_transfer* map_transfer)
 {
     if (!SSL_pending(ssl))
     {
@@ -1369,14 +1512,18 @@ static int wait_display_command(SSL* ssl, int fd, uint64_t* last_sequence, int a
     }
     unsigned char frame[15 + SPOTIFY_TRACK_ID_SIZE];
     size_t length = 0;
-    if (!read_frame(ssl, frame, sizeof(frame), &length) || length < 15
-        || frame[3] != 0x91 || frame[14] < 1 || frame[14] > 5) return 0;
+    if (!read_frame(ssl, frame, sizeof(frame), &length)) return 0;
+    const uint64_t command_sequence = get64(frame + 6);
+    if (!command_sequence || command_sequence <= *last_sequence) return 0;
+    *last_sequence = command_sequence;
+    if (frame[3] == GARMIN_MAP_REQUEST_TYPE)
+    {
+        return map_transfer && length == FRAME_HEADER_SIZE + 8
+            && start_garmin_map(ssl, sequence, map_transfer, get64(frame + FRAME_HEADER_SIZE));
+    }
+    if (length < 15 || frame[3] != 0x91 || frame[14] < 1 || frame[14] > 5) return 0;
     const int save = frame[14] == 5;
     if (length != (save ? sizeof(frame) : 15) || (save && !allow_library)) return 0;
-    uint64_t sequence = 0;
-    for (unsigned i = 0; i < 8; ++i) sequence |= (uint64_t)frame[6 + i] << (8 * i);
-    if (!sequence || sequence <= *last_sequence) return 0;
-    *last_sequence = sequence;
     if (!save) forward_spotify_command(frame[14], NULL);
     else if (latest_spotify.track_id[0]
              && (latest_spotify.library == 1 || latest_spotify.library == 5)
@@ -1508,12 +1655,15 @@ int main(int argc, char** argv)
         uint64_t sequence = 1;
         uint64_t command_sequence = 0;
         const char* identity = SSL_get_psk_identity(ssl);
-        const int send_library = identity && !strcmp(identity, library_identity);
+        const int send_maps = identity && !strcmp(identity, maps_identity);
+        const int send_library = send_maps || (identity && !strcmp(identity, library_identity));
         const int send_media = send_library || (identity && !strcmp(identity, media_identity));
         const int send_laps = send_media || (identity && !strcmp(identity, lap_identity));
         const int send_charts = send_laps || (identity && !strcmp(identity, chart_identity));
         const int send_activities = send_charts || (identity && !strcmp(identity, activity_identity));
         unsigned activity_round = 0;
+        struct garmin_map_transfer map_transfer = {0};
+        atomic_init(&map_transfer.ready, 0);
         char sent_cover[SPOTIFY_TRACK_ID_SIZE + 1] = {0};
         const struct timeval command_timeout = {.tv_sec = 2, .tv_usec = 0};
         setsockopt(socket_fd, SOL_SOCKET, SO_RCVTIMEO, &command_timeout, sizeof(command_timeout));
@@ -1543,12 +1693,24 @@ int main(int argc, char** argv)
                 if (send_activities && activity_round++ % 5 == 0)
                 {
                     const size_t activity_length = make_activity_frame(frame, sequence++, send_charts,
-                                                                        send_laps, send_media, send_library);
+                                                                        send_laps, send_media, send_library, send_maps);
                     if (!send_all(ssl, frame, activity_length)) break;
                 }
             }
-            if (!wait_display_command(ssl, socket_fd, &command_sequence, send_library)) break;
+            if (map_transfer.pending && atomic_load(&map_transfer.ready))
+            {
+                pthread_join(map_transfer.thread, NULL);
+                map_transfer.pending = 0;
+                if (!send_garmin_map(ssl, sequence++, map_transfer.activity_id,
+                                     map_transfer.jpeg, map_transfer.jpeg_length)) break;
+                const uint64_t next_map_id = map_transfer.queued_id;
+                map_transfer.queued_id = 0;
+                if (next_map_id && !start_garmin_map(ssl, &sequence, &map_transfer, next_map_id)) break;
+            }
+            if (!wait_display_command(ssl, socket_fd, &command_sequence, send_library,
+                                      &sequence, send_maps ? &map_transfer : NULL)) break;
         }
+        if (map_transfer.pending) pthread_join(map_transfer.thread, NULL);
         SSL_shutdown(ssl);
         SSL_free(ssl); close(socket_fd);
         printf("TLS session closed; waiting for reconnect.\n");

@@ -156,14 +156,20 @@ void refreshState()
                 for (uint8_t i = 0; i < activities.count; ++i)
                 {
                     const auto& candidate = activities.items[i];
-                    const bool sameActivity = strcmp(selected.date, candidate.date) == 0
+                    const bool sameDescription = strcmp(selected.date, candidate.date) == 0
                         && strcmp(selected.title, candidate.title) == 0
                         && strcmp(selected.kind, candidate.kind) == 0
                         && memcmp(selected.values, candidate.values, sizeof(selected.values)) == 0;
+                    const bool sameActivity = selected.id && candidate.id
+                        ? selected.id == candidate.id : sameDescription;
                     if (sameActivity || (!selected.title[0] && model.activityFromHome && i == 0))
                     {
                         activityDetailNeedsRedraw = memcmp(&selected, &candidate, sizeof(selected)) != 0;
+                        const bool mapChanged = selected.id != candidate.id
+                            || (selected.routeCount < 2 && candidate.routeCount >= 2);
                         selected = candidate;
+                        if (mapChanged && model.activityView == app_state::ActivityView::Map && selected.routeCount >= 2)
+                            secure_transport::requestActivityMap(selected.id);
                         if (model.lapOffset >= selected.lapCount) model.lapOffset = 0;
                         break;
                     }
@@ -462,6 +468,8 @@ void action(uint8_t button)
     case 77:
         model.activityView = model.activityView == app_state::ActivityView::Map
             ? app_state::ActivityView::Summary : app_state::ActivityView::Map;
+        if (model.activityView == app_state::ActivityView::Map && model.selectedActivity.routeCount >= 2)
+            secure_transport::requestActivityMap(model.selectedActivity.id);
         ui::page(model);
         break;
     case 78: model.extraActivityCharts = !model.extraActivityCharts; ui::page(model); break;
@@ -672,7 +680,10 @@ void app::service()
         checkAlarm();
         if (!alarmActive)
         {
-            if (activityDetailNeedsRedraw && model.page == app_state::Page::ActivityDetail)
+            const bool mapNeedsRedraw = model.page == app_state::Page::ActivityDetail
+                && model.activityView == app_state::ActivityView::Map && !model.pressedButton
+                && secure_transport::takeActivityMapUpdate(model.selectedActivity.id);
+            if ((activityDetailNeedsRedraw || mapNeedsRedraw) && model.page == app_state::Page::ActivityDetail)
                 ui::page(model);
             else ui::telemetry(model);
         }

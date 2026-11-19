@@ -1015,7 +1015,10 @@ void activityCharts(const app_state::Model& model)
     for (size_t series = 0; series < count; ++series)
     {
         const int16_t y = 68 + series * 110;
-        label(captions[series + (extras ? secure_protocol::activityChartCount : 0)], 24, y, 2);
+        const bool runningCadence = extras && series == 0 &&
+            (strstr(activity.kind, "running") || strcmp(activity.kind, "ultra run") == 0);
+        const char* caption = captions[series + (extras ? secure_protocol::activityChartCount : 0)];
+        label(runningCadence ? "Cadence (steps/min)" : caption, 24, y, 2);
         int16_t low, high;
         const auto& samples = extras ? activity.extraCharts[series] : activity.charts[series];
         if (!extras && !activity.chartsAvailable)
@@ -1079,15 +1082,21 @@ void activityMap(const app_state::Model& model)
         return;
     }
     display().fillRoundRect(12, 69, 456, 326, 8, card);
-    label("N", 422, 84, 1, muted);
-    display().drawFastVLine(425, 97, 16, muted);
-    const auto x = [&](size_t index) { return 92 + activity.route[2 * index] * 296 / 240; };
-    const auto y = [&](size_t index) { return 83 + activity.route[2 * index + 1] * 296 / 240; };
-    for (size_t index = 1; index < activity.routeCount; ++index)
-        display().drawWideLine(x(index - 1), y(index - 1), x(index), y(index), 1.25f, accent);
-    const size_t last = activity.routeCount - 1;
-    display().fillCircle(x(0), y(0), 5, good);
-    display().drawCircle(x(last), y(last), 7, warning);
+    size_t length = 0;
+    const uint8_t* jpeg = secure_transport::activityMap(activity.id, length);
+    if (!jpeg || !display().drawJpg(jpeg, length, 92, 83, 296, 296))
+    {
+        if (jpeg) display().fillRect(92, 83, 296, 296, card);
+        label("N", 422, 84, 1, muted);
+        display().drawFastVLine(425, 97, 16, muted);
+        const auto x = [&](size_t index) { return 92 + activity.route[2 * index] * 296 / 240; };
+        const auto y = [&](size_t index) { return 83 + activity.route[2 * index + 1] * 296 / 240; };
+        for (size_t index = 1; index < activity.routeCount; ++index)
+            display().drawWideLine(x(index - 1), y(index - 1), x(index), y(index), 1.25f, accent);
+        const size_t last = activity.routeCount - 1;
+        display().fillCircle(x(0), y(0), 5, good);
+        display().drawCircle(x(last), y(last), 7, warning);
+    }
     label("Start", 32, 403, 1, good);
     label("Finish", 106, 403, 1, warning);
 }
