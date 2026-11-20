@@ -50,7 +50,7 @@ Wi-Fi+BLE+UI build:
 | Wi-Fi stopped | 277716 | — | — | 461296 |
 
 During coexistence BLE reported advertising with controller 2, host 2 and 14
-system tasks. Wi-Fi reported status 3, IP `192.168.2.49` and RSSI about
+system tasks. Wi-Fi reported status 3, IP `192.0.2.10` and RSSI about
 `-60 dBm`. BLE and Wi-Fi stop behavior matched the previously investigated
 stable first-use retention. No progressive leak was observed.
 
@@ -92,7 +92,7 @@ large touch targets:
  DeskDisplay                         Dashboard
  ┌──────────────────────────────────────────┐
  │ Live platform status                     │
- │ Wi-Fi       CONNECTED 192.168.2.49       │
+ │ Wi-Fi       CONNECTED 192.0.2.10       │
  │ RSSI        -58 dBm                       │
  │ Heap        280 KB                        │
  │ PSRAM       7,900 KB                      │

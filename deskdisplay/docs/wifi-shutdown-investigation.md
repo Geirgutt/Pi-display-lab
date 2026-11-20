@@ -148,7 +148,7 @@ Combined build, BLE started first:
 | Wi-Fi stopped, BLE advertising | 219596 | not supplied | not supplied | 461296 | 13 |
 | Both stopped/deinitialized | 277556 | 192388 | 188404 | 461296 | 9 |
 
-Wi-Fi reported status 3, IP `192.168.2.49`, RSSI -58 dBm. BLE remained advertising
+Wi-Fi reported status 3, IP `192.0.2.10`, RSSI -58 dBm. BLE remained advertising
 with host/controller 2/2 through Wi-Fi startup and shutdown; after BLE stop both
 were 0. Both radios functioned simultaneously.
 

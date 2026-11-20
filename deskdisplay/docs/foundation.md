@@ -53,7 +53,7 @@ All memory values are bytes, copied from the supplied diagnostics.
 | PSRAM used | 461296 | 461296 | 475884 | 475780 |
 
 The default readings remained unchanged throughout the reported test. First
-connection returned status 3, IP `192.168.2.49`, RSSI approximately -50 to -51 dBm.
+connection returned status 3, IP `192.0.2.10`, RSSI approximately -50 to -51 dBm.
 After reboot, Wi-Fi remained disabled until `w`; stored reconnect returned status
 3, the same IP and RSSI -51 dBm. The IP is a test observation, not firmware config.
 
