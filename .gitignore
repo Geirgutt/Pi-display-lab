@@ -22,10 +22,13 @@ credentials.*
 *credentials*.json
 *secrets*.json
 *.secret
+garmin-token.json
+garmin.json
 .secrets/
 
 # Private nøkler og sertifikatpakker skal aldri inn i Git.
 *.key
+*.psk
 *.pem
 *.crt
 *.csr

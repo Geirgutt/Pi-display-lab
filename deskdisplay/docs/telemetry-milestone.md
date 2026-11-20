@@ -138,13 +138,13 @@ state remains fixed; no new PSRAM buffer or task is expected.
 Build every affected firmware variant without uploading:
 
 ```sh
-/home/geir/.platformio/penv/bin/pio run -t clean \
+~/.platformio/penv/bin/pio run -t clean \
   -e guition-4848s040 \
   -e guition-4848s040-wifi \
   -e guition-4848s040-ble \
   -e guition-4848s040-wifi-ble \
   -e guition-4848s040-secure
-/home/geir/.platformio/penv/bin/pio run \
+~/.platformio/penv/bin/pio run \
   -e guition-4848s040 \
   -e guition-4848s040-wifi \
   -e guition-4848s040-ble \
@@ -161,9 +161,9 @@ this milestone.
 When you are ready to flash it on the established hardware setup, use:
 
 ```sh
-/home/geir/.platformio/penv/bin/pio run -e guition-4848s040-secure
-/home/geir/.platformio/penv/bin/pio run -e guition-4848s040-secure -t upload
-/home/geir/.platformio/penv/bin/pio device monitor -e guition-4848s040-secure
+~/.platformio/penv/bin/pio run -e guition-4848s040-secure
+~/.platformio/penv/bin/pio run -e guition-4848s040-secure -t upload
+~/.platformio/penv/bin/pio device monitor -e guition-4848s040-secure
 ```
 
 ## Physical test procedure

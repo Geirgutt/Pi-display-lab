@@ -92,8 +92,19 @@ class DeskDisplayAlarmTest(unittest.TestCase):
 #include <cstdint>
 uint32_t fakeNow, nextTelemetry, alarmStartedAt, lastAlarmBlinkAt;
 bool alarmActive = false, alarmLit = false, launched = false;
-int stops = 0, flashes = 0, alarmReturnPage = 0;
-struct Model { int page = 0; } model;
+bool activityDetailNeedsRedraw = false;
+int stops = 0, flashes = 0;
+namespace app_state {
+enum class Page { Home, ActivityDetail };
+enum class ActivityView { Summary, Map };
+}
+app_state::Page alarmReturnPage = app_state::Page::Home;
+struct Model {
+    app_state::Page page = app_state::Page::Home;
+    app_state::ActivityView activityView = app_state::ActivityView::Summary;
+    bool pressedButton = false;
+    struct { uint64_t id = 0; } selectedActivity;
+} model;
 uint32_t millis() { return fakeNow; }
 void delay(uint32_t ms) { fakeNow += ms; }
 void processTouch() {}
@@ -101,6 +112,7 @@ namespace console { void service() {} }
 namespace secure_transport {
 bool displaySuppressed() { return false; }
 bool takeDisplayRestoreRequest() { return false; }
+bool takeActivityMapUpdate(uint64_t) { return false; }
 }
 namespace ui {
 void page(const Model&) {}
